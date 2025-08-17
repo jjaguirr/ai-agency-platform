@@ -1,0 +1,343 @@
+{
+  "version": "1.0.0",
+  "description": "Agent-to-security-group mapping strategy for MCPhub integration with prompt injection defense",
+  "lastUpdated": "2025-01-13",
+  
+  "securityLevels": {
+    "high-security": {
+      "description": "Maximum security isolation for sensitive operations",
+      "riskLevel": "low",
+      "allowedServers": ["context7", "everart", "openai"],
+      "blockedCombinations": ["web + filesystem", "search + database", "external + local"],
+      "promptInjectionDefense": {
+        "enabled": true,
+        "maxTokens": 2000,
+        "contentFiltering": true,
+        "systemPromptProtection": true,
+        "inputSanitization": ["script_tags", "sql_injection", "command_injection"]
+      }
+    },
+    "research-security": {
+      "description": "Secure web research and data gathering",
+      "riskLevel": "medium", 
+      "allowedServers": ["brave-search", "context7", "openai"],
+      "blockedCombinations": ["search + filesystem", "web + database"],
+      "promptInjectionDefense": {
+        "enabled": true,
+        "maxTokens": 4000,
+        "contentFiltering": true,
+        "systemPromptProtection": true,
+        "webContentSanitization": true
+      }
+    },
+    "analytics-security": {
+      "description": "Business analytics with database access",
+      "riskLevel": "medium",
+      "allowedServers": ["postgres", "sqlite", "openai"],
+      "blockedCombinations": ["database + web", "sql + filesystem"],
+      "promptInjectionDefense": {
+        "enabled": true,
+        "maxTokens": 3000,
+        "sqlInjectionProtection": true,
+        "queryValidation": true,
+        "dataExfiltrationPrevention": true
+      }
+    },
+    "creative-security": {
+      "description": "Content creation with AI tools",
+      "riskLevel": "low",
+      "allowedServers": ["openai", "everart", "context7"],
+      "blockedCombinations": ["ai + filesystem", "generation + database"],
+      "promptInjectionDefense": {
+        "enabled": true,
+        "maxTokens": 5000,
+        "contentModeration": true,
+        "outputFiltering": ["harmful_content", "personal_info"]
+      }
+    },
+    "development-security": {
+      "description": "Development tools with controlled file access",
+      "riskLevel": "high",
+      "allowedServers": ["git-local", "github", "local-filesystem", "openai"],
+      "blockedCombinations": ["filesystem + web", "git + external_api"],
+      "promptInjectionDefense": {
+        "enabled": true,
+        "maxTokens": 3000,
+        "codeInjectionProtection": true,
+        "fileSystemRestrictions": ["read_only", "project_scope_only"],
+        "commandExecutionBlocking": true
+      }
+    }
+  },
+
+  "agentTypes": {
+    "business-intelligence-agent": {
+      "description": "Market analysis and competitive intelligence",
+      "functionality": ["market_research", "competitor_analysis", "trend_identification"],
+      "securityGroup": "security-research-001",
+      "securityLevel": "research-security",
+      "specialization": "market_intelligence",
+      "mcpServers": ["brave-search", "context7", "openai"],
+      "promptInjectionDefense": {
+        "customRules": [
+          "block_financial_data_requests",
+          "sanitize_search_queries", 
+          "validate_research_scope"
+        ],
+        "maxSearchResults": 50,
+        "contentSourceValidation": true
+      }
+    },
+
+    "marketing-creative-agent": {
+      "description": "Content creation and marketing materials",
+      "functionality": ["content_generation", "visual_design", "brand_messaging"],
+      "securityGroup": "security-creative-001", 
+      "securityLevel": "creative-security",
+      "specialization": "creative_content",
+      "mcpServers": ["openai", "everart", "context7"],
+      "promptInjectionDefense": {
+        "customRules": [
+          "brand_guideline_enforcement",
+          "content_appropriateness_check",
+          "copyright_violation_prevention"
+        ],
+        "outputModeration": true,
+        "brandSafetyFilters": true
+      }
+    },
+
+    "research-analyst-agent": {
+      "description": "Deep research and data analysis",
+      "functionality": ["data_analysis", "report_generation", "insight_extraction"],
+      "securityGroup": "security-research-001",
+      "securityLevel": "research-security", 
+      "specialization": "analytical_research",
+      "mcpServers": ["brave-search", "context7", "openai"],
+      "promptInjectionDefense": {
+        "customRules": [
+          "research_ethics_compliance",
+          "data_privacy_protection",
+          "source_credibility_validation"
+        ],
+        "citationRequirement": true,
+        "factCheckingEnabled": true
+      }
+    },
+
+    "business-analytics-agent": {
+      "description": "Business metrics and database analysis", 
+      "functionality": ["sql_queries", "kpi_analysis", "financial_reporting"],
+      "securityGroup": "security-analytics-001",
+      "securityLevel": "analytics-security",
+      "specialization": "business_intelligence",
+      "mcpServers": ["postgres", "sqlite", "openai"],
+      "promptInjectionDefense": {
+        "customRules": [
+          "sql_injection_prevention",
+          "data_access_validation", 
+          "query_complexity_limits"
+        ],
+        "queryWhitelist": ["SELECT", "WITH", "COUNT", "SUM", "AVG"],
+        "databaseAccessLimits": ["read_only", "business_schema_only"]
+      }
+    },
+
+    "development-automation-agent": {
+      "description": "Code development and deployment automation",
+      "functionality": ["code_generation", "deployment", "version_control"],
+      "securityGroup": "security-development-001", 
+      "securityLevel": "development-security",
+      "specialization": "software_development",
+      "mcpServers": ["git-local", "github", "local-filesystem", "openai"],
+      "promptInjectionDefense": {
+        "customRules": [
+          "code_injection_prevention",
+          "malicious_command_blocking",
+          "repository_access_validation"
+        ],
+        "codeReviewRequired": true,
+        "fileSystemRestrictions": ["project_directory_only"],
+        "commandWhitelist": ["git", "npm", "node", "python"]
+      }
+    },
+
+    "n8n-workflow-architect": {
+      "description": "n8n workflow design and automation",
+      "functionality": ["workflow_creation", "automation_design", "integration_setup"],
+      "securityGroup": "security-development-001",
+      "securityLevel": "development-security", 
+      "specialization": "workflow_automation",
+      "mcpServers": ["n8n-mcp", "openai", "context7"],
+      "promptInjectionDefense": {
+        "customRules": [
+          "workflow_security_validation",
+          "credential_protection",
+          "api_endpoint_validation"
+        ],
+        "workflowComplexityLimits": true,
+        "credentialAccessRestricted": true
+      }
+    },
+
+    "coordination-orchestrator": {
+      "description": "Multi-agent workflow coordination",
+      "functionality": ["agent_coordination", "workflow_management", "result_aggregation"],
+      "securityGroup": "security-high-001",
+      "securityLevel": "high-security",
+      "specialization": "system_coordination", 
+      "mcpServers": ["openai", "context7"],
+      "promptInjectionDefense": {
+        "customRules": [
+          "agent_command_validation", 
+          "workflow_integrity_check",
+          "cross_agent_communication_filtering"
+        ],
+        "systemPromptImmutable": true,
+        "agentCommandWhitelist": true,
+        "coordinationAuditLog": true
+      }
+    }
+  },
+
+  "securityPolicies": {
+    "promptInjectionDefense": {
+      "globalRules": {
+        "systemPromptProtection": {
+          "enabled": true,
+          "description": "Prevent modification of system prompts",
+          "blockedPatterns": [
+            "ignore previous instructions",
+            "forget everything above", 
+            "new instructions:",
+            "system override",
+            "admin mode",
+            "developer mode"
+          ]
+        },
+        "commandInjectionPrevention": {
+          "enabled": true,
+          "description": "Block command execution attempts",
+          "blockedPatterns": [
+            "rm -rf",
+            "sudo",
+            "chmod",
+            "exec(",
+            "eval(",
+            "system(",
+            "subprocess"
+          ]
+        },
+        "dataExfiltrationPrevention": {
+          "enabled": true,
+          "description": "Prevent unauthorized data access",
+          "blockedPatterns": [
+            "show me all",
+            "dump database", 
+            "export everything",
+            "SELECT * FROM users",
+            "password",
+            "secret",
+            "api_key"
+          ]
+        }
+      },
+      "agentSpecificRules": {
+        "research_agents": [
+          "validate_search_queries",
+          "limit_result_count",
+          "block_personal_info_requests"
+        ],
+        "business_agents": [
+          "sql_injection_protection",
+          "data_access_validation",
+          "query_complexity_limits"
+        ],
+        "creative_agents": [
+          "content_moderation",
+          "brand_safety_check",
+          "copyright_compliance"
+        ],
+        "dev_agents": [
+          "code_injection_prevention", 
+          "file_system_restrictions",
+          "command_execution_blocking"
+        ]
+      }
+    },
+
+    "accessControl": {
+      "crossAgentCommunication": {
+        "enabled": true,
+        "allowedConnections": [
+          "research -> business",
+          "business -> creative", 
+          "creative -> development",
+          "coordination -> all"
+        ],
+        "blockedConnections": [
+          "development -> research",
+          "creative -> business_data",
+          "external -> internal"
+        ]
+      },
+      "resourceLimits": {
+        "maxConcurrentAgents": 5,
+        "maxTokensPerAgent": 10000,
+        "maxExecutionTime": "10m",
+        "maxMemoryUsage": "500MB"
+      }
+    }
+  },
+
+  "workflowSecurity": {
+    "agentChaining": {
+      "allowedChains": [
+        ["research", "business", "creative", "development"],
+        ["research", "creative"],
+        ["business", "development"],
+        ["coordination", "any_single_agent"]
+      ],
+      "securityValidation": {
+        "dataFlowValidation": true,
+        "crossContaminationPrevention": true,
+        "resultSanitization": true
+      }
+    },
+    "emergencyProtocols": {
+      "suspiciousActivityDetection": {
+        "enabled": true,
+        "triggers": [
+          "repeated_failed_injections",
+          "unusual_resource_usage",
+          "cross_boundary_access_attempts"
+        ],
+        "actions": [
+          "pause_agent_execution",
+          "alert_administrator", 
+          "quarantine_agent_session"
+        ]
+      }
+    }
+  },
+
+  "monitoring": {
+    "auditLogging": {
+      "enabled": true,
+      "logLevel": "detailed",
+      "includedEvents": [
+        "agent_activation",
+        "security_violations",
+        "prompt_injection_attempts", 
+        "cross_agent_communications",
+        "resource_usage_exceeded"
+      ],
+      "retention": "30_days"
+    },
+    "realTimeAlerts": {
+      "securityViolations": true,
+      "performanceAnomalies": true,
+      "agentMalfunctions": true
+    }
+  }
+}
