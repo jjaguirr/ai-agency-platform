@@ -150,10 +150,11 @@ qdrant_storage/
 # Redis dump
 dump.rdb
 
-# Docker
+# Docker - SECURITY: Never commit environment files or overrides
 docker-compose.override.yml
 .env.phase1
+docker-compose.phase1.yml
 
-# Docker volumes and database data - NEVER COMMIT
+# Docker volumes and database data - NEVER COMMIT THESE
 data/
 data/**/*

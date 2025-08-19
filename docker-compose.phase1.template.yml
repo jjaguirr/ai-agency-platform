@@ -6,9 +6,9 @@ services:
     environment:
       POSTGRES_DB: mcphub
       POSTGRES_USER: mcphub
-      POSTGRES_PASSWORD: mcphub_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}  # Set in .env.phase1
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
@@ -44,3 +44,9 @@ services:
 networks:
   default:
     name: ai-agency-phase1
+
+# SECURITY NOTE:
+# This template uses environment variables for sensitive data.
+# 1. Copy .env.phase1.template to .env.phase1
+# 2. Fill in secure values in .env.phase1
+# 3. Run: docker-compose --env-file .env.phase1 -f docker-compose.phase1.yml up -d

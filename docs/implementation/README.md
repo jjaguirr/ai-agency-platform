@@ -38,6 +38,14 @@
 
 ---
 
+## 🚨 **SECURITY ALERT: Read This First**
+
+> **⚠️ CRITICAL:** Before running any setup commands, read the **[Security Setup Guide](./security-setup-guide.md)**
+>
+> This guide covers proper handling of secrets, environment configuration, and avoiding security vulnerabilities.
+
+---
+
 ## 🎭 **The Four Acts**
 
 ### 🧪 **Act 1: Testing & Validation** 

@@ -70,33 +70,31 @@ echo -e "${GREEN}✅ Project directories created${NC}"
 echo -e "${YELLOW}Step 3: Creating environment configuration...${NC}"
 
 if [ ! -f ".env.phase1" ]; then
-    cat > .env.phase1 << EOF
-# AI Agency Platform - Phase 1 Configuration
-# Generated on $(date)
-
-# MCPhub Configuration
-MCPHUB_PORT=3000
-MCPHUB_JWT_SECRET=$(openssl rand -hex 32)
-DATABASE_URL=postgresql://mcphub:mcphub_password@localhost:5432/mcphub
-
-# Redis Configuration
-REDIS_URL=redis://localhost:6379
-REDIS_PASSWORD=
-
-# Cross-System Communication
-CLAUDE_CODE_BRIDGE_ENABLED=true
-CUSTOMER_ISOLATION_LEVEL=complete
-AI_MODEL_SWITCHING_ENABLED=true
-
-# Security Configuration
-SECURITY_AUDIT_ENABLED=true
-CUSTOMER_DATA_ENCRYPTION=true
-
-# Development Configuration
-LOG_LEVEL=debug
-DEVELOPMENT_MODE=true
-EOF
-    echo -e "${GREEN}✅ Environment configuration created (.env.phase1)${NC}"
+    if [ -f ".env.phase1.template" ]; then
+        cp .env.phase1.template .env.phase1
+        # Generate secure JWT secret
+        JWT_SECRET=$(openssl rand -hex 32)
+        # Generate secure database password
+        DB_PASSWORD=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-25)
+        
+        # Replace placeholders with secure values
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            # macOS
+            sed -i '' "s/YOUR_SECURE_JWT_SECRET_HERE/$JWT_SECRET/" .env.phase1
+            sed -i '' "s/YOUR_DATABASE_PASSWORD/$DB_PASSWORD/" .env.phase1
+        else
+            # Linux
+            sed -i "s/YOUR_SECURE_JWT_SECRET_HERE/$JWT_SECRET/" .env.phase1
+            sed -i "s/YOUR_DATABASE_PASSWORD/$DB_PASSWORD/" .env.phase1
+        fi
+        
+        echo -e "${GREEN}✅ Environment configuration created (.env.phase1) with secure secrets${NC}"
+        echo -e "${BLUE}🔐 Database password: $DB_PASSWORD${NC}"
+        echo -e "${YELLOW}⚠️  Save this password! It's also in .env.phase1${NC}"
+    else
+        echo -e "${RED}❌ .env.phase1.template not found! Please check your project setup.${NC}"
+        exit 1
+    fi
 else
     echo -e "${YELLOW}⚠️  .env.phase1 already exists, skipping...${NC}"
 fi
@@ -105,55 +103,14 @@ fi
 echo -e "${YELLOW}Step 4: Creating Phase 1 testing infrastructure...${NC}"
 
 if [ ! -f "docker-compose.phase1.yml" ]; then
-    cat > docker-compose.phase1.yml << 'EOF'
-version: '3.8'
-
-services:
-  postgres:
-    image: postgres:15-alpine
-    environment:
-      POSTGRES_DB: mcphub
-      POSTGRES_USER: mcphub
-      POSTGRES_PASSWORD: mcphub_password
-    ports:
-      - "5432:5432"
-    volumes:
-      - ./data/postgres:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mcphub"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - ./data/redis:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 3
-
-  qdrant:
-    image: qdrant/qdrant:latest
-    ports:
-      - "6333:6333" 
-    volumes:
-      - ./data/qdrant:/qdrant/storage
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-networks:
-  default:
-    name: ai-agency-phase1
-EOF
-    echo -e "${GREEN}✅ Phase 1 Docker Compose created${NC}"
+    if [ -f "docker-compose.phase1.template.yml" ]; then
+        cp docker-compose.phase1.template.yml docker-compose.phase1.yml
+        echo -e "${GREEN}✅ Phase 1 Docker Compose created from template${NC}"
+        echo -e "${BLUE}🔧 Using environment variables from .env.phase1${NC}"
+    else
+        echo -e "${RED}❌ docker-compose.phase1.template.yml not found! Please check your project setup.${NC}"
+        exit 1
+    fi
 else
     echo -e "${YELLOW}⚠️  docker-compose.phase1.yml already exists, skipping...${NC}"
 fi
@@ -163,7 +120,7 @@ echo -e "${YELLOW}Step 5: Starting Phase 1 infrastructure...${NC}"
 
 # Start databases and Redis
 echo "Starting databases..."
-docker-compose -f docker-compose.phase1.yml up -d postgres redis qdrant
+docker-compose --env-file .env.phase1 -f docker-compose.phase1.yml up -d postgres redis qdrant
 
 # Wait for services to be healthy
 echo "Waiting for services to be ready..."
@@ -171,7 +128,7 @@ sleep 10
 
 # Check service health
 echo "Checking service health..."
-if docker-compose -f docker-compose.phase1.yml ps | grep -q "healthy"; then
+if docker-compose --env-file .env.phase1 -f docker-compose.phase1.yml ps | grep -q "healthy"; then
     echo -e "${GREEN}✅ Core services are running${NC}"
 else
     echo -e "${YELLOW}⚠️  Some services may still be starting up${NC}"
