@@ -1,9 +1,9 @@
 # AI Agency Platform - Technical Design Document (TDD)
 
 **Document Type:** Technical Design Document  
-**Version:** 2.1  
-**Status:** Getting Ready Architecture  
-**Last Updated:** 2025
+**Version:** 3.0  
+**Status:** Dual-Agent Architecture - Production Ready  
+**Last Updated:** 2025-01-17  
 **Classification:** Internal - Development Team  
 
 ---
@@ -22,199 +22,361 @@
 ## Executive Summary
 
 ### Vision Statement
-Build a unified AI Agency Platform that serves as both a personal AI operating system and a commercial AI agency, where every internal tool becomes a potential customer product through self-configuring agents and sophisticated multi-agent orchestration.
+Build a sophisticated dual-agent AI Agency Platform that combines Claude Code agents for development productivity with vendor-agnostic Infrastructure agents for business and customer operations, creating a comprehensive AI ecosystem that serves both personal development needs and commercial agency services.
 
 ### Business Impact
-- **Personal Productivity:** AI-powered personal operating system
-- **Professional Development:** Visual workflow platform for building AI solutions
+- **Development Acceleration:** Claude Code agents provide cutting-edge development assistance
+- **Business Automation:** Infrastructure agents handle customer bots and business processes
+- **Commercial Scalability:** Vendor-agnostic infrastructure agents can be sold regardless of AI model
+- **Personal Productivity:** Integrated dual-agent system for maximum efficiency
 
 ### Technical Innovation
-- **Self-Configuring Agents:** LAUNCH bots that configure themselves through conversation in <60 seconds
-- **Visual AI Orchestration:** n8n + LangGraph integration for sophisticated agent workflows
-- **Security-First Architecture:** Multi-tier isolation with enterprise-grade audit trails
-- **Local-First Development:** Open-source foundation with cloud deployment capabilities
+- **Dual-Agent Architecture:** Claude Code + Infrastructure agents working in harmony
+- **Vendor-Agnostic Infrastructure:** Business agents work with any AI model (Claude, OpenAI, Meta, DeepSeek)
+- **MCPhub Central Hub:** All infrastructure agents connect through unified security hub
+- **Self-Configuring LAUNCH Bots:** Customer bots that configure themselves in <60 seconds
+- **Advanced Multi-Agent Coordination:** LangGraph + n8n integration for sophisticated workflows
 
 ---
 
 ## System Architecture
 
-### High-Level Architecture Overview
+### Dual-Agent Architecture Overview
+
+The AI Agency Platform implements a sophisticated dual-agent architecture that separates development-focused agents from business/customer-focused agents, providing both personal productivity and commercial scalability.
 
 ```mermaid
 graph TB
-    subgraph "Interface Layer"
-        A1[Claude Desktop]
-        A2[WhatsApp/Telegram]
-        A3[Web Dashboard]
-        A4[Customer Portal]
+    subgraph "Claude Code Agent System (Development)"
+        CC1[Claude Desktop Interface]
+        CC2[~/.claude/agents/ - User Level]
+        CC3[.claude/agents/ - Project Level]
+        CC4[Claudia Personal Assistant]
+        CC5[Claude Code Development Tools]
     end
     
-    subgraph "MCP Security & Access Layer"
-        B1[MCPhub Server :3000]
-        B2[JWT + bcrypt Authentication]
-        B3[RBAC Authorization]
-        B4[Smart Routing & Semantic Search]
-        B5[Group-based Isolation]
+    subgraph "Infrastructure Agent System (Business/Customer)"
+        IA1[WhatsApp/Telegram Gateways]
+        IA2[Web Dashboard]
+        IA3[Customer Portal]
+        IA4[n8n Workflow Engine]
     end
     
-    subgraph "Orchestration Layer"
-        C1[n8n Workflows]
-        C2[LangGraph Coordination]
-        C3[Redis/BullMQ Queues]
-        C4[Multi-Agent State Management]
+    subgraph "MCPhub Central Hub (Infrastructure Only)"
+        MH1[MCPhub Server :3000]
+        MH2[JWT + bcrypt Authentication]
+        MH3[RBAC Group-Based Security]
+        MH4[Smart Tool Routing]
+        MH5[Customer Isolation Engine]
     end
     
-    subgraph "Agent Fleet"
-        D1[Personal Agents]
-        D2[Professional Agents]
-        D3[Business Agents]
-        D4[Customer LAUNCH Bots]
+    subgraph "Infrastructure Agent Fleet"
+        IF1[Business Intelligence Agent]
+        IF2[Marketing Creative Agent]
+        IF3[Research Analyst Agent]
+        IF4[Business Analytics Agent]
+        IF5[Development Automation Agent]
+        IF6[n8n Workflow Architect]
+        IF7[Customer LAUNCH Bots]
+        IF8[Coordination Orchestrator]
     end
     
-    subgraph "Data & Infrastructure"
-        E1[PostgreSQL]
-        E2[Redis Cache]
-        E3[Qdrant Vector DB]
-        E4[Apache Airflow]
+    subgraph "Shared Communication Bridge"
+        SB1[Redis/BullMQ Queues]
+        SB2[Inter-Agent Message Bus]
+        SB3[Status Notification System]
     end
     
-    A1 -.->|MCP Protocol| B1
-    A2 --> B1
-    A3 --> B1
-    A4 --> B1
+    subgraph "Data & Infrastructure Layer"
+        DI1[PostgreSQL - User/Group Management]
+        DI2[Redis - Sessions & Queues]
+        DI3[Qdrant - Agent Memory & Context]
+        DI4[n8n Database - Workflows]
+    end
     
-    B1 --> B2
-    B2 --> B3
-    B3 --> B4
-    B4 --> B5
+    %% Claude Code Agent Connections
+    CC1 -.->|MCP Direct| CC2
+    CC1 -.->|MCP Direct| CC3
+    CC2 --> CC4
+    CC3 --> CC5
     
-    B5 --> C1
-    B1 --> C2
-    C1 --> C3
-    C2 --> C4
+    %% Infrastructure Agent Connections
+    IA1 --> MH1
+    IA2 --> MH1
+    IA3 --> MH1
+    IA4 --> MH1
     
-    C3 --> D1
-    C4 --> D2
-    C1 --> D3
-    C2 --> D4
+    %% MCPhub Hub Connections
+    MH1 --> MH2
+    MH2 --> MH3
+    MH3 --> MH4
+    MH4 --> MH5
     
-    D1 --> E1
-    D2 --> E2
-    D3 --> E3
-    D4 --> E4
+    %% MCPhub to Infrastructure Agents
+    MH1 --> IF1
+    MH1 --> IF2
+    MH1 --> IF3
+    MH1 --> IF4
+    MH1 --> IF5
+    MH1 --> IF6
+    MH1 --> IF7
+    MH1 --> IF8
+    
+    %% Shared Communication
+    CC5 -.->|Status Updates| SB1
+    IF8 --> SB1
+    SB1 --> SB2
+    SB2 --> SB3
+    
+    %% Data Layer Connections
+    MH1 --> DI1
+    SB1 --> DI2
+    IF8 --> DI3
+    IA4 --> DI4
+    
+    %% Claude Code to Infrastructure Bridge (When Needed)
+    CC5 -.->|Tool Requests| MH1
 ```
+
+### Agent System Comparison
+
+| Aspect | Claude Code Agents | Infrastructure Agents |
+|--------|-------------------|---------------------|
+| **Purpose** | Development productivity & personal assistance | Business processes & customer operations |
+| **AI Model** | Claude (Anthropic) via MCP | Vendor-agnostic (Claude, OpenAI, Meta, DeepSeek) |
+| **Location** | `~/.claude/agents/` (user) & `.claude/agents/` (project) | Centralized infrastructure via MCPhub |
+| **Security** | Direct MCP connections, file-based security | MCPhub group-based isolation & authentication |
+| **Tools** | Development tools, filesystem, Git, code analysis | Business tools, web search, databases, APIs |
+| **Scalability** | Personal/team level | Enterprise/customer level |
+| **Commercial Use** | Personal development aid | Sellable business service |
 
 ### Core Technology Stack
 
-#### Foundation Stack
+#### Claude Code Agent Stack
+```yaml
+Development Interface:
+  Primary: Claude Desktop with MCP protocol
+  Secondary: Claude Code CLI integration
+  Location: ~/.claude/agents/ (user), .claude/agents/ (project)
+  
+AI Model:
+  Provider: Anthropic Claude (Sonnet 4)
+  Integration: Direct MCP connections
+  Tools: Development-focused MCP servers
+  
+Development Tools:
+  Code: Git, GitHub, filesystem access, code analysis
+  Testing: Automated testing frameworks, code review
+  Deployment: CI/CD integration, container management
+  
+Security:
+  Model: File-based permissions, user-level isolation
+  Access: Direct MCP server connections
+  Scope: Development environment only
+```
+
+#### Infrastructure Agent Stack  
 ```yaml
 MCP Security & Management:
-  Primary: MCPhub (enterprise MCP server hub)
-  Authentication: JWT + bcrypt (built into MCPhub)
-  Authorization: Role-based access control (RBAC)
+  Hub: MCPhub (enterprise MCP server hub) - Port 3000
+  Authentication: JWT + bcrypt with session management
+  Authorization: Group-based RBAC with customer isolation
   Routing: Smart semantic search for tool discovery
   
-Orchestration:
-  Primary: n8n (visual workflow automation)
-  Secondary: LangGraph (multi-agent state management)
-  Queue: Redis + BullMQ (job processing)
+AI Model Flexibility:
+  Primary: OpenAI GPT-4o (configurable)
+  Alternatives: Claude API, Meta Llama, DeepSeek, local models
+  Framework: LangChain + LangGraph for vendor neutrality
+  Integration: MCPhub handles all AI model connections
   
-AI/ML:
-  Framework: LangChain + LangGraph
-  Models: OpenAI GPT-4 + Claude (via API)
-  Memory: Qdrant Vector Database
-  Learning: Apache Airflow ETL Pipelines
+Orchestration:
+  Primary: n8n (visual workflow automation) - Port 5678
+  Secondary: LangGraph (multi-agent state management)
+  Queue: Redis + BullMQ (job processing and coordination)
+  Communication: WhatsApp/Telegram/Slack gateways
+  
+Business Tools:
+  Research: Brave Search, Context7, web automation
+  Analytics: PostgreSQL, SQLite, business intelligence
+  Creative: OpenAI, EverArt, content generation
+  Integration: n8n workflow automation, API connectors
+```
 
+#### Shared Infrastructure
+```yaml
 Data Layer:
-  Primary: PostgreSQL 14+ (ACID transactions)
-  Cache: Redis 7+ (sessions, queues, temp data)
-  Vector: Qdrant (embeddings, agent memory)
-  Analytics: TimescaleDB (time-series metrics)
+  Primary: PostgreSQL 15+ (user management, business data)
+  Cache: Redis 7+ (sessions, queues, cross-agent communication)
+  Vector: Qdrant (agent memory, embeddings, context)
+  Workflows: n8n internal database (automation storage)
+
+Communication:
+  Queue: Redis/BullMQ (inter-agent messaging)
+  Gateways: WhatsApp Business API, Telegram, Slack
+  Notifications: Real-time status updates across systems
+  Bridge: Shared message bus for agent coordination
 
 Infrastructure:
   Containers: Docker + Docker Compose
+  Reverse Proxy: Nginx with security headers
   CI/CD: GitHub Actions
   Monitoring: Prometheus + Grafana
-  Logs: ELK Stack (Elasticsearch, Logstash, Kibana)
+  Logs: Centralized logging with audit trails
 ```
 
 ### Security Architecture
 
-#### MCPhub Group-Based Security Model
+#### Dual-Agent Security Model
+
+The platform implements separate security models for each agent system, ensuring appropriate isolation and access control for different use cases.
+
+#### Claude Code Agent Security
+```yaml
+Security Model: Direct MCP + File-Based Permissions
+
+User-Level Agents (~/.claude/agents/):
+  access: Individual user only
+  tools: Personal development tools, Git, filesystem
+  isolation: User account boundary
+  authentication: OS-level user authentication
+  scope: User's home directory and authorized repositories
+  
+Project-Level Agents (.claude/agents/):
+  access: Project team members
+  tools: Project-specific tools, repository access, CI/CD
+  isolation: Project directory boundary  
+  authentication: Git repository permissions
+  scope: Specific project directory and related resources
+  
+Security Features:
+  - Direct MCP server connections (no central hub)
+  - File system permissions as security boundary
+  - Repository-based access control
+  - OS-level process isolation
+  - Development tool sandboxing
+```
+
+#### Infrastructure Agent Security (MCPhub-Managed)
 ```yaml
 MCPhub Groups (Security Isolation):
 
-Personal Group - Tier 0:
-  access: Owner and personal agents only
-  tools: Calendar, notes, files, email, personal data
-  isolation: Complete personal data protection
+Personal Infrastructure - Tier 0:
+  access: Owner only (infrastructure agents for personal use)
+  tools: Personal automation, calendar, notes, email
+  isolation: Complete owner data protection
   authentication: Multi-factor authentication required
+  mcphub_group: "personal-infrastructure"
   
-Development Group - Tier 1:
-  access: Development team agents and tools
-  tools: Git, filesystem, Docker, CI/CD, code analysis
+Development Infrastructure - Tier 1:
+  access: Development team (infrastructure agents for dev tasks)
+  tools: Deployment automation, monitoring, infrastructure
   isolation: Development environment separation
   authentication: Team member JWT tokens
+  mcphub_group: "development-infrastructure"
   
-Business Group - Tier 2:
+Business Operations - Tier 2:
   access: Business process agents
-  tools: Web search, analytics, CRM, marketing tools
+  tools: Web search, analytics, CRM, marketing automation
   isolation: Business data compartmentalization
   authentication: Business role-based access
+  mcphub_group: "business-operations"
   
-Customer Groups - Tier 3:
+Customer Isolation - Tier 3:
   access: Per-customer complete isolation
   tools: Customer-specific whitelisted APIs only
   isolation: Complete customer data separation
   authentication: Customer-specific tokens with limited scope
+  mcphub_group: "customer-{customerId}"
   
-Public Group - Tier 4:
-  access: Unauthenticated public access
-  tools: None (static content only)
-  isolation: No data access
-  authentication: None required
+Public Gateway - Tier 4:
+  access: Public-facing LAUNCH bots
+  tools: Limited demo tools only
+  isolation: No persistent data access
+  authentication: Rate-limited anonymous access
+  mcphub_group: "public-gateway"
 ```
 
-#### MCPhub Security Features
+#### Cross-System Security Bridge
+```yaml
+Communication Security:
+  inter_system_auth: Shared JWT tokens for status updates
+  data_flow_validation: Encrypted message passing only
+  scope_enforcement: Infrastructure agents cannot access Claude Code files
+  audit_logging: All cross-system communications logged
+  
+Isolation Boundaries:
+  claude_code_isolation: Cannot access MCPhub infrastructure data
+  infrastructure_isolation: Cannot access user's local development files
+  customer_isolation: Complete separation between customer environments
+  personal_isolation: Personal data never accessible to business/customer agents
+```
+
+#### MCPhub Security Features (Infrastructure Agents Only)
 ```yaml
 Authentication:
   mechanism: JWT tokens with bcrypt password hashing
   session_management: Secure token refresh and revocation
-  multi_factor: Optional MFA for administrative access
+  multi_factor: Required for Tier 0-1, optional for Tier 2-3
   rate_limiting: Built-in request throttling per user/group
+  api_key_management: Secure storage for external service keys
   
 Authorization:
-  model: Role-based access control (RBAC)
-  granularity: Per-tool, per-group, per-user permissions
-  inheritance: Hierarchical permission structure
-  audit: Complete action audit trails
+  model: Group-based RBAC with customer isolation
+  granularity: Per-tool, per-group, per-customer permissions
+  inheritance: Hierarchical permission structure with overrides
+  audit: Complete action audit trails with customer separation
+  dynamic_groups: Automatic customer group creation for LAUNCH bots
   
 Tool Security:
-  discovery: Semantic search with access control filtering
+  discovery: Semantic search with group-based filtering
   execution: Parameter validation and sanitization
   isolation: Complete separation between customer groups
   monitoring: Real-time security event detection
+  vendor_agnostic: AI model abstraction layer for tool calls
   
 Data Protection:
-  encryption: Data at rest and in transit
+  encryption: Data at rest and in transit (TLS 1.3)
   isolation: Group-level data compartmentalization
-  backup: Encrypted backup with access controls
+  customer_separation: Complete data isolation per customer
+  backup: Encrypted backup with group-based access controls
   compliance: GDPR/CCPA ready privacy controls
+  retention: Configurable data retention per group
 ```
 
-#### MCPhub Integration & Security Implementation
+#### MCPhub Integration & Security Implementation (Infrastructure Agents Only)
+
+**IMPORTANT:** MCPhub only manages Infrastructure agents. Claude Code agents use direct MCP connections and do not go through MCPhub.
+
 ```typescript
-// MCPhub Enterprise Configuration
-interface MCPhubConfig {
+// MCPhub Dual-Agent Architecture Configuration
+interface MCPhubDualAgentConfig {
   server: {
     port: 3000,
     image: 'mcphub/mcphub:latest',
     baseURL: 'http://localhost:3000',
+    description: 'Infrastructure Agent Hub (Claude Code agents connect directly to MCP)',
     endpoints: {
-      personal: '/mcp/personal',
-      development: '/mcp/development', 
-      business: '/mcp/business',
-      customer: '/mcp/customer-{customerId}'
+      personalInfrastructure: '/mcp/personal-infrastructure',
+      developmentInfrastructure: '/mcp/development-infrastructure', 
+      businessOperations: '/mcp/business-operations',
+      customerIsolation: '/mcp/customer-{customerId}',
+      publicGateway: '/mcp/public-gateway',
+      claudeCodeBridge: '/bridge/claude-code'  // For status updates only
+    }
+  },
+  
+  dualAgentSecurity: {
+    claudeCodeSystem: {
+      access: 'NONE - Direct MCP connections only',
+      description: 'Claude Code agents bypass MCPhub entirely',
+      bridgeAccess: 'Status updates and tool requests only',
+      isolation: 'File system and OS-level permissions'
+    },
+    
+    infrastructureSystem: {
+      access: 'FULL - All Infrastructure agents via MCPhub',
+      description: 'All business and customer agents managed by MCPhub',
+      isolation: 'Group-based with customer separation'
     }
   },
   
@@ -223,101 +385,157 @@ interface MCPhubConfig {
       jwt: {
         secret: process.env.JWT_SECRET,
         expiresIn: '24h',
-        algorithm: 'HS256'
+        algorithm: 'HS256',
+        issuer: 'ai-agency-platform-mcphub'
       },
-      database: 'PostgreSQL with user management',
-      sessions: 'Redis-backed session management'
+      database: 'PostgreSQL with infrastructure user management',
+      sessions: 'Redis-backed session management for infrastructure agents',
+      claudeCodeBridge: 'Limited JWT for status updates only'
     },
     
     authorization: {
       groups: {
-        personal: {
-          endpoint: '/mcp/personal',
-          isolation: 'owner-only',
-          tools: ['calendar', 'notes', 'files', 'email']
+        personalInfrastructure: {
+          endpoint: '/mcp/personal-infrastructure',
+          isolation: 'owner-only-infrastructure',
+          description: 'Personal automation agents (not Claude Code)',
+          tools: ['personal-automation', 'calendar-sync', 'email-automation'],
+          aiModels: ['openai-gpt4o', 'claude-api', 'local-llama'],
+          restrictions: 'Cannot access Claude Code files or repos'
         },
-        development: {
-          endpoint: '/mcp/development',
-          isolation: 'team-level',
-          tools: ['github', 'docker', 'filesystem', 'code-sandbox']
+        developmentInfrastructure: {
+          endpoint: '/mcp/development-infrastructure',
+          isolation: 'team-infrastructure-level',
+          description: 'Infrastructure deployment and monitoring (not development coding)',
+          tools: ['docker-deploy', 'monitoring-setup', 'infrastructure-automation'],
+          aiModels: ['openai-gpt4o', 'claude-api'],
+          restrictions: 'Cannot access local development files'
         },
-        business: {
-          endpoint: '/mcp/business', 
-          isolation: 'department-level',
-          tools: ['fetch', 'playwright', 'web-search', 'analytics']
+        businessOperations: {
+          endpoint: '/mcp/business-operations', 
+          isolation: 'business-department-level',
+          description: 'Business process agents for research, analytics, creative',
+          tools: ['brave-search', 'context7', 'postgres', 'everart', 'openai'],
+          aiModels: ['openai-gpt4o', 'claude-api', 'meta-llama', 'deepseek'],
+          restrictions: 'No access to personal or development data'
         },
-        customer: {
+        customerIsolation: {
           endpoint: '/mcp/customer-{id}',
           isolation: 'complete-per-customer',
-          tools: ['limited-search', 'basic-ai'],
-          dynamic: true
+          description: 'LAUNCH bots with complete customer data separation',
+          tools: 'customer-specific-whitelist',
+          aiModels: 'customer-preference-based',
+          dynamic: true,
+          restrictions: 'Complete isolation between customers'
+        },
+        publicGateway: {
+          endpoint: '/mcp/public-gateway',
+          isolation: 'no-persistent-data',
+          description: 'Public-facing demo bots',
+          tools: ['limited-search', 'basic-content-generation'],
+          aiModels: ['openai-gpt3.5-turbo'],
+          restrictions: 'No data persistence, rate limited'
         }
       }
-    },
-    
-    monitoring: {
-      healthCheck: '/health',
-      audit: 'comprehensive request logging',
-      metrics: 'real-time performance monitoring',
-      alerts: 'security event notifications'
-    }
-  },
-  
-  infrastructure: {
-    database: {
-      image: 'postgres:15-alpine',
-      url: 'postgresql://mcphub:password@postgres:5432/mcphub',
-      healthCheck: 'pg_isready -U mcphub -d mcphub'
-    },
-    cache: {
-      image: 'redis:7-alpine',
-      url: 'redis://redis:6379',
-      auth: 'requirepass ${REDIS_PASSWORD}'
-    },
-    volumes: {
-      config: './mcp_settings.json:/app/mcp_settings.json:ro',
-      servers: './servers.json:/app/servers.json:ro',
-      data: 'mcphub_data:/app/data',
-      logs: 'mcphub_logs:/app/logs'
     }
   }
-}
 
-// MCPhub API Integration
-interface MCPhubAPI {
-  // Group Management (Dynamic Customer Groups)
+// MCPhub Dual-Agent API Integration
+interface MCPhubDualAgentAPI {
+  // Infrastructure Agent Group Management
   groups: {
-    create: (customerId: string) => Promise<{
+    // Customer group creation for LAUNCH bots
+    createCustomer: (customerId: string, preferences: CustomerPreferences) => Promise<{
       endpoint: `/mcp/customer-${customerId}`,
       tools: string[],
+      aiModel: string,
       isolation: 'complete'
     }>,
+    
+    // Standard group management for infrastructure agents
     assign: (groupName: string, serverIds: string[]) => Promise<void>,
-    configure: (groupName: string, config: GroupConfig) => Promise<void>
+    configure: (groupName: string, config: GroupConfig) => Promise<void>,
+    
+    // AI model configuration per group
+    setAIModel: (groupName: string, modelConfig: AIModelConfig) => Promise<void>
   },
   
-  // Server Management
+  // Infrastructure MCP Server Management
   servers: {
-    register: (config: MCPServerConfig) => Promise<ServerResponse>,
-    update: (serverId: string, config: MCPServerConfig) => Promise<void>,
+    register: (config: InfrastructureMCPServerConfig) => Promise<ServerResponse>,
+    update: (serverId: string, config: InfrastructureMCPServerConfig) => Promise<void>,
     status: (serverId?: string) => Promise<ServerStatus[]>,
-    restart: (serverId: string) => Promise<void>
+    restart: (serverId: string) => Promise<void>,
+    
+    // Vendor-agnostic AI model management
+    configureAIModel: (modelType: 'openai' | 'claude' | 'meta' | 'deepseek' | 'local') => Promise<void>
   },
   
-  // Smart Routing & Tool Discovery
+  // Smart Routing & Tool Discovery (Infrastructure Only)
   routing: {
     semantic: (query: string, groupName?: string) => Promise<Tool[]>,
-    execute: (toolName: string, params: any, groupName: string) => Promise<any>,
-    discover: (groupName: string) => Promise<Tool[]>
+    execute: (toolName: string, params: any, groupName: string, aiModel?: string) => Promise<any>,
+    discover: (groupName: string) => Promise<Tool[]>,
+    
+    // AI model routing for vendor neutrality
+    selectOptimalAIModel: (task: TaskType, groupName: string) => Promise<string>
   },
   
-  // Security & Monitoring
+  // Claude Code Bridge (Limited Interface)
+  claudeCodeBridge: {
+    // Status updates from Claude Code agents
+    receiveStatusUpdate: (agentId: string, status: AgentStatus) => Promise<void>,
+    
+    // Tool requests from Claude Code to Infrastructure
+    requestInfrastructureTool: (toolName: string, params: any, justification: string) => Promise<any>,
+    
+    // Query Infrastructure agent results
+    queryInfrastructureResult: (workflowId: string) => Promise<WorkflowResult>
+  },
+  
+  // LAUNCH Bot Lifecycle Management
+  launchBots: {
+    initializeBot: (customerId: string, conversationHistory: Message[]) => Promise<LAUNCHBot>,
+    progressBot: (botId: string, stage: 'blank' | 'identifying' | 'learning' | 'integrating' | 'active') => Promise<void>,
+    configureBot: (botId: string, configuration: BotConfiguration) => Promise<void>,
+    getBotStatus: (botId: string) => Promise<BotStatus>
+  },
+  
+  // Security & Monitoring (Infrastructure Focus)
   security: {
     authenticate: (credentials: LoginCredentials) => Promise<JWTResponse>,
     authorize: (token: string, groupName: string) => Promise<boolean>,
     audit: (query: AuditQuery) => Promise<AuditLog[]>,
-    health: () => Promise<HealthStatus>
+    health: () => Promise<HealthStatus>,
+    
+    // Cross-system security validation
+    validateCrossSystemRequest: (fromSystem: 'claude-code' | 'infrastructure', request: any) => Promise<boolean>
   }
+}
+
+// Infrastructure-Specific Configuration Types
+interface CustomerPreferences {
+  aiModel: 'openai-gpt4o' | 'claude-api' | 'meta-llama' | 'deepseek' | 'auto-select',
+  industry: string,
+  complianceRequirements: string[],
+  customTools: string[]
+}
+
+interface AIModelConfig {
+  provider: string,
+  model: string,
+  apiKey: string,
+  parameters: Record<string, any>
+}
+
+interface InfrastructureMCPServerConfig {
+  name: string,
+  command: string,
+  args: string[],
+  env: Record<string, string>,
+  group: string,
+  aiModelCompatibility: string[],
+  vendorNeutral: boolean
 }
 ```
 
@@ -325,134 +543,413 @@ interface MCPhubAPI {
 
 ## Agent Architecture
 
-### Hierarchical Agent System
+### Dual-Agent System Architecture
 
-#### Personal Agents (Security Tier 0)
+The AI Agency Platform implements two distinct agent ecosystems that work together while maintaining clear separation of concerns and security boundaries.
+
+## Claude Code Agent System (Development-Focused)
+
+### User-Level Claude Code Agents (~/.claude/agents/)
 ```yaml
-Life Assistant Agent:
-  purpose: Calendar, tasks, reminders, personal automation
-  security: Tier 0 (highest security, personal data access)
+Claudia Personal Assistant:
+  purpose: Personal productivity and task management
+  location: ~/.claude/agents/claudia/
   capabilities:
     - Calendar management and scheduling
-    - Task creation and tracking
-    - Email processing and responses
-    - Personal document management
-  integration: Google Workspace, Apple ecosystem
+    - Personal task tracking and reminders
+    - Email drafting and responses
+    - Document organization and search
+  tools: Personal MCP servers (calendar, notes, email)
+  security: User account isolation
   
-Knowledge Manager Agent:
-  purpose: Note-taking, document processing, learning
-  security: Tier 0 (personal knowledge access)
+Personal Development Assistant:
+  purpose: Individual coding and learning support
+  location: ~/.claude/agents/dev-assistant/
   capabilities:
-    - Document analysis and summarization
-    - Knowledge graph construction
-    - Research assistance and synthesis
-    - Personal learning optimization
-  integration: Qdrant vector database, file systems
+    - Code review and suggestions
+    - Learning path recommendations
+    - Personal project management
+    - Technology research and evaluation
+  tools: Git, filesystem, documentation tools
+  security: User directory scope
+  
+Research Companion:
+  purpose: Personal research and knowledge management
+  location: ~/.claude/agents/research/
+  capabilities:
+    - Information gathering and synthesis
+    - Note-taking and organization
+    - Citation management
+    - Knowledge graph building
+  tools: Web research, document analysis, vector storage
+  security: Personal data only
 ```
 
-#### Professional Agents (Security Tier 1)
+### Project-Level Claude Code Agents (.claude/agents/)
 ```yaml
-Code Developer Agent:
-  purpose: Software development assistance
-  security: Tier 1 (development tools access)
+Code Development Lead:
+  purpose: Project-specific development assistance
+  location: .claude/agents/dev-lead/
   capabilities:
-    - Code generation and review
-    - Testing and debugging assistance
-    - Documentation generation
-    - Git workflow automation
-  integration: GitHub, VS Code, CI/CD pipelines
+    - Architecture design and review
+    - Code generation and testing
+    - CI/CD pipeline management
+    - Technical documentation
+  tools: Git, GitHub, Docker, testing frameworks
+  security: Project repository scope
   
-n8n Workflow Architect Agent:
-  purpose: Visual workflow creation and optimization
-  security: Tier 1 (workflow design access)
+Quality Assurance Agent:
+  purpose: Code quality and testing oversight
+  location: .claude/agents/qa/
   capabilities:
-    - Workflow design and implementation
-    - Integration configuration
+    - Automated testing design
+    - Code quality analysis
+    - Security vulnerability scanning
     - Performance optimization
-    - Template creation
-  integration: n8n API, workflow templates
-```
-
-#### Business Agents (Security Tier 2)
-```yaml
-Market Research Agent:
-  purpose: Competitive analysis and market intelligence
-  security: Tier 2 (research tools access)
-  capabilities:
-    - Web research and data collection
-    - Competitive analysis reports
-    - Market trend identification
-    - Lead qualification
-  integration: Web search APIs, business databases
+  tools: Testing tools, static analysis, security scanners
+  security: Read-only code access
   
-Content Creation Agent:
-  purpose: Marketing and communication content
-  security: Tier 2 (content tools access)
+Deployment Specialist:
+  purpose: Infrastructure and deployment automation
+  location: .claude/agents/deployment/
   capabilities:
-    - Blog post and article writing
-    - Social media content creation
-    - Email campaign development
-    - SEO optimization
-  integration: CMS systems, social media APIs
+    - Infrastructure as Code (IaC)
+    - Deployment automation
+    - Monitoring setup
+    - Performance tuning
+  tools: Docker, Kubernetes, cloud providers, monitoring
+  security: Infrastructure deployment scope
 ```
 
-#### Customer LAUNCH Bots (Security Tier 3)
+## Infrastructure Agent System (Business/Customer-Focused)
+
+### Business Intelligence Agents (MCPhub Tier 2)
 ```yaml
-Self-Configuring Agent:
-  purpose: Customer bot that configures itself through conversation
-  security: Tier 3 (complete customer isolation)
+Business Intelligence Agent:
+  purpose: Market research and competitive analysis
+  mcphub_group: business-operations
+  ai_model: Configurable (OpenAI GPT-4o, Claude API, etc.)
   capabilities:
-    - Natural language configuration
-    - Business process learning
-    - Integration setup assistance
-    - Escalation to human support
-  integration: Customer-specific APIs only
+    - Market size analysis and trends
+    - Competitor research and SWOT analysis
+    - Industry intelligence gathering
+    - Lead qualification and scoring
+  tools: Brave Search, Context7, business databases
+  security: Business data compartmentalization
+  
+Marketing Creative Agent:
+  purpose: Content creation and brand messaging
+  mcphub_group: business-operations
+  ai_model: Configurable (optimized for creative tasks)
+  capabilities:
+    - Multi-format content generation
+    - Visual asset creation with EverArt
+    - Brand voice and tone development
+    - Campaign concept development
+  tools: OpenAI, EverArt, content management systems
+  security: Brand asset protection
+  
+Research Analyst Agent:
+  purpose: Deep research and data validation
+  mcphub_group: business-operations
+  ai_model: Configurable (optimized for analysis)
+  capabilities:
+    - Academic and industry research
+    - Fact-checking and source validation
+    - Data synthesis and reporting
+    - Citation and bibliography management
+  tools: Brave Search, Context7, academic databases
+  security: Research data isolation
+```
+
+### Business Analytics Agents (MCPhub Tier 2)
+```yaml
+Business Analytics Agent:
+  purpose: Data analysis and KPI tracking
+  mcphub_group: business-operations
+  ai_model: Configurable (optimized for data analysis)
+  capabilities:
+    - SQL query generation and optimization
+    - Business intelligence reporting
+    - KPI dashboard creation
+    - Statistical analysis and modeling
+  tools: PostgreSQL, SQLite, analytics platforms
+  security: Read-only database access with row-level security
+  
+Financial Analysis Agent:
+  purpose: Financial modeling and analysis
+  mcphub_group: business-operations
+  ai_model: Configurable (optimized for financial calculations)
+  capabilities:
+    - Financial statement analysis
+    - Budget planning and forecasting
+    - ROI and profitability analysis
+    - Risk assessment modeling
+  tools: Financial databases, spreadsheet integration
+  security: Financial data encryption and access controls
+```
+
+### Development Infrastructure Agents (MCPhub Tier 1)
+```yaml
+Development Automation Agent:
+  purpose: Infrastructure automation and deployment
+  mcphub_group: development-infrastructure
+  ai_model: Configurable (optimized for technical tasks)
+  capabilities:
+    - CI/CD pipeline creation
+    - Infrastructure provisioning
+    - Monitoring and alerting setup
+    - Performance optimization
+  tools: GitHub, Docker, cloud APIs, monitoring tools
+  security: Infrastructure-level access with audit logging
+  
+n8n Workflow Architect:
+  purpose: Business process automation
+  mcphub_group: development-infrastructure
+  ai_model: Configurable (optimized for integration tasks)
+  capabilities:
+    - Visual workflow design
+    - API integration and automation
+    - Business process optimization
+    - Error handling and monitoring
+  tools: n8n MCP, API connectors, webhook management
+  security: Workflow isolation and credential protection
+```
+
+### Customer LAUNCH Bots (MCPhub Tier 3)
+```yaml
+Self-Configuring LAUNCH Bot:
+  purpose: Customer onboarding and support automation
+  mcphub_group: customer-{customerId}
+  ai_model: Configurable per customer preference
+  capabilities:
+    - Natural language business configuration
+    - Integration setup and testing
+    - Customer support and escalation
+    - Usage analytics and optimization
+  tools: Customer-specific whitelisted APIs only
+  security: Complete customer isolation
+  lifecycle:
+    - blank: Initial state, learning business purpose
+    - identifying: Understanding customer needs
+    - learning: Gathering business requirements
+    - integrating: Setting up tools and workflows
+    - active: Operational customer support
+  
+Industry-Specific Bots:
+  purpose: Specialized customer bots for specific industries
+  mcphub_group: customer-{customerId}
+  ai_model: Industry-optimized model selection
+  specializations:
+    - E-commerce: Product management, inventory, orders
+    - Healthcare: Appointment scheduling, patient communication
+    - Real Estate: Lead qualification, property management
+    - Professional Services: Client management, project tracking
+  security: Industry compliance (HIPAA, PCI-DSS, etc.)
+```
+
+### System Coordination Agent (MCPhub Tier 0)
+```yaml
+Coordination Orchestrator:
+  purpose: Multi-agent workflow coordination
+  mcphub_group: personal-infrastructure
+  ai_model: Highly capable model (GPT-4o or Claude-3.5-Sonnet)
+  capabilities:
+    - Cross-system agent coordination
+    - Workflow state management
+    - Resource allocation and optimization
+    - Conflict resolution and error recovery
+  tools: Limited to coordination and communication tools
+  security: Highest security level, audit all actions
+  special_features:
+    - Can communicate with both Claude Code and Infrastructure agents
+    - Manages complex multi-agent workflows
+    - Provides system-wide status and health monitoring
+    - Handles escalation and human handoff procedures
 ```
 
 ### Multi-Agent Coordination Patterns
 
-#### Sequential Workflow Pattern
+#### Cross-System Coordination Pattern
 ```python
-# Research → Analysis → Creation → Deployment
-class SequentialWorkflow:
-    def execute(self, task):
-        research_result = research_agent.process(task)
-        analysis_result = analysis_agent.process(research_result)
-        creation_result = creation_agent.process(analysis_result)
-        deployment_result = deployment_agent.process(creation_result)
-        return deployment_result
+# Claude Code + Infrastructure Agent Coordination
+class DualSystemWorkflow:
+    def __init__(self):
+        self.claude_code_bridge = ClaudeCodeBridge()
+        self.infrastructure_orchestrator = InfrastructureOrchestrator()
+        self.communication_bus = RedisMessageBus()
+    
+    async def execute(self, task):
+        # Determine which system should lead
+        lead_system = self.classify_task_system(task)
+        
+        if lead_system == "claude_code":
+            return await self.claude_code_led_workflow(task)
+        else:
+            return await self.infrastructure_led_workflow(task)
+    
+    async def claude_code_led_workflow(self, task):
+        # Claude Code agents lead, request Infrastructure agent assistance
+        claude_result = await self.claude_code_bridge.process(task)
+        
+        if claude_result.needs_infrastructure_support:
+            infra_request = {
+                "type": "infrastructure_assist",
+                "task": claude_result.infrastructure_task,
+                "context": claude_result.context
+            }
+            infra_result = await self.infrastructure_orchestrator.process(infra_request)
+            claude_result.merge_infrastructure_result(infra_result)
+        
+        return claude_result
+    
+    async def infrastructure_led_workflow(self, task):
+        # Infrastructure agents lead, may request Claude Code assistance
+        infra_result = await self.infrastructure_orchestrator.process(task)
+        
+        if infra_result.needs_development_support:
+            dev_request = {
+                "type": "development_assist", 
+                "task": infra_result.development_task,
+                "context": infra_result.context
+            }
+            # Send request via shared communication bus
+            await self.communication_bus.send_to_claude_code(dev_request)
+            dev_result = await self.communication_bus.wait_for_claude_code_response()
+            infra_result.merge_development_result(dev_result)
+        
+        return infra_result
 ```
 
-#### Parallel Execution Pattern
+#### Infrastructure Agent Sequential Pattern
 ```python
-# Multiple agents working simultaneously
-class ParallelWorkflow:
-    def execute(self, task):
-        subtasks = task_splitter.split(task)
-        results = []
+# Infrastructure agents working in sequence via MCPhub
+class InfrastructureSequentialWorkflow:
+    def __init__(self, mcphub_client):
+        self.mcphub = mcphub_client
         
-        with ThreadPoolExecutor() as executor:
-            futures = [
-                executor.submit(agent.process, subtask)
-                for agent, subtask in zip(agents, subtasks)
-            ]
-            results = [future.result() for future in futures]
+    async def execute(self, task):
+        # Research → Business Analysis → Creative → Development
+        research_result = await self.mcphub.invoke_agent(
+            group="business-operations",
+            agent="business-intelligence", 
+            task=task
+        )
         
-        return result_aggregator.combine(results)
+        analysis_result = await self.mcphub.invoke_agent(
+            group="business-operations",
+            agent="business-analytics",
+            task={"research_data": research_result, "analysis_request": task}
+        )
+        
+        creative_result = await self.mcphub.invoke_agent(
+            group="business-operations", 
+            agent="marketing-creative",
+            task={"business_context": analysis_result, "creative_brief": task}
+        )
+        
+        deployment_result = await self.mcphub.invoke_agent(
+            group="development-infrastructure",
+            agent="development-automation",
+            task={"creative_assets": creative_result, "deployment_spec": task}
+        )
+        
+        return {
+            "research": research_result,
+            "analysis": analysis_result, 
+            "creative": creative_result,
+            "deployment": deployment_result
+        }
 ```
 
-#### Hierarchical Delegation Pattern
+#### Customer LAUNCH Bot Self-Configuration Pattern
 ```python
-# Lead agent coordinating specialist agents
-class HierarchicalWorkflow:
-    def execute(self, complex_task):
-        plan = lead_agent.create_plan(complex_task)
+# Self-configuring customer bot workflow
+class LAUNCHBotWorkflow:
+    def __init__(self, customer_id, mcphub_client):
+        self.customer_id = customer_id
+        self.mcphub = mcphub_client
+        self.customer_group = f"customer-{customer_id}"
         
-        for step in plan.steps:
-            specialist = self.select_specialist(step.type)
-            step.result = specialist.process(step.requirements)
-            
-        return lead_agent.synthesize_results(plan)
+    async def configure_from_conversation(self, conversation_messages):
+        # Stage 1: Blank → Identifying
+        business_analysis = await self.mcphub.invoke_agent(
+            group=self.customer_group,
+            agent="business-identifier",
+            task={"messages": conversation_messages}
+        )
+        
+        if business_analysis.confidence < 0.8:
+            return await self.request_more_info(business_analysis.questions)
+        
+        # Stage 2: Identifying → Learning  
+        requirements = await self.mcphub.invoke_agent(
+            group=self.customer_group,
+            agent="requirements-extractor", 
+            task={"business_context": business_analysis, "messages": conversation_messages}
+        )
+        
+        # Stage 3: Learning → Integrating
+        integration_plan = await self.mcphub.invoke_agent(
+            group=self.customer_group,
+            agent="integration-planner",
+            task={"requirements": requirements}
+        )
+        
+        # Stage 4: Integrating → Active
+        configured_bot = await self.mcphub.create_customer_bot(
+            customer_id=self.customer_id,
+            configuration=integration_plan.bot_config,
+            tools=integration_plan.required_tools
+        )
+        
+        return configured_bot
+```
+
+#### Hierarchical Multi-System Delegation Pattern
+```python
+# Coordination Orchestrator managing both systems
+class SystemOrchestrator:
+    def __init__(self):
+        self.claude_code_connector = ClaudeCodeConnector()
+        self.infrastructure_coordinator = InfrastructureCoordinator()
+        
+    async def execute_complex_project(self, project_spec):
+        # Break down complex project into system-specific components
+        project_plan = await self.create_project_plan(project_spec)
+        
+        tasks = {
+            "claude_code_tasks": project_plan.development_tasks,
+            "infrastructure_tasks": project_plan.business_tasks,
+            "coordination_points": project_plan.integration_points
+        }
+        
+        # Execute in parallel with coordination points
+        claude_code_future = asyncio.create_task(
+            self.claude_code_connector.execute_tasks(tasks["claude_code_tasks"])
+        )
+        
+        infrastructure_future = asyncio.create_task(
+            self.infrastructure_coordinator.execute_tasks(tasks["infrastructure_tasks"])
+        )
+        
+        # Monitor and coordinate at integration points
+        for coordination_point in tasks["coordination_points"]:
+            await self.coordinate_at_milestone(
+                coordination_point, 
+                claude_code_future, 
+                infrastructure_future
+            )
+        
+        # Combine final results
+        claude_code_results = await claude_code_future
+        infrastructure_results = await infrastructure_future
+        
+        return self.synthesize_project_results(
+            claude_code_results, 
+            infrastructure_results, 
+            project_plan
+        )
 ```
 
 ---
@@ -1932,30 +2429,320 @@ Recovery Procedures:
 
 ---
 
+## Dual-Agent Implementation Recommendations
+
+### MCPhub Group Restructuring Requirements
+
+Based on the dual-agent architecture, the following changes are required for MCPhub configuration:
+
+#### Updated MCPhub Group Configuration
+```json
+{
+  "groups": {
+    "personal-infrastructure": {
+      "name": "Personal Infrastructure Agents",
+      "description": "Personal automation agents (separate from Claude Code)",
+      "endpoint": "/mcp/personal-infrastructure",
+      "isolation": "owner-only-infrastructure",
+      "permissions": ["read", "write", "execute"],
+      "tools": ["personal-automation", "calendar-sync", "email-automation", "apple-reminders"],
+      "aiModels": ["openai-gpt4o", "claude-api", "local-llama"],
+      "restrictions": "Cannot access Claude Code files or repositories",
+      "rateLimit": {
+        "requests": 1000,
+        "window": "1h"
+      }
+    },
+    
+    "development-infrastructure": {
+      "name": "Development Infrastructure Agents", 
+      "description": "Infrastructure deployment and monitoring (not coding)",
+      "endpoint": "/mcp/development-infrastructure",
+      "isolation": "team-infrastructure-level",
+      "permissions": ["read", "write", "execute"],
+      "tools": ["docker-deploy", "monitoring-setup", "infrastructure-automation", "ci-cd-management"],
+      "aiModels": ["openai-gpt4o", "claude-api"],
+      "restrictions": "Cannot access local development files or source code",
+      "rateLimit": {
+        "requests": 500,
+        "window": "1h"
+      }
+    },
+    
+    "business-operations": {
+      "name": "Business Operations Agents",
+      "description": "Business process automation, research, and analytics",
+      "endpoint": "/mcp/business-operations", 
+      "isolation": "business-department-level",
+      "permissions": ["read", "execute"],
+      "tools": ["brave-search", "context7", "postgres", "everart", "openai", "n8n-workflows"],
+      "aiModels": ["openai-gpt4o", "claude-api", "meta-llama", "deepseek"],
+      "restrictions": "No access to personal or development data",
+      "rateLimit": {
+        "requests": 300,
+        "window": "1h"
+      }
+    },
+    
+    "customer-{customerId}": {
+      "name": "Customer Isolation Group",
+      "description": "Complete isolation per customer with LAUNCH bots",
+      "endpoint": "/mcp/customer-{customerId}",
+      "isolation": "complete-per-customer",
+      "permissions": ["read", "execute"],
+      "tools": "customer-specific-whitelist",
+      "aiModels": "customer-preference-based",
+      "restrictions": "Complete isolation between customers",
+      "dynamic": true,
+      "lifecycle": ["blank", "identifying", "learning", "integrating", "active"],
+      "rateLimit": {
+        "requests": 100,
+        "window": "1h"
+      }
+    },
+    
+    "public-gateway": {
+      "name": "Public Gateway",
+      "description": "Public-facing demo bots with no data persistence",
+      "endpoint": "/mcp/public-gateway",
+      "isolation": "no-persistent-data",
+      "permissions": ["execute"],
+      "tools": ["limited-search", "basic-content-generation"],
+      "aiModels": ["openai-gpt3.5-turbo"],
+      "restrictions": "No data persistence, heavily rate limited",
+      "rateLimit": {
+        "requests": 50,
+        "window": "1h"
+      }
+    }
+  }
+}
+```
+
+### Tool Access Patterns Between Agent Systems
+
+#### Claude Code Agent Tool Access
+```yaml
+Direct MCP Connections (Bypass MCPhub):
+  user_level:
+    location: ~/.claude/agents/
+    tools: [personal-mcp-servers, git-local, filesystem-local, documentation]
+    security: OS user permissions
+    
+  project_level:
+    location: .claude/agents/
+    tools: [git-project, github, docker, testing-frameworks, ci-cd]
+    security: Repository permissions and project directory scope
+    
+cross_system_communication:
+  outbound: Can send status updates to Infrastructure agents via Redis
+  inbound: Can receive results from Infrastructure agents via message bus
+  restrictions: Cannot access MCPhub groups directly
+```
+
+#### Infrastructure Agent Tool Access
+```yaml
+MCPhub-Managed Access:
+  personal_infrastructure:
+    tools: [personal-automation, calendar-apis, email-automation]
+    ai_models: [openai-gpt4o, claude-api, local-llama]
+    restrictions: Cannot access Claude Code files
+    
+  business_operations:
+    tools: [brave-search, context7, postgres, everart, openai]
+    ai_models: [openai-gpt4o, claude-api, meta-llama, deepseek]
+    restrictions: No personal or development data access
+    
+  customer_isolation:
+    tools: customer-specific whitelist
+    ai_models: customer preference
+    restrictions: Complete customer separation
+```
+
+### Communication Protocols Between Systems
+
+#### Inter-System Message Bus
+```typescript
+interface InterSystemCommunication {
+  // Claude Code → Infrastructure Agent Communication
+  claudeCodeToInfrastructure: {
+    channel: 'redis://redis:6379/claude-to-infra',
+    messageTypes: [
+      'status-update',
+      'tool-request', 
+      'workflow-handoff',
+      'result-query'
+    ],
+    security: 'jwt-token-validation',
+    rateLimit: '100-requests-per-minute'
+  },
+  
+  // Infrastructure Agent → Claude Code Communication  
+  infrastructureToClaudeCode: {
+    channel: 'redis://redis:6379/infra-to-claude',
+    messageTypes: [
+      'task-completion',
+      'result-delivery',
+      'assistance-request',
+      'status-notification'
+    ],
+    security: 'jwt-token-validation',
+    rateLimit: '100-requests-per-minute'
+  },
+  
+  // Shared Communication Bus
+  sharedBus: {
+    channel: 'redis://redis:6379/shared-bus',
+    messageTypes: [
+      'system-health',
+      'workflow-coordination',
+      'error-escalation',
+      'performance-metrics'
+    ],
+    security: 'system-level-authentication'
+  }
+}
+```
+
+### Customer Isolation for Infrastructure Agents
+
+#### Complete Customer Separation
+```yaml
+Customer Isolation Strategy:
+  data_separation:
+    database: Row-level security with customer_id filtering
+    vector_db: Separate collections per customer in Qdrant
+    file_storage: Customer-specific directories with access controls
+    cache: Namespaced Redis keys per customer
+    
+  processing_isolation:
+    compute: Dedicated agent instances per customer
+    memory: Isolated memory spaces with no cross-contamination
+    logs: Separate log streams per customer
+    metrics: Customer-specific performance tracking
+    
+  security_boundaries:
+    authentication: Customer-specific JWT tokens
+    authorization: Customer group cannot access other customer data
+    network: Virtual network isolation for sensitive customers
+    compliance: Industry-specific compliance controls (HIPAA, PCI-DSS)
+    
+  launch_bot_lifecycle:
+    blank: Initial state with no customer data
+    identifying: Learning customer business needs
+    learning: Gathering specific requirements
+    integrating: Setting up customer-specific tools
+    active: Operational customer support with full isolation
+```
+
+### Development Workflow Integration
+
+#### Recommended Development Workflow
+```yaml
+Phase 1 - Development (Claude Code Agents Lead):
+  tools: [code-generation, testing, code-review, git-management]
+  agents: [dev-lead, qa-agent, deployment-specialist]
+  output: Code artifacts, documentation, test suites
+  handoff_to_infrastructure: Deployment specifications, monitoring requirements
+  
+Phase 2 - Infrastructure Deployment (Infrastructure Agents Lead):
+  tools: [docker-deploy, infrastructure-automation, monitoring-setup]
+  agents: [development-automation-agent, n8n-workflow-architect]
+  input: Code artifacts from Claude Code agents
+  output: Deployed infrastructure, monitoring dashboards
+  
+Phase 3 - Business Operations (Infrastructure Agents):
+  tools: [business-analytics, market-research, content-creation]
+  agents: [business-intelligence-agent, marketing-creative-agent]
+  integration: With deployed application for business insights
+  
+Phase 4 - Customer Operations (Infrastructure Agents):
+  tools: [customer-support, launch-bots, business-automation]
+  agents: [launch-bots, industry-specific-bots]
+  isolation: Complete customer separation with configurable AI models
+```
+
+#### Cross-System Coordination Points
+```yaml
+Development → Infrastructure Handoffs:
+  code_deployment:
+    trigger: Claude Code agents complete development
+    handoff: Deployment specifications, Docker configurations
+    receiver: Development Infrastructure agents
+    
+  monitoring_setup:
+    trigger: Infrastructure deployment complete
+    handoff: Application metrics endpoints, alerting requirements
+    receiver: Infrastructure monitoring agents
+    
+Infrastructure → Development Feedback:
+  performance_insights:
+    trigger: Production monitoring data available
+    feedback: Performance bottlenecks, optimization opportunities
+    receiver: Claude Code development agents
+    
+  business_requirements:
+    trigger: Business intelligence analysis complete
+    feedback: Feature requests, user behavior insights
+    receiver: Claude Code development agents for next iteration
+```
+
+---
+
 ## Conclusion
 
-This Technical Design Document provides the comprehensive architecture, implementation plan, and operational procedures for the AI Agency Platform. The document serves as the authoritative reference for all development team members and stakeholders.
+This Technical Design Document provides the comprehensive architecture, implementation plan, and operational procedures for the AI Agency Platform's dual-agent system. The document serves as the authoritative reference for all development team members and stakeholders implementing both Claude Code and Infrastructure agent systems.
 
 ### Key Success Factors
 
-1. **Security-First Architecture**: Complete replacement of MCPhub with enterprise-grade security
-2. **Advanced Multi-Agent Coordination**: LangGraph + n8n integration for sophisticated workflows
-3. **Self-Configuring Technology**: LAUNCH bots that eliminate traditional setup complexity
-4. **Hierarchical Team Structure**: Proven agentic development team organization
-5. **Comprehensive Quality Assurance**: Security, performance, and functionality validation
+1. **Dual-Agent Architecture**: Successful separation of Claude Code development agents from Infrastructure business agents
+2. **Vendor-Agnostic Infrastructure**: Infrastructure agents work with any AI model (OpenAI, Claude, Meta, DeepSeek)
+3. **MCPhub Central Hub**: Enterprise-grade security and isolation for Infrastructure agents only
+4. **Claude Code Integration**: Direct MCP connections for maximum development productivity
+5. **Customer Isolation**: Complete separation and configurability for customer LAUNCH bots
+6. **Cross-System Coordination**: Seamless communication between Claude Code and Infrastructure agents
+7. **Self-Configuring LAUNCH Bots**: Customer bots that configure themselves in <60 seconds
+
+### Critical Implementation Requirements
+
+#### For Claude Code Agent System:
+1. **Direct MCP Setup**: Configure Claude Desktop with direct MCP server connections
+2. **Agent Location Management**: Establish ~/.claude/agents/ and .claude/agents/ directory structures
+3. **Security Boundaries**: Implement file-system and repository-based access controls
+4. **Cross-System Bridge**: Enable status updates to Infrastructure agents via Redis
+
+#### For Infrastructure Agent System:
+1. **MCPhub Configuration**: Update MCPhub groups to reflect new architecture
+2. **AI Model Flexibility**: Configure vendor-agnostic AI model routing
+3. **Customer Isolation**: Implement complete customer data separation
+4. **LAUNCH Bot Lifecycle**: Enable self-configuring customer bot workflows
+
+#### For Shared Infrastructure:
+1. **Communication Bus**: Implement Redis-based inter-system messaging
+2. **Security Validation**: Cross-system authentication and authorization
+3. **Monitoring Integration**: Unified monitoring across both agent systems
+4. **Data Isolation**: Ensure no cross-contamination between systems
 
 ### Next Steps
 
-1. **Technical Lead** establishes project coordination and begins Phase 1 implementation
-2. **Platform Architect** finalizes security architecture and begins API Gateway development
-3. **Development Team** follows 14-week implementation roadmap with weekly progress reviews
-4. **Quality Assurance** implements continuous testing and security validation procedures
+1. **Technical Lead** coordinates dual-agent system implementation and integration
+2. **Platform Architect** finalizes MCPhub group restructuring and security implementation
+3. **Development Team** implements Claude Code agent setup and Infrastructure agent migration
+4. **Quality Assurance** validates security isolation and cross-system communication
 
-This document will be updated bi-weekly during development to reflect architectural changes and implementation learnings.
+### Commercial Benefits
+
+- **Development Acceleration**: Claude Code agents provide cutting-edge development assistance
+- **Business Scalability**: Infrastructure agents can be sold as vendor-agnostic services
+- **Customer Flexibility**: LAUNCH bots work with customer's preferred AI models
+- **Personal Productivity**: Integrated dual-system provides maximum efficiency
+
+This document will be updated as the dual-agent architecture evolves and implementation feedback is incorporated.
 
 ---
 
 **Document Classification:** Internal - Development Team  
-**Version:** 2.0  
-**Next Review Date:** [Add 2 weeks from current date]  
+**Version:** 3.0 - Dual-Agent Architecture  
+**Last Updated:** 2025-01-17  
+**Next Review Date:** 2025-01-31  
 **Approved By:** Technical Lead & Platform Architect

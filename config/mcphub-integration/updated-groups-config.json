@@ -1,0 +1,257 @@
+{
+  "mcphub_groups_config": {
+    "version": "2.0.0",
+    "architecture": "dual-agent-system",
+    "last_updated": "2025-01-17",
+    "description": "Updated MCPhub group configuration for dual-agent architecture with Claude Code + Infrastructure agents",
+    
+    "security_groups": {
+      "personal-infrastructure": {
+        "id": "personal-infra",
+        "tier": 0,
+        "isolation": "owner-only",
+        "description": "Personal automation and productivity tools (separate from Claude Code)",
+        "access_pattern": "infrastructure_agents_only",
+        "ai_models": ["claude-3.5-sonnet"],
+        "tools": [
+          "personal-calendar",
+          "personal-reminders", 
+          "personal-file-management",
+          "personal-email-automation",
+          "personal-task-tracking",
+          "personal-note-taking"
+        ],
+        "data_isolation": "complete",
+        "audit_level": "basic",
+        "max_concurrent_agents": 3
+      },
+      
+      "development-infrastructure": {
+        "id": "dev-infra", 
+        "tier": 1,
+        "isolation": "team",
+        "description": "Infrastructure deployment, monitoring, and operations (separate from Claude Code development)",
+        "access_pattern": "infrastructure_agents_only",
+        "ai_models": ["claude-3.5-sonnet", "local-model"],
+        "tools": [
+          "docker-management",
+          "kubernetes-operations",
+          "ci-cd-pipeline",
+          "monitoring-setup",
+          "log-aggregation",
+          "backup-management",
+          "security-scanning",
+          "performance-monitoring"
+        ],
+        "data_isolation": "team-level",
+        "audit_level": "comprehensive",
+        "max_concurrent_agents": 5,
+        "cross_system_bridge": {
+          "enabled": true,
+          "claude_code_integration": "status_updates_only",
+          "message_types": ["deployment_status", "infrastructure_health"]
+        }
+      },
+      
+      "business-operations": {
+        "id": "biz-ops",
+        "tier": 2,
+        "isolation": "business",
+        "description": "Business processes, research, analytics, and commercial operations",
+        "access_pattern": "infrastructure_agents_only",
+        "ai_models": ["claude-3.5-sonnet", "openai-gpt-4", "deepseek-v2"],
+        "tools": [
+          "web-research",
+          "business-analytics",
+          "market-intelligence",
+          "content-generation",
+          "social-media-management",
+          "email-marketing",
+          "crm-integration",
+          "financial-analysis",
+          "report-generation",
+          "workflow-automation"
+        ],
+        "data_isolation": "business-level",
+        "audit_level": "comprehensive",
+        "max_concurrent_agents": 10,
+        "cost_optimization": {
+          "enabled": true,
+          "model_selection": "intelligent",
+          "usage_tracking": true
+        }
+      },
+      
+      "customer-template": {
+        "id": "customer-{customerId}",
+        "tier": 3,
+        "isolation": "complete",
+        "description": "Complete customer isolation with configurable AI models and tools",
+        "access_pattern": "customer_specific_agents_only",
+        "ai_models": {
+          "configurable": true,
+          "options": ["openai-gpt-4", "claude-3.5-sonnet", "meta-llama-3", "deepseek-v2", "local-model"],
+          "customer_choice": true,
+          "fallback": "claude-3.5-sonnet"
+        },
+        "tools": {
+          "configurable": true,
+          "customer_whitelist": true,
+          "launch_bot_driven": true,
+          "auto_provision": true
+        },
+        "data_isolation": "complete",
+        "audit_level": "customer_compliant",
+        "max_concurrent_agents": "customer_configurable",
+        "launch_bot_config": {
+          "enabled": true,
+          "setup_time_limit": "60_seconds",
+          "auto_configuration": true,
+          "conversation_driven": true
+        },
+        "compliance": {
+          "gdpr": true,
+          "ccpa": true,
+          "data_residency": "customer_configurable"
+        }
+      },
+      
+      "public-gateway": {
+        "id": "public",
+        "tier": 4,
+        "isolation": "public",
+        "description": "Public-facing demo bots and marketing interactions",
+        "access_pattern": "public_infrastructure_agents",
+        "ai_models": ["claude-3.5-sonnet"],
+        "tools": [
+          "public-conversation",
+          "demo-capabilities",
+          "lead-capture",
+          "basic-analytics",
+          "public-content"
+        ],
+        "data_isolation": "public",
+        "audit_level": "basic",
+        "max_concurrent_agents": 20,
+        "rate_limiting": {
+          "enabled": true,
+          "requests_per_minute": 100,
+          "burst_limit": 200
+        }
+      }
+    },
+    
+    "claude_code_integration": {
+      "description": "How Claude Code agents interact with Infrastructure agents",
+      "connection_type": "redis_message_bus",
+      "security_boundary": "strict_separation",
+      "allowed_interactions": {
+        "status_updates": {
+          "claude_code_to_infrastructure": true,
+          "infrastructure_to_claude_code": true,
+          "message_types": ["task_started", "task_completed", "error_occurred", "assistance_needed"]
+        },
+        "tool_requests": {
+          "claude_code_to_infrastructure": "limited",
+          "allowed_tools": ["deployment_status", "system_health", "customer_metrics"],
+          "approval_required": false
+        },
+        "coordination": {
+          "handoff_protocols": true,
+          "workflow_coordination": true,
+          "emergency_escalation": true
+        }
+      },
+      "prohibited_interactions": {
+        "direct_customer_access": "Claude Code agents cannot access customer data",
+        "mcphub_bypass": "Claude Code agents cannot bypass MCPhub for Infrastructure tools",
+        "group_elevation": "Claude Code agents cannot elevate to higher tier groups"
+      }
+    },
+    
+    "tool_access_patterns": {
+      "claude_code_agents": {
+        "connection_type": "direct_mcp",
+        "mcphub_routing": false,
+        "available_tools": [
+          "file-system",
+          "development-tools",
+          "code-analysis",
+          "testing-frameworks",
+          "git-operations",
+          "local-services"
+        ],
+        "security": "os_level_permissions"
+      },
+      
+      "infrastructure_agents": {
+        "connection_type": "mcphub_routed",
+        "mcphub_routing": true,
+        "group_based_access": true,
+        "tool_validation": "jwt_and_rbac",
+        "security": "mcphub_group_isolation"
+      }
+    },
+    
+    "api_endpoints": {
+      "group_management": {
+        "create_group": "POST /api/v1/groups",
+        "update_group": "PUT /api/v1/groups/{groupId}",
+        "delete_group": "DELETE /api/v1/groups/{groupId}",
+        "list_groups": "GET /api/v1/groups",
+        "get_group": "GET /api/v1/groups/{groupId}"
+      },
+      
+      "customer_provisioning": {
+        "create_customer": "POST /api/v1/customers",
+        "provision_group": "POST /api/v1/customers/{customerId}/provision",
+        "configure_ai_model": "PUT /api/v1/customers/{customerId}/ai-model",
+        "setup_tools": "POST /api/v1/customers/{customerId}/tools",
+        "launch_bot_status": "GET /api/v1/customers/{customerId}/launch-bot"
+      },
+      
+      "cross_system_bridge": {
+        "send_message": "POST /api/v1/bridge/message",
+        "get_status": "GET /api/v1/bridge/status",
+        "subscribe_updates": "WS /ws/bridge/updates"
+      },
+      
+      "monitoring": {
+        "group_health": "GET /api/v1/monitoring/groups",
+        "agent_status": "GET /api/v1/monitoring/agents",
+        "system_metrics": "GET /api/v1/monitoring/metrics",
+        "audit_logs": "GET /api/v1/monitoring/audit"
+      }
+    },
+    
+    "deployment_requirements": {
+      "database_changes": [
+        "Add customer_id field to groups table",
+        "Create ai_model_config table",
+        "Add cross_system_messages table",
+        "Update audit_logs for dual-agent tracking"
+      ],
+      
+      "redis_changes": [
+        "Add claude-code:messages channel",
+        "Add infrastructure:messages channel", 
+        "Add bridge:coordination channel",
+        "Add customer:{id}:status channel"
+      ],
+      
+      "environment_variables": [
+        "CLAUDE_CODE_BRIDGE_ENABLED=true",
+        "CUSTOMER_ISOLATION_LEVEL=complete",
+        "AI_MODEL_SWITCHING_ENABLED=true",
+        "LAUNCH_BOT_AUTO_CONFIG=true"
+      ],
+      
+      "docker_compose_updates": [
+        "Add Redis pub/sub configuration",
+        "Add environment variables for dual-agent support",
+        "Update MCPhub with new group management",
+        "Add customer provisioning service"
+      ]
+    }
+  }
+}
