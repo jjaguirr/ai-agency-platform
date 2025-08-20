@@ -110,9 +110,15 @@
 
 ## ⚡ **Quick Start**
 
-### 🚀 **Option 1: Start Phase 1 Now**
+### 🚀 **Option 1: Use Existing MCPhub (RECOMMENDED)**
 ```bash
-# 🎬 Action! Start the infrastructure
+# 🔗 Connect to your existing MCPhub infrastructure
+./scripts/phase-1-existing-mcphub.sh
+```
+
+### 🆕 **Option 2: Start New Infrastructure**
+```bash
+# 🎬 Action! Start new Phase 1 infrastructure
 ./scripts/phase-1-start.sh
 ```
 

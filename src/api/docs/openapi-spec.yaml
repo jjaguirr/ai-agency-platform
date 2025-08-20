@@ -1,0 +1,920 @@
+openapi: 3.0.3
+info:
+  title: AI Agency Platform API
+  description: |
+    Phase 1 API Foundation for the Dual-Agent Architecture AI Agency Platform.
+    
+    This API enables:
+    - Cross-system communication between Claude Code and Infrastructure agents
+    - Customer provisioning and LAUNCH bot lifecycle management
+    - AI model configuration and vendor-agnostic integration
+    - Real-time communication via WebSocket connections
+    
+    **Security:** All endpoints require JWT authentication except health checks.
+    **Rate Limiting:** Endpoints are rate-limited based on user tier and endpoint type.
+  version: 1.0.0
+  contact:
+    name: API Developer Team
+    email: api-dev@agency.ai
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:3001
+    description: Development server
+  - url: https://api.agency.ai
+    description: Production server
+
+tags:
+  - name: Authentication
+    description: JWT-based authentication endpoints
+  - name: Customers
+    description: Customer management and provisioning
+  - name: LAUNCH Bots
+    description: Self-configuring customer bot lifecycle
+  - name: AI Models
+    description: Multi-model AI configuration
+  - name: Tools
+    description: Customer tool management
+  - name: Metrics
+    description: Performance monitoring and analytics
+  - name: Health
+    description: System health and monitoring
+
+paths:
+  # Health Check
+  /health:
+    get:
+      tags: [Health]
+      summary: API health check
+      description: Returns current API health status and basic metrics
+      responses:
+        '200':
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+
+  # Authentication
+  /api/v1/auth/login:
+    post:
+      tags: [Authentication]
+      summary: Authenticate user and get JWT token
+      description: Login with email and password to receive access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Refresh JWT token
+      description: Refresh an existing JWT token (Phase 1 placeholder)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '501':
+          description: Not implemented in Phase 1
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # Customer Management
+  /api/v1/customers:
+    post:
+      tags: [Customers]
+      summary: Create new customer
+      description: Create a new customer with LAUNCH bot initialization
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCustomerRequest'
+      responses:
+        '201':
+          description: Customer created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerResponse'
+        '400':
+          description: Validation error
+        '401':
+          description: Authentication required
+        '403':
+          description: Admin privileges required
+        '409':
+          description: Customer already exists
+
+    get:
+      tags: [Customers]
+      summary: List customers
+      description: Get paginated list of customers (admin only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Search by name or email
+      responses:
+        '200':
+          description: Customer list retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerListResponse'
+
+  /api/v1/customers/{customerId}:
+    get:
+      tags: [Customers]
+      summary: Get customer details
+      description: Retrieve specific customer information
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Customer details retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerResponse'
+        '404':
+          description: Customer not found
+
+    put:
+      tags: [Customers]
+      summary: Update customer
+      description: Update customer information
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCustomerRequest'
+      responses:
+        '200':
+          description: Customer updated successfully
+        '404':
+          description: Customer not found
+
+    delete:
+      tags: [Customers]
+      summary: Delete customer
+      description: Delete customer and all associated data (admin only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Customer deleted successfully
+        '404':
+          description: Customer not found
+
+  # LAUNCH Bot Lifecycle
+  /api/v1/customers/{customerId}/launch-bot:
+    post:
+      tags: [LAUNCH Bots]
+      summary: Initialize LAUNCH bot
+      description: Initialize self-configuring LAUNCH bot for customer
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InitializeBotRequest'
+      responses:
+        '200':
+          description: LAUNCH bot initialized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BotStatusResponse'
+
+    get:
+      tags: [LAUNCH Bots]
+      summary: Get LAUNCH bot status
+      description: Retrieve current LAUNCH bot status and configuration
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Bot status retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BotStatusResponse'
+
+  /api/v1/customers/{customerId}/launch-bot/stage:
+    put:
+      tags: [LAUNCH Bots]
+      summary: Update bot stage
+      description: Update LAUNCH bot lifecycle stage and progress
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBotStageRequest'
+      responses:
+        '200':
+          description: Bot stage updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BotStatusResponse'
+
+  # AI Model Configuration
+  /api/v1/ai-models:
+    get:
+      tags: [AI Models]
+      summary: List available AI models
+      description: Get list of supported AI models and their capabilities
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: AI models list retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIModelsResponse'
+
+  /api/v1/customers/{customerId}/ai-model:
+    put:
+      tags: [AI Models]
+      summary: Set customer AI model
+      description: Configure AI model for specific customer
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetAIModelRequest'
+      responses:
+        '200':
+          description: AI model updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerResponse'
+
+  /api/v1/customers/{customerId}/ai-model/usage:
+    get:
+      tags: [AI Models]
+      summary: Get AI model usage
+      description: Retrieve AI model usage statistics for customer
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Usage statistics retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIModelUsageResponse'
+
+  # Customer Tools
+  /api/v1/customers/{customerId}/tools:
+    get:
+      tags: [Tools]
+      summary: List customer tools
+      description: Get list of tools available to customer
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Customer tools retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerToolsResponse'
+
+    post:
+      tags: [Tools]
+      summary: Add customer tool
+      description: Add new tool to customer's whitelist
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddToolRequest'
+      responses:
+        '201':
+          description: Tool added successfully
+
+  /api/v1/customers/{customerId}/tools/{toolId}:
+    delete:
+      tags: [Tools]
+      summary: Remove customer tool
+      description: Remove tool from customer's whitelist
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: toolId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Tool removed successfully
+
+  # Metrics and Monitoring
+  /api/v1/metrics:
+    get:
+      tags: [Metrics]
+      summary: Get system metrics
+      description: Retrieve comprehensive system performance metrics (admin only)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: System metrics retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemMetricsResponse'
+
+  /api/v1/customers/{customerId}/metrics:
+    get:
+      tags: [Metrics]
+      summary: Get customer metrics
+      description: Retrieve customer-specific performance metrics
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Customer metrics retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerMetricsResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    # Authentication Schemas
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: admin@agency.ai
+        password:
+          type: string
+          example: admin123
+
+    LoginResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+          example: 86400
+        user:
+          type: object
+          properties:
+            email:
+              type: string
+            role:
+              type: string
+              enum: [admin, customer]
+
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+
+    # Customer Schemas
+    CreateCustomerRequest:
+      type: object
+      required: [name, email]
+      properties:
+        name:
+          type: string
+          example: Acme Corp
+        email:
+          type: string
+          format: email
+          example: contact@acme.com
+        ai_model:
+          type: string
+          enum: [openai-gpt-4o, claude-3.5-sonnet, meta-llama-3, deepseek-v2]
+          default: openai-gpt-4o
+        industry:
+          type: string
+          example: Technology
+        compliance_requirements:
+          type: array
+          items:
+            type: string
+          example: [GDPR, CCPA]
+        custom_tools:
+          type: array
+          items:
+            type: string
+          example: [web-search, content-generation]
+
+    UpdateCustomerRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        ai_model:
+          type: string
+          enum: [openai-gpt-4o, claude-3.5-sonnet, meta-llama-3, deepseek-v2]
+        industry:
+          type: string
+        compliance_requirements:
+          type: array
+          items:
+            type: string
+
+    CustomerResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        customer:
+          $ref: '#/components/schemas/Customer'
+        message:
+          type: string
+
+    Customer:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        ai_model:
+          type: string
+        industry:
+          type: string
+        compliance_requirements:
+          type: array
+          items:
+            type: string
+        custom_tools:
+          type: array
+          items:
+            type: string
+        bot_stage:
+          type: string
+          enum: [blank, identifying, learning, integrating, active]
+        setup_progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        last_interaction:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CustomerListResponse:
+      type: object
+      properties:
+        customers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Customer'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    # LAUNCH Bot Schemas
+    InitializeBotRequest:
+      type: object
+      required: [initial_message]
+      properties:
+        initial_message:
+          type: string
+          example: I want to automate my customer support
+        conversation_history:
+          type: array
+          items:
+            type: object
+
+    UpdateBotStageRequest:
+      type: object
+      required: [stage]
+      properties:
+        stage:
+          type: string
+          enum: [blank, identifying, learning, integrating, active]
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        configuration:
+          type: object
+
+    BotStatusResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        bot_status:
+          $ref: '#/components/schemas/LaunchBot'
+        message:
+          type: string
+
+    LaunchBot:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        customer_id:
+          type: string
+          format: uuid
+        stage:
+          type: string
+          enum: [blank, identifying, learning, integrating, active]
+        configuration:
+          type: object
+        setup_progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        last_interaction:
+          type: string
+          format: date-time
+        performance_metrics:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    # AI Model Schemas
+    AIModelsResponse:
+      type: object
+      properties:
+        ai_models:
+          type: array
+          items:
+            $ref: '#/components/schemas/AIModel'
+        default_model:
+          type: string
+
+    AIModel:
+      type: object
+      properties:
+        id:
+          type: string
+          example: openai-gpt-4o
+        name:
+          type: string
+          example: OpenAI GPT-4o
+        provider:
+          type: string
+          example: OpenAI
+        capabilities:
+          type: array
+          items:
+            type: string
+          example: [text, code, analysis]
+        cost_per_1k_tokens:
+          type: number
+          format: float
+          example: 0.03
+        max_tokens:
+          type: integer
+          example: 128000
+
+    SetAIModelRequest:
+      type: object
+      required: [ai_model]
+      properties:
+        ai_model:
+          type: string
+          enum: [openai-gpt-4o, claude-3.5-sonnet, meta-llama-3, deepseek-v2]
+        reason:
+          type: string
+          example: Customer prefers Anthropic models
+
+    AIModelUsageResponse:
+      type: object
+      properties:
+        customer_id:
+          type: string
+          format: uuid
+        ai_model:
+          type: string
+        tokens_used:
+          type: integer
+        requests_count:
+          type: integer
+        cost_usd:
+          type: number
+          format: float
+        period_start:
+          type: string
+          format: date-time
+        period_end:
+          type: string
+          format: date-time
+
+    # Tools Schemas
+    CustomerToolsResponse:
+      type: object
+      properties:
+        tools:
+          type: array
+          items:
+            $ref: '#/components/schemas/CustomerTool'
+
+    CustomerTool:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        customer_id:
+          type: string
+          format: uuid
+        tool_name:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+        config:
+          type: object
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    AddToolRequest:
+      type: object
+      required: [tool_name]
+      properties:
+        tool_name:
+          type: string
+          example: web-search
+        permissions:
+          type: array
+          items:
+            type: string
+          default: [read, execute]
+        config:
+          type: object
+
+    # Metrics Schemas
+    SystemMetricsResponse:
+      type: object
+      properties:
+        customers_created:
+          type: integer
+        bots_deployed:
+          type: integer
+        api_requests_processed:
+          type: integer
+        average_response_time:
+          type: number
+          format: float
+        last_activity:
+          type: string
+          format: date-time
+        timestamp:
+          type: string
+          format: date-time
+
+    CustomerMetricsResponse:
+      type: object
+      properties:
+        customer_id:
+          type: string
+          format: uuid
+        bot_interactions:
+          type: integer
+        ai_model_usage:
+          $ref: '#/components/schemas/AIModelUsageResponse'
+        tools_used:
+          type: array
+          items:
+            type: string
+        performance_metrics:
+          type: object
+
+    # General Schemas
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          example: healthy
+        service:
+          type: string
+          example: customer-provisioning-api
+        timestamp:
+          type: integer
+          format: int64
+        metrics:
+          type: object
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          example: Invalid credentials
+        code:
+          type: string
+          example: AUTH_INVALID_CREDENTIALS
+        timestamp:
+          type: integer
+          format: int64
+
+  responses:
+    UnauthorizedError:
+      description: Authentication information is missing or invalid
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    
+    ForbiddenError:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    
+    NotFoundError:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

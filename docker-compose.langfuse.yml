@@ -1,0 +1,165 @@
+version: '3.8'
+
+services:
+  langfuse-server:
+    image: langfuse/langfuse:latest
+    container_name: ai-agency-langfuse
+    ports:
+      - "3001:3000"
+    environment:
+      - DATABASE_URL=postgresql://langfuse:${LANGFUSE_DB_PASSWORD:-langfuse_password}@postgres-langfuse:5432/langfuse
+      - NEXTAUTH_SECRET=${LANGFUSE_SECRET:-your-super-secret-nextauth-secret-change-in-production}
+      - SALT=${LANGFUSE_SALT:-your-super-secret-salt-change-in-production}
+      - NEXTAUTH_URL=http://localhost:3001
+      - TELEMETRY_ENABLED=${LANGFUSE_TELEMETRY:-false}
+      - LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES=true
+      - LANGFUSE_DEFAULT_PROJECT_ID=ai-agency-platform
+      - LANGFUSE_DEFAULT_PROJECT_NAME=AI Agency Platform
+      # MCPhub Integration
+      - MCPHUB_INTEGRATION_ENABLED=true
+      - MCPHUB_BASE_URL=http://mcphub-server:3000
+      - MCPHUB_API_KEY=${MCPHUB_API_KEY}
+      # AI Model Configurations
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+    depends_on:
+      postgres-langfuse:
+        condition: service_healthy
+    networks:
+      - ai-agency-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/public/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  postgres-langfuse:
+    image: postgres:15-alpine
+    container_name: ai-agency-langfuse-db
+    environment:
+      - POSTGRES_DB=langfuse
+      - POSTGRES_USER=langfuse
+      - POSTGRES_PASSWORD=${LANGFUSE_DB_PASSWORD:-langfuse_password}
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - langfuse_postgres_data:/var/lib/postgresql/data/pgdata
+      - ./config/langfuse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - ai-agency-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  langfuse-worker:
+    image: langfuse/langfuse:latest
+    container_name: ai-agency-langfuse-worker
+    command: ["node", "worker.js"]
+    environment:
+      - DATABASE_URL=postgresql://langfuse:${LANGFUSE_DB_PASSWORD:-langfuse_password}@postgres-langfuse:5432/langfuse
+      # Background processing configuration
+      - WORKER_CONCURRENCY=${LANGFUSE_WORKER_CONCURRENCY:-2}
+      - WORKER_TIMEOUT=${LANGFUSE_WORKER_TIMEOUT:-60000}
+    depends_on:
+      postgres-langfuse:
+        condition: service_healthy
+    networks:
+      - ai-agency-network
+    restart: unless-stopped
+
+  # MCPhub Server (for integration testing)
+  mcphub-server:
+    image: mcphub/mcphub:latest
+    container_name: ai-agency-mcphub
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://mcphub:${MCPHUB_DB_PASSWORD:-mcphub_password}@postgres-mcphub:5432/mcphub
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET:-your-super-secret-jwt-secret}
+      # Langfuse Integration
+      - LANGFUSE_ENABLED=true
+      - LANGFUSE_BASE_URL=http://langfuse-server:3000
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+    depends_on:
+      postgres-mcphub:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ai-agency-network
+    restart: unless-stopped
+
+  postgres-mcphub:
+    image: postgres:15-alpine
+    container_name: ai-agency-mcphub-db
+    environment:
+      - POSTGRES_DB=mcphub
+      - POSTGRES_USER=mcphub
+      - POSTGRES_PASSWORD=${MCPHUB_DB_PASSWORD:-mcphub_password}
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - mcphub_postgres_data:/var/lib/postgresql/data/pgdata
+      - ./config/mcphub-integration/mcphub-schema.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - ai-agency-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mcphub -d mcphub"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: ai-agency-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_password}
+    volumes:
+      - redis_data:/data
+    networks:
+      - ai-agency-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: ai-agency-qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - ai-agency-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  langfuse_postgres_data:
+    driver: local
+  mcphub_postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  qdrant_data:
+    driver: local
+
+networks:
+  ai-agency-network:
+    driver: bridge
+    name: ai-agency-network
