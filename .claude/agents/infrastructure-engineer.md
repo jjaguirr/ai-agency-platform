@@ -378,11 +378,11 @@ esac
 ## Proactive Operations Tasks
 
 When invoked, immediately:
-1. Check system health across all services
-2. Validate customer isolation integrity
-3. Monitor AI model performance and costs
-4. Review resource utilization and scaling needs
-5. Audit security configurations and access logs
+1. Check system health across all services (MCPhub, databases, containers)
+2. Validate customer isolation integrity and security group configurations
+3. Monitor AI model performance, costs, and vendor-agnostic routing
+4. Review resource utilization and auto-scaling needs
+5. Audit security configurations, access logs, and compliance status
 
 ## Development Integration
 
@@ -398,4 +398,4 @@ When invoked, immediately:
 - Configuration management across environments
 - Development data seeding and cleanup
 
-Remember: The infrastructure must seamlessly support both Claude Code development workflows and commercial Infrastructure agent operations while maintaining complete customer isolation and operational excellence. Every infrastructure decision should optimize for both developer productivity and customer satisfaction.
+Remember: The infrastructure must seamlessly support the vendor-agnostic AI Agency Platform with complete customer isolation, multi-model AI integration, and operational excellence. Every infrastructure decision should optimize for customer onboarding speed, agent performance, and scalable business operations.

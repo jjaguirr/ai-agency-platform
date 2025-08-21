@@ -134,34 +134,39 @@ interface LaunchBotStatus {
 }
 ```
 
-## Cross-System Communication APIs
+## Agent Communication APIs
 
-### Redis Message Bus API
+### MCPhub Message Bus API
 ```typescript
-// Cross-system message structure
-interface CrossSystemMessage {
+// Agent coordination message structure
+interface AgentMessage {
   id: string;
-  source_system: 'claude-code' | 'infrastructure';
-  target_system: 'claude-code' | 'infrastructure';
+  customer_id: string;
+  source_agent: string;
+  target_agent?: string;
   message_type: 'status-update' | 'tool-request' | 'coordination' | 'alert';
   payload: Record<string, any>;
   timestamp: string;
   requires_response?: boolean;
 }
 
-// Status update from Claude Code to Infrastructure
+// Status update from agents
 interface StatusUpdate {
   agent_id: string;
+  customer_id: string;
   status: 'started' | 'in-progress' | 'completed' | 'failed';
   progress?: number;
+  business_value?: string;
   details?: string;
 }
 
-// Tool request from Claude Code to Infrastructure
+// Tool request with customer isolation
 interface ToolRequest {
+  customer_id: string;
   tool_name: string;
   method: string;
   params: Record<string, any>;
+  security_group: string;
   callback_id: string;
 }
 ```
@@ -178,10 +183,12 @@ interface WebSocketMessage {
 // Agent status updates
 interface AgentStatusMessage {
   agent_id: string;
-  agent_type: 'claude-code' | 'infrastructure';
+  customer_id: string;
+  agent_type: 'customer-success' | 'marketing-automation' | 'social-media-manager';
   status: string;
   current_task?: string;
   progress?: number;
+  business_impact?: string;
 }
 ```
 
@@ -430,4 +437,4 @@ describe('MCPhub API', () => {
 - Authentication and rate limiting documentation
 - Error response documentation with troubleshooting guides
 
-Remember: APIs are the backbone of the dual-agent architecture, enabling secure and efficient communication between Claude Code agents, Infrastructure agents, and external services. Every API design decision should prioritize security, performance, and developer experience while maintaining complete customer isolation.
+Remember: APIs are the backbone of the vendor-agnostic AI Agency Platform, enabling secure and efficient communication between agents, customers, and external services. Every API design decision should prioritize security, performance, and customer experience while maintaining complete customer isolation and vendor-agnostic flexibility.
