@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-Integrate Langfuse as the central prompt engineering and LLM observability platform for our **Infrastructure Agents** in the dual-agent architecture. This enables vendor-agnostic prompt management, performance tracking across multiple AI models, and comprehensive observability for customer-facing agent interactions.
+Integrate Langfuse as the central prompt engineering and LLM observability platform for the **AI Agency Platform**. This enables vendor-agnostic prompt management, performance tracking across multiple AI models (OpenAI, Claude, Meta, DeepSeek, local), and comprehensive observability for customer-facing agent interactions.
 
 ### Key Benefits
 - **Prompt Versioning**: Centralized management of agent system prompts across AI models

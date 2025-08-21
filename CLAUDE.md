@@ -1,26 +1,107 @@
-# CLAUDE.md
+# CLAUDE.md - AI Agency Platform Configuration
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 
-This is an AI Agency Platform that serves as both a personal AI operating system and a commercial AI agency. The platform uses self-configuring agents and sophisticated multi-agent orchestration through a security-first architecture with MCPhub as the central hub.
+This is an AI Agency Platform that serves as a vendor-agnostic AI Agency Platform with enhanced agent portfolio, enabling businesses to deploy sophisticated AI automation through self-configuring LAUNCH bots and enterprise-grade multi-agent orchestration.
+
+## Business Context
+
+**Product**: Commercial AI Agency Platform ($500K → $5M → $25M ARR)  
+**Market**: $50B+ AI services market with vendor-agnostic positioning  
+**Breakthrough Feature**: LAUNCH bots that self-configure in <60 seconds  
+**Competitive Advantage**: Only platform supporting OpenAI, Claude, Meta, DeepSeek, and local models
+
+## Enhanced Agent Portfolio
+
+The platform delivers six specialized agent types designed for comprehensive business automation:
+
+### 1. Marketing Automation Agent
+**Purpose**: Multi-channel campaigns, lead generation, conversion optimization  
+**Capabilities**: SEO/SEM, social media automation, email marketing, marketing analytics  
+**Business Impact**: 300% improvement in lead conversion rates
+
+### 2. Customer Success Agent  
+**Purpose**: Customer health monitoring, churn prediction, retention strategies  
+**Capabilities**: Upsell identification, onboarding automation, satisfaction tracking  
+**Business Impact**: 85% reduction in customer churn through predictive analytics
+
+### 3. Sales Automation Agent
+**Purpose**: Pipeline management, lead scoring, deal closing automation  
+**Capabilities**: CRM automation, proposal generation, sales forecasting, territory management  
+**Business Impact**: 250% increase in sales velocity through pipeline optimization
+
+### 4. Operations Intelligence Agent
+**Purpose**: Process optimization, inventory management, supply chain automation  
+**Capabilities**: Quality assurance, resource allocation, efficiency analytics  
+**Business Impact**: 60% operational cost reduction through process optimization
+
+### 5. Financial Management Agent
+**Purpose**: Cash flow analysis, budget planning, expense optimization  
+**Capabilities**: Invoice automation, financial reporting, cost reduction strategies  
+**Business Impact**: 40% improvement in cash flow through automation
+
+### 6. Compliance Security Agent
+**Purpose**: Regulatory compliance automation, data protection, audit trails  
+**Capabilities**: Security monitoring, policy enforcement, risk assessment  
+**Business Impact**: 100% regulatory compliance achievement
+
+### 7. Industry Specialist Agents
+**Purpose**: Vertical-specific automation (Healthcare, Real Estate, E-commerce, Professional Services)  
+**Capabilities**: Industry compliance (HIPAA, PCI-DSS), specialized workflows  
+**Business Impact**: 90% faster time-to-market for new industry verticals
+
+### 8. Innovation Strategy Agent
+**Purpose**: Market opportunity identification, competitive analysis, strategic planning  
+**Capabilities**: Trend analysis, business model optimization  
+**Business Impact**: 90% faster time-to-market for new initiatives
+
+## Revenue-Focused Architecture
+
+### Multi-Agent Coordination Patterns
+- **Revenue Optimization Workflow**: Sales → Customer Success → Marketing → Financial Management
+- **Customer Lifecycle Management**: Marketing → Sales → Operations → Customer Success → Compliance  
+- **Business Intelligence Pipeline**: Operations → Financial → Innovation Strategy → Marketing
+- **Parallel Execution**: Multiple agents working simultaneously for maximum efficiency
+
+### Customer Success Metrics
+- **LAUNCH Bot Performance**: >90% self-configuration success in <60 seconds
+- **Revenue Growth**: >25% month-over-month ARR growth  
+- **Customer Retention**: <3% monthly churn across all tiers
+- **Operational Efficiency**: <$50/month operational cost per customer
+
+## Technical Architecture
+
+### Infrastructure Components
+- **MCPhub Hub**: Central MCP server with JWT+bcrypt authentication and RBAC
+- **Multi-Database**: PostgreSQL (business data), Redis (sessions/queues), Qdrant (agent memory)
+- **n8n Integration**: Visual workflow automation and process orchestration
+- **Langfuse Platform**: Dynamic prompt management and multi-model optimization
+
+### Security Model
+- **5-Tier Security Groups**: Personal → Development → Business → Customer → Public
+- **Customer Isolation**: Complete data separation per customer with configurable AI models
+- **Vendor-Agnostic AI**: Support for OpenAI, Claude, Meta, DeepSeek, local models
+- **Compliance Ready**: GDPR, HIPAA, PCI-DSS, SOC2 support
+
+### Key Implementation Files
+- `docs/architecture/Product Requirements Document.md` - Business requirements and market strategy
+- `docs/architecture/Technical Design Document.md` - Complete system architecture  
+- `PROJECT-SUMMARY.md` - Project overview and current status
+- `docker-compose.langfuse.yml` - Langfuse + MCPhub deployment
+- `scripts/initialize-langfuse.sh` - Automated Langfuse setup
 
 ## Development Commands
 
 ### Infrastructure Setup
 ```bash
-# Initialize communication gateways
-./scripts/init-communication-gateways.sh
+# Initialize Langfuse for prompt engineering
+./scripts/initialize-langfuse.sh
 
-# Start Redis and BullMQ queues
-/Users/jose/.config/agentic-infrastructure/scripts/start-redis-queues.sh
-
-# Start all communication gateways
-/Users/jose/.config/agentic-infrastructure/scripts/start-gateways.sh
-
-# Generate Claude Desktop configuration
-/Users/jose/.config/agentic-infrastructure/scripts/generate-claude-config.sh
+# Access platforms
+open http://localhost:3001  # Langfuse UI  
+open http://localhost:3000  # MCPhub API
 ```
 
 ### MCPhub & Services
@@ -31,94 +112,57 @@ Since this project relies on MCPhub (enterprise MCP server hub), ensure the foll
 - Qdrant vector database for agent memory
 - n8n on port 5678 for workflow automation
 
-### Testing & Development
-The project doesn't have traditional package.json build scripts yet. Development workflow:
-1. Configure environment variables using `.env.gateways.template`
-2. Set up MCPhub with the required security groups
-3. Test individual MCP servers and agents
-4. Use the LangGraph coordinator for multi-agent workflows
+## Business Success Framework
 
-## Architecture Overview
+### Revenue Targets
+- **Year 1**: $500K ARR with >80% customer satisfaction
+- **Year 2**: $5M ARR with enterprise market penetration  
+- **Year 3**: $25M ARR with market leadership position
 
-### Security-First Design
-- **MCPhub Hub**: Central MCP server with JWT+bcrypt authentication and RBAC
-- **Group-Based Isolation**: 
-  - Personal Tier (Tier 0): Owner-only access for personal data
-  - Development Tier (Tier 1): Team development tools
-  - Business Tier (Tier 2): Research and analytics tools  
-  - Customer Tier (Tier 3): Isolated customer bot environments
+### Customer Success Indicators
+- **LAUNCH Bot Performance**: >90% successful self-configuration without human intervention
+- **Customer Satisfaction**: >4.5/5.0 average rating with onboarding experience
+- **Escalation Rate**: 15-20% escalation to human support (optimal balance)
+- **Revenue Growth**: >20% month-over-month growth through enhanced agent capabilities
 
-### Multi-Agent Coordination
-- **LangGraph State Management**: `src/coordinators/langgraph-coordinator.js` handles complex multi-agent workflows
-- **Agent Types**:
-  - Research Agent: Market analysis via MCPhub research tools
-  - Business Agent: Data analytics via PostgreSQL/Redis
-  - Creative Agent: Content generation via OpenAI/AI tools
-  - Development Agent: Code deployment via Git/filesystem tools
-  - n8n Workflow Architect: Visual workflow automation
-
-### Communication Integration
-- **WhatsApp Business API**: `src/integrations/whatsapp-business-mcp.js` for business messaging
-- **Multi-Channel Support**: Slack, Telegram gateways for team coordination
-- **Agent Notifications**: Real-time status updates across all channels
-
-## Key Implementation Patterns
-
-### Agent State Management
-Agents use LangGraph with persistent state stored in Qdrant vector database. Each agent has security-tier access controls through MCPhub groups.
-
-### MCP Server Architecture
-All tools and integrations go through MCPhub using Model Context Protocol (MCP). This provides:
-- Centralized authentication and authorization
-- Smart semantic routing for tool discovery
-- Complete audit trails for security compliance
-- Group-based tool access isolation
-
-### Workflow Orchestration
-- **n8n Integration**: Visual workflow design and execution
-- **LangGraph Coordination**: Multi-agent state management and delegation
-- **Redis/BullMQ**: Job queuing and background processing
-
-## File Structure Importance
-
-- `docs/architecture/Technical Design Document.md`: Complete system architecture and specifications
-- `src/coordinators/langgraph-coordinator.js`: Main multi-agent coordination logic
-- `src/integrations/`: Communication channel integrations (WhatsApp, etc.)
-- `scripts/init-communication-gateways.sh`: Infrastructure initialization
-- `config/`: MCPhub and service configurations
+### Market Positioning
+- **Unique Value Proposition**: "The only AI agency platform that gets you operational in 60 seconds with your choice of AI models, complete data control, and enterprise-grade security"
+- **Competitive Differentiation**: Vendor-agnostic approach vs. vendor lock-in competitors
+- **Target Segments**: SMB (focus), AI Agencies, Enterprise, Industry Verticals
 
 ## Development Guidelines
 
+### Agent Development Priorities
+1. **Revenue Impact**: Prioritize agents with highest customer ROI
+2. **Market Differentiation**: Focus on vendor-agnostic capabilities  
+3. **Customer Success**: Optimize for >90% LAUNCH bot success rates
+4. **Scalability**: Design for 10,000+ concurrent customer environments
+
 ### Security Requirements
-- All agent interactions must go through MCPhub security groups
-- Customer data requires complete isolation (Tier 3)
-- Personal data requires owner-only access (Tier 0)
-- Development tools restricted to team members (Tier 1)
+- All agent interactions must maintain complete customer isolation
+- Multi-model AI support with customer-configurable preferences
+- Compliance-ready architecture for enterprise sales
+- Complete audit trails for regulatory requirements
 
-### Agent Development
-- Use the AgentCoordinator class in `langgraph-coordinator.js` as the base pattern
-- Implement security tier validation for all agent operations
-- Store agent memory and context in Qdrant vector database
-- Use MCPhub semantic routing for tool discovery
+### Performance Standards
+- **API Response**: <200ms p95 response time
+- **Agent Processing**: <2 seconds for simple tasks, <30 seconds for complex
+- **LAUNCH Bot Setup**: <60 seconds for complete customer configuration
+- **System Uptime**: 99.99% availability target
 
-### Integration Patterns
-- All external APIs integrate as MCP servers through MCPhub
-- Communication channels use the notification template system
-- Workflow coordination happens through LangGraph state management
+When working with this codebase, prioritize business value delivery, customer success metrics, and the enhanced agent portfolio that drives revenue growth from $500K to $25M ARR.
 
-## LAUNCH Bot System
-The platform includes self-configuring customer bots that set up themselves through conversation in <60 seconds. These bots:
-- Start in "blank" state and learn business purpose through dialogue
-- Configure integrations automatically based on customer needs
-- Escalate to human support when appropriate
-- Operate in complete isolation per customer (Tier 3 security)
+## Expected Business Impact
 
-## Production Deployment
-The system is designed for Docker deployment with:
-- MCPhub as the central security and routing hub
-- Multi-service Docker Compose setup
-- Nginx reverse proxy with security headers
-- Comprehensive monitoring and logging
-- Automated backup and disaster recovery
+### Personal Development Acceleration
+- **Enhanced Productivity**: Advanced AI agent assistance for development tasks
+- **Market Insights**: Real-time competitive intelligence and opportunity identification  
+- **Strategic Guidance**: AI-powered business development and growth strategies
 
-When working with this codebase, prioritize security isolation, use MCPhub for all tool access, and follow the multi-agent coordination patterns established in the LangGraph coordinator.
+### Commercial AI Agency Platform
+- **Vendor-Agnostic Infrastructure**: Customer choice of AI models increases market appeal
+- **Enhanced Agent Portfolio**: Comprehensive business automation across all departments
+- **Customer Success Automation**: LAUNCH bots reduce onboarding costs and improve satisfaction
+- **Scalable Operations**: Support unlimited customers with optimized resource usage
+
+Remember: This platform represents a new paradigm in AI agency services, combining cutting-edge technology with proven business models to create a scalable, profitable, and market-leading AI automation platform.

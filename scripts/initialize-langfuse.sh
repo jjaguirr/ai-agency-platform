@@ -25,12 +25,12 @@ fi
 echo -e "${BLUE}Step 1: Environment Setup${NC}"
 
 # Check for environment file
-if [ ! -f ".env.langfuse" ]; then
-    echo -e "${YELLOW}Creating .env.langfuse from template...${NC}"
-    cp .env.langfuse.template .env.langfuse
-    echo -e "${RED}IMPORTANT: Please edit .env.langfuse with your actual API keys and secrets${NC}"
+if [ ! -f ".env" ]; then
+    echo -e "${YELLOW}Creating .env from template...${NC}"
+    cp .env.template .env
+    echo -e "${RED}IMPORTANT: Please edit .env with your actual API keys and secrets${NC}"
     echo -e "${RED}Required: OpenAI API key, Anthropic API key, and secure passwords${NC}"
-    read -p "Press Enter after you've configured .env.langfuse..."
+    read -p "Press Enter after you've configured .env..."
 fi
 
 echo -e "${BLUE}Step 2: Starting Langfuse Infrastructure${NC}"
@@ -91,7 +91,7 @@ cat << 'EOF'
    - Copy the Public Key (pk-lf-...) and Secret Key (sk-lf-...)
 
 5. Update your environment:
-   - Edit .env.langfuse
+   - Edit .env
    - Set LANGFUSE_PUBLIC_KEY=pk-lf-your-key-here
    - Set LANGFUSE_SECRET_KEY=sk-lf-your-key-here
 
