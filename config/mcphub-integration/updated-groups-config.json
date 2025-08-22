@@ -1,9 +1,9 @@
 {
   "mcphub_groups_config": {
-    "version": "2.0.0",
-    "architecture": "dual-agent-system",
-    "last_updated": "2025-01-17",
-    "description": "Updated MCPhub group configuration for dual-agent architecture with Claude Code + Infrastructure agents",
+    "version": "2.1.0",
+    "architecture": "dual-agent-system-with-llama-guard-security",
+    "last_updated": "2025-01-21",
+    "description": "MCPhub group configuration with Llama Guard 4 security integration for AI safety and content moderation",
     
     "security_groups": {
       "personal-infrastructure": {
@@ -23,7 +23,15 @@
         ],
         "data_isolation": "complete",
         "audit_level": "basic",
-        "max_concurrent_agents": 3
+        "max_concurrent_agents": 3,
+        "security_filtering": {
+          "llama_guard_enabled": true,
+          "safety_tier": "enterprise",
+          "prompt_injection_protection": true,
+          "content_moderation": "strict",
+          "pii_detection": true,
+          "custom_policies": ["admin-protection", "platform-security"]
+        }
       },
       
       "development-infrastructure": {
@@ -50,6 +58,14 @@
           "enabled": true,
           "claude_code_integration": "status_updates_only",
           "message_types": ["deployment_status", "infrastructure_health"]
+        },
+        "security_filtering": {
+          "llama_guard_enabled": true,
+          "safety_tier": "professional",
+          "prompt_injection_protection": true,
+          "content_moderation": "standard",
+          "pii_detection": true,
+          "custom_policies": ["development-security", "infrastructure-protection"]
         }
       },
       
@@ -79,6 +95,14 @@
           "enabled": true,
           "model_selection": "intelligent",
           "usage_tracking": true
+        },
+        "security_filtering": {
+          "llama_guard_enabled": true,
+          "safety_tier": "professional",
+          "prompt_injection_protection": true,
+          "content_moderation": "standard",
+          "pii_detection": true,
+          "custom_policies": ["business-protection", "competitive-intelligence-safe"]
         }
       },
       
@@ -113,6 +137,21 @@
           "gdpr": true,
           "ccpa": true,
           "data_residency": "customer_configurable"
+        },
+        "security_filtering": {
+          "llama_guard_enabled": true,
+          "safety_tier": "customer_configurable",
+          "tier_mapping": {
+            "basic": "basic",
+            "professional": "professional", 
+            "enterprise": "enterprise"
+          },
+          "prompt_injection_protection": true,
+          "content_moderation": "customer_tier_based",
+          "pii_detection": true,
+          "industry_policies": "customer_configurable",
+          "audit_logging": "complete",
+          "custom_policies": ["customer-isolation", "launch-bot-safety"]
         }
       },
       
@@ -137,6 +176,15 @@
           "enabled": true,
           "requests_per_minute": 100,
           "burst_limit": 200
+        },
+        "security_filtering": {
+          "llama_guard_enabled": true,
+          "safety_tier": "basic",
+          "prompt_injection_protection": true,
+          "content_moderation": "strict",
+          "pii_detection": true,
+          "demo_mode_protection": true,
+          "custom_policies": ["public-safety", "demo-content-protection"]
         }
       }
     },
@@ -250,8 +298,61 @@
         "Add Redis pub/sub configuration",
         "Add environment variables for dual-agent support",
         "Update MCPhub with new group management",
-        "Add customer provisioning service"
+        "Add customer provisioning service",
+        "Add Llama Guard 4 security services integration"
       ]
+    },
+    
+    "security_integration": {
+      "description": "Llama Guard 4 integration with MCPhub groups for comprehensive AI safety",
+      "architecture": "dual-layer-security",
+      
+      "security_flow": {
+        "step_1": "All LLM requests intercepted by Security Proxy (port 8080)",
+        "step_2": "Request evaluated by Llama Guard 4 for safety violations",
+        "step_3": "Safe requests forwarded to MCPhub with security context",
+        "step_4": "MCPhub applies group-specific security policies",
+        "step_5": "AI responses filtered through Llama Guard 4 output evaluation",
+        "step_6": "Security events logged for audit and compliance"
+      },
+      
+      "group_policy_mapping": {
+        "personal-infrastructure": {
+          "safety_level": "maximum",
+          "rationale": "Platform administration requires highest security"
+        },
+        "development-infrastructure": {
+          "safety_level": "high", 
+          "rationale": "Development access requires strong protection"
+        },
+        "business-operations": {
+          "safety_level": "high",
+          "rationale": "Business data and competitive intelligence protection"
+        },
+        "customer-template": {
+          "safety_level": "customer_configurable",
+          "rationale": "Flexible policies based on customer tier and industry"
+        },
+        "public-gateway": {
+          "safety_level": "maximum",
+          "rationale": "Public access requires strictest content moderation"
+        }
+      },
+      
+      "integration_points": {
+        "mcphub_middleware": "Intercept all LLM requests for security evaluation",
+        "group_context": "Pass security tier and customer ID to Llama Guard API", 
+        "policy_enforcement": "Apply group-specific safety policies and custom rules",
+        "audit_logging": "Complete security event logging per group isolation",
+        "cost_tracking": "Monitor security processing costs per customer group"
+      },
+      
+      "performance_requirements": {
+        "security_evaluation_time": "<200ms per request",
+        "throughput": "10,000+ requests per minute across all groups",
+        "availability": "99.9% uptime for security services",
+        "failover": "Fail-secure behavior when Llama Guard unavailable"
+      }
     }
   }
 }

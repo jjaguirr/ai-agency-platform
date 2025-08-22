@@ -41,6 +41,87 @@ services:
       timeout: 10s
       retries: 3
 
+  # Llama Guard 4 Security Layer - AI Safety and Content Moderation
+  security-proxy:
+    image: nginx:1.25-alpine
+    container_name: ai-agency-security-proxy
+    ports:
+      - "8080:80"   # Main entry point for all LLM traffic
+    volumes:
+      - ./config/nginx/security-proxy.conf:/etc/nginx/nginx.conf:ro
+      - ./config/nginx/security_checks.conf:/etc/nginx/security_checks.conf:ro
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - llamaguard-api
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  llamaguard-security:
+    image: huggingface/text-generation-inference:2.0.1
+    container_name: ai-agency-llamaguard
+    ports:
+      - "8082:80"  # Llama Guard model endpoint
+    environment:
+      - MODEL_ID=meta-llama/Llama-Guard-4-12B
+      - NUM_SHARD=1
+      - PORT=80
+      - QUANTIZE=bitsandbytes-nf4
+      - MAX_CONCURRENT_REQUESTS=64
+      - MAX_INPUT_LENGTH=4096
+      - MAX_TOTAL_TOKENS=8192
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
+    volumes:
+      - llamaguard_cache:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 300s  # Allow time for model loading
+    restart: unless-stopped
+
+  llamaguard-api:
+    build:
+      context: ./src/security
+      dockerfile: Dockerfile.llamaguard-api
+    container_name: ai-agency-llamaguard-api
+    ports:
+      - "8083:8080"  # API wrapper endpoint
+    environment:
+      - LLAMAGUARD_URL=http://llamaguard-security:80
+      - LOG_LEVEL=INFO
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_URL=postgresql://mcphub:${POSTGRES_PASSWORD}@postgres:5432/mcphub
+    depends_on:
+      llamaguard-security:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./config/security/safety-policies.yaml:/app/config/safety-policies.yaml:ro
+      - ./logs/security:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  llamaguard_cache:
+    driver: local
+
 networks:
   default:
     name: ai-agency-phase1
@@ -49,4 +130,16 @@ networks:
 # This template uses environment variables for sensitive data.
 # 1. Copy .env.phase1.template to .env.phase1
 # 2. Fill in secure values in .env.phase1
-# 3. Run: docker-compose --env-file .env.phase1 -f docker-compose.phase1.yml up -d
+# 3. Set HUGGING_FACE_HUB_TOKEN for Llama Guard 4 model access
+# 4. Run: docker-compose --env-file .env.phase1 -f docker-compose.phase1.yml up -d
+#
+# Security Services Information:
+# - Security Proxy (Entry Point): http://localhost:8080
+# - Llama Guard API: http://localhost:8083
+# - Llama Guard Model: http://localhost:8082
+#
+# Requirements:
+# - NVIDIA GPU with 8GB+ memory recommended for optimal performance
+# - 16GB+ system RAM
+# - SSD storage for model caching
+# - HuggingFace account token for model downloads

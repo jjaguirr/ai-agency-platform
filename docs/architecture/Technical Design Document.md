@@ -39,6 +39,14 @@ graph TB
         CI5[Email Integration]
     end
     
+    subgraph "Llama Guard 4 Security Layer"
+        LG1[Security Proxy :8080]
+        LG2[Llama Guard 4 AI Safety]
+        LG3[Content Moderation API]
+        LG4[Rate Limiting & DDoS Protection]
+        LG5[Safety Policy Enforcement]
+    end
+    
     subgraph "MCPhub Central Hub"
         MH1[MCPhub Server :3000]
         MH2[JWT + bcrypt Authentication]
@@ -87,12 +95,22 @@ graph TB
         DI4[n8n - Workflow Storage]
     end
     
-    %% Customer Interface Connections
-    CI1 --> MH1
-    CI2 --> MH1
-    CI3 --> MH1
-    CI4 --> MH1
-    CI5 --> MH1
+    %% Customer Interface Connections through Security Layer
+    CI1 --> LG1
+    CI2 --> LG1
+    CI3 --> LG1
+    CI4 --> LG1
+    CI5 --> LG1
+    
+    %% Security Layer Processing
+    LG1 --> LG2
+    LG1 --> LG3
+    LG1 --> LG4
+    LG2 --> LG5
+    LG3 --> LG5
+    
+    %% Security Layer to MCPhub
+    LG5 --> MH1
     
     %% MCPhub Hub Connections
     MH1 --> MH2
@@ -221,6 +239,118 @@ Enterprise Infrastructure:
   CI/CD: GitHub Actions with automated testing and deployment
   Monitoring: Prometheus + Grafana with business metrics
   Security: TLS 1.3, WAF, DDoS protection, audit logging
+```
+
+### Llama Guard 4 AI Safety Layer
+
+#### LLM-Specific Security Architecture
+
+The AI Agency Platform implements Meta's Llama Guard 4 as the primary defense against LLM-specific threats, providing enterprise-grade content moderation, prompt injection detection, and safety policy enforcement.
+
+```yaml
+Llama Guard 4 Security Stack:
+  Primary_Safety_Model: Meta Llama Guard 4 (12B parameters)
+  Safety_Standards: MLCommons hazard taxonomy (12 categories)
+  Deployment: HuggingFace Text Generation Inference (TGI)
+  Performance: <200ms safety evaluation, 95%+ accuracy
+  
+Safety Categories Enforced:
+  Content_Safety: Violence, hate speech, sexual content, harassment
+  Security_Threats: Prompt injection, system manipulation, jailbreaking
+  Compliance_Violations: Privacy breaches, defamation, election interference
+  Business_Protection: Spam, off-topic content, competitor mentions
+  
+Customer Tier Integration:
+  Basic_Tier: Standard safety policies, 100 req/min
+  Professional_Tier: Enhanced protection, custom policies, 500 req/min
+  Enterprise_Tier: Maximum security, compliance ready, 2000 req/min
+  
+Dual Filtering Architecture:
+  Input_Filtering: Evaluate user prompts before AI model processing
+  Output_Filtering: Validate AI responses before returning to users
+  Real_Time_Decisions: Sub-200ms policy evaluation and enforcement
+  Audit_Compliance: Complete request/response logging for regulatory requirements
+```
+
+#### Security Integration Flow
+
+```mermaid
+sequenceDiagram
+    participant Client as Customer Client
+    participant Proxy as Security Proxy (8080)
+    participant Guard as Llama Guard 4 API
+    participant MCPhub as MCPhub Hub (3000)
+    participant AI as AI Models
+    
+    Client->>Proxy: LLM Request + Customer Context
+    Proxy->>Guard: Input Safety Evaluation
+    Guard->>Guard: MLCommons Safety Check
+    
+    alt Content Safe
+        Guard->>Proxy: Safety: PASS
+        Proxy->>MCPhub: Forward Secure Request
+        MCPhub->>AI: Route to AI Model
+        AI->>MCPhub: Generate Response
+        MCPhub->>Guard: Output Safety Check
+        Guard->>Guard: Response Safety Validation
+        
+        alt Response Safe
+            Guard->>Proxy: Output: SAFE
+            Proxy->>Client: Filtered Response
+        else Response Unsafe
+            Guard->>Proxy: Output: BLOCKED
+            Proxy->>Client: Safety Violation Message
+        end
+        
+    else Content Unsafe
+        Guard->>Proxy: Input: BLOCKED
+        Proxy->>Client: Safety Policy Violation
+    end
+    
+    Proxy->>Proxy: Log Security Event
+```
+
+#### AI Safety Features
+
+**Advanced Threat Detection:**
+- **Prompt Injection Protection**: AI-powered detection of manipulation attempts
+- **Jailbreak Prevention**: Recognition and blocking of system override attempts  
+- **Content Moderation**: 12 MLCommons safety categories with industry standards
+- **PII Protection**: Automatic detection and anonymization of sensitive data
+- **Context-Aware Filtering**: Understanding of conversation context and intent
+
+**Flexible Policy Management:**
+- **Prompt-Based Policies**: Change safety behavior by updating prompts (no code deployment)
+- **Industry-Specific Rules**: Healthcare HIPAA, finance regulations, education safety
+- **Customer Customization**: Tier-based policies with enterprise-specific requirements
+- **Real-Time Updates**: Dynamic policy changes without service interruption
+
+**Enterprise Compliance:**
+- **Audit Logging**: Complete safety event tracking with tamper protection
+- **GDPR Ready**: Data protection and right-to-deletion compliance
+- **HIPAA Compliant**: Healthcare data protection and PHI handling
+- **Regulatory Reporting**: Automated compliance documentation and metrics
+
+#### Performance & Scaling
+
+```yaml
+Performance Specifications:
+  Safety_Evaluation: <200ms per request (95th percentile)
+  Throughput: 10,000+ requests/minute sustained
+  Availability: 99.9% uptime with automatic failover
+  Accuracy: >95% safety violation detection rate
+  
+Resource Requirements:
+  GPU_Memory: 8GB+ for full Llama Guard 4 model
+  System_RAM: 16GB+ recommended for optimal performance
+  Storage: SSD recommended for model caching
+  Network: Low latency connection for real-time evaluation
+  
+Scaling Strategy:
+  Horizontal_Scaling: Multiple Llama Guard instances with load balancing
+  Model_Optimization: Quantized models for memory efficiency
+  Caching_Layer: Redis-based response caching for repeated evaluations
+  Circuit_Breaker: Fail-secure behavior when safety service unavailable
 ```
 
 ### Security Architecture

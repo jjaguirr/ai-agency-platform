@@ -52,12 +52,22 @@ Requirements:
     audit_logging: Complete action trail for compliance
     encryption_at_rest: AES-256 encryption for sensitive data
     encryption_in_transit: TLS 1.3 for all communications
+    
+  llm_security_layer:
+    llama_guard_4: AI-powered content moderation and safety evaluation
+    prompt_injection_protection: Real-time detection and blocking of manipulation attempts
+    content_filtering: MLCommons 12-category safety taxonomy enforcement
+    dual_filtering: Input prompt and output response safety validation
+    policy_enforcement: Customer tier-based safety policies and compliance
 
 Success Metrics:
   - 100% customer data isolation validation
   - <200ms authentication response time
+  - <200ms LLM safety evaluation response time
+  - >95% prompt injection detection accuracy
   - Zero security incidents during phase
   - 99.9% authentication service uptime
+  - 99.9% LLM safety service uptime
 ```
 
 #### 2. Database Architecture Foundation
@@ -170,6 +180,52 @@ Success Metrics:
   - <2 seconds agent response time (average)
   - 99.9% MCPhub service uptime
   - Support for 50+ concurrent agent instances
+```
+
+#### 5. Llama Guard 4 AI Safety Layer
+```yaml
+Feature: Enterprise-Grade LLM Security and Content Moderation
+Business Value: Comprehensive protection against LLM-specific threats and compliance requirements
+
+Requirements:
+  ai_safety_model:
+    primary_model: Meta Llama Guard 4 (12B parameters)
+    safety_standards: MLCommons hazard taxonomy (12 categories)
+    deployment: HuggingFace Text Generation Inference (TGI)
+    gpu_requirements: 8GB+ GPU memory for optimal performance
+    
+  threat_protection:
+    prompt_injection_detection: AI-powered recognition of manipulation attempts
+    jailbreak_prevention: System override and bypass attempt blocking  
+    content_moderation: Violence, hate speech, sexual content, harassment filtering
+    pii_protection: Automatic detection and anonymization of sensitive data
+    
+  policy_enforcement:
+    tier_based_policies: Basic, Professional, Enterprise safety configurations
+    industry_compliance: Healthcare HIPAA, finance regulations, GDPR ready
+    custom_rules: Customer-specific safety policies and requirements
+    real_time_updates: Dynamic policy changes without service interruption
+    
+  dual_filtering_architecture:
+    input_filtering: Evaluate user prompts before AI model processing
+    output_filtering: Validate AI responses before returning to customers
+    request_context: Customer ID, security tier, and compliance requirements
+    audit_logging: Complete safety event tracking for regulatory compliance
+    
+  integration_features:
+    security_proxy: Nginx-based rate limiting and DDoS protection (port 8080)
+    api_wrapper: FastAPI service for MCPhub integration (port 8083)
+    redis_caching: Response caching and rate limiting support
+    monitoring: Prometheus metrics and health check endpoints
+
+Success Metrics:
+  - <200ms safety evaluation response time (95th percentile)
+  - >95% prompt injection detection accuracy
+  - >99% content safety violation detection rate
+  - 99.9% LLM safety service uptime
+  - Zero successful jailbreak attempts
+  - 100% customer tier policy compliance
+  - Complete audit trail for all safety decisions
 ```
 
 ---

@@ -115,16 +115,26 @@ The platform delivers specialized agents through progressive rollout aligned wit
 
 ### Security Model
 - **5-Tier Security Groups**: Personal → Development → Business → Customer → Public
+- **Llama Guard 4 AI Safety**: Enterprise-grade LLM security with MLCommons standards
+- **Dual-Layer Protection**: Nginx security proxy + AI-powered content moderation
+- **Prompt Injection Defense**: Real-time detection and blocking of manipulation attempts
 - **Customer Isolation**: Complete data separation per customer with configurable AI models
 - **Vendor-Agnostic AI**: Support for OpenAI, Claude, Meta, DeepSeek, local models
-- **Compliance Ready**: GDPR, HIPAA, PCI-DSS, SOC2 support
+- **Compliance Ready**: GDPR, HIPAA, PCI-DSS, SOC2 support with automated audit trails
 
 ### Key Implementation Files by Phase
 **Phase 1 Documents**:
 - `docs/architecture/Phase-1-PRD.md` - Foundation infrastructure requirements
 - `docs/architecture/Technical Design Document.md` - Complete system architecture  
 - `docker-compose.langfuse.yml` - Langfuse + MCPhub deployment
+- `docker-compose.llamaguard.yml` - Llama Guard 4 security deployment
 - `scripts/initialize-langfuse.sh` - Automated Langfuse setup
+- `scripts/deploy-llamaguard-security.sh` - Automated security stack deployment
+
+**Security Implementation Files**:
+- `config/security/safety-policies.yaml` - Tier-based safety policies and compliance rules
+- `config/nginx/security-proxy.conf` - Rate limiting and DDoS protection configuration
+- `src/security/llamaguard-api.py` - LLM safety evaluation API wrapper
 
 **Phase 2 Documents**:
 - `docs/architecture/Phase-2-PRD.md` - Agent system & orchestration

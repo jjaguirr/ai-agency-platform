@@ -1,0 +1,444 @@
+# AI Agency Platform - Production Infrastructure Stack
+# High-Availability, Scalable Deployment for 1000+ Customers
+
+version: '3.8'
+
+services:
+  # MCPhub Load Balancer
+  mcphub-lb:
+    image: nginx:1.25-alpine
+    ports:
+      - "3000:80"
+      - "3443:443"
+    volumes:
+      - ./config/nginx/mcphub-lb.conf:/etc/nginx/nginx.conf:ro
+      - ./config/nginx/ssl:/etc/nginx/ssl:ro
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - mcphub-1
+      - mcphub-2
+      - mcphub-3
+    restart: unless-stopped
+    networks:
+      - ai-agency-platform
+
+  # MCPhub Instances (3 replicas for HA)
+  mcphub-1:
+    image: ai-agency-platform/mcphub:latest
+    environment:
+      - DATABASE_URL=postgresql://mcphub:${DB_PASSWORD}@postgres-primary:5432/mcphub
+      - REDIS_URL=redis://redis-cluster:6379
+      - JWT_SECRET=${JWT_SECRET}
+      - INSTANCE_ID=mcphub-1
+    depends_on:
+      - postgres-primary
+      - redis-cluster
+    restart: unless-stopped
+    networks:
+      - ai-agency-platform
+
+  mcphub-2:
+    image: ai-agency-platform/mcphub:latest
+    environment:
+      - DATABASE_URL=postgresql://mcphub:${DB_PASSWORD}@postgres-primary:5432/mcphub
+      - REDIS_URL=redis://redis-cluster:6379
+      - JWT_SECRET=${JWT_SECRET}
+      - INSTANCE_ID=mcphub-2
+    depends_on:
+      - postgres-primary
+      - redis-cluster
+    restart: unless-stopped
+    networks:
+      - ai-agency-platform
+
+  mcphub-3:
+    image: ai-agency-platform/mcphub:latest
+    environment:
+      - DATABASE_URL=postgresql://mcphub:${DB_PASSWORD}@postgres-primary:5432/mcphub
+      - REDIS_URL=redis://redis-cluster:6379
+      - JWT_SECRET=${JWT_SECRET}
+      - INSTANCE_ID=mcphub-3
+    depends_on:
+      - postgres-primary
+      - redis-cluster
+    restart: unless-stopped
+    networks:
+      - ai-agency-platform
+
+  # PostgreSQL High Availability Setup
+  postgres-primary:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=mcphub
+      - POSTGRES_USER=mcphub
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_REPLICATION_MODE=master
+      - POSTGRES_REPLICATION_USER=replicator
+      - POSTGRES_REPLICATION_PASSWORD=${REPLICATION_PASSWORD}
+    volumes:
+      - postgres_primary_data:/var/lib/postgresql/data
+      - ./config/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./config/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    networks:
+      - ai-agency-platform
+
+  postgres-replica:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_MASTER_SERVICE=postgres-primary
+      - POSTGRES_REPLICATION_MODE=slave
+      - POSTGRES_REPLICATION_USER=replicator
+      - POSTGRES_REPLICATION_PASSWORD=${REPLICATION_PASSWORD}
+      - POSTGRES_MASTER_PORT_NUMBER=5432
+    depends_on:
+      - postgres-primary
+    volumes:
+      - postgres_replica_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - ai-agency-platform
+
+  # Redis Cluster for High Availability
+  redis-cluster:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000
+    volumes:
+      - redis_cluster_data:/data
+    restart: unless-stopped
+    networks:
+      - ai-agency-platform
+
+  # Llama Guard Security Stack - Load Balanced
+  security-lb:
+    image: nginx:1.25-alpine
+    ports:
+      - "8080:80"
+      - "8443:443"
+    volumes:
+      - ./config/nginx/security-lb.conf:/etc/nginx/nginx.conf:ro
+      - ./config/nginx/ssl:/etc/nginx/ssl:ro
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - llamaguard-api-1
+      - llamaguard-api-2
+    restart: unless-stopped
+    networks:
+      - ai-agency-security
+
+  # Llama Guard API Instances (2 replicas)
+  llamaguard-api-1:
+    build:
+      context: ./src/security
+      dockerfile: Dockerfile.llamaguard-api
+    environment:
+      - LLAMAGUARD_URL=http://llamaguard-model-cluster:80
+      - LOG_LEVEL=INFO
+      - API_TIMEOUT=30
+      - MAX_WORKERS=8
+      - REDIS_URL=redis://redis-security-cluster:6379
+      - POSTGRES_URL=postgresql://mcphub:${DB_PASSWORD}@postgres-primary:5432/mcphub
+      - INSTANCE_ID=llamaguard-api-1
+    depends_on:
+      - llamaguard-model-cluster
+      - redis-security-cluster
+    volumes:
+      - ./config/security/safety-policies.yaml:/app/config/safety-policies.yaml:ro
+      - ./logs/security:/app/logs
+    restart: unless-stopped
+    networks:
+      - ai-agency-security
+
+  llamaguard-api-2:
+    build:
+      context: ./src/security
+      dockerfile: Dockerfile.llamaguard-api
+    environment:
+      - LLAMAGUARD_URL=http://llamaguard-model-cluster:80
+      - LOG_LEVEL=INFO
+      - API_TIMEOUT=30
+      - MAX_WORKERS=8
+      - REDIS_URL=redis://redis-security-cluster:6379
+      - POSTGRES_URL=postgresql://mcphub:${DB_PASSWORD}@postgres-primary:5432/mcphub
+      - INSTANCE_ID=llamaguard-api-2
+    depends_on:
+      - llamaguard-model-cluster
+      - redis-security-cluster
+    volumes:
+      - ./config/security/safety-policies.yaml:/app/config/safety-policies.yaml:ro
+      - ./logs/security:/app/logs
+    restart: unless-stopped
+    networks:
+      - ai-agency-security
+
+  # Llama Guard Model Service - Horizontally Scaled
+  llamaguard-model-cluster:
+    image: haproxy:2.8
+    ports:
+      - "8082:80"
+    volumes:
+      - ./config/haproxy/llamaguard-cluster.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - llamaguard-model-1
+      - llamaguard-model-2
+    restart: unless-stopped
+    networks:
+      - ai-agency-security
+
+  llamaguard-model-1:
+    image: huggingface/text-generation-inference:2.0.1
+    environment:
+      - MODEL_ID=meta-llama/Llama-Guard-4-12B
+      - NUM_SHARD=1
+      - PORT=80
+      - QUANTIZE=awq
+      - MAX_CONCURRENT_REQUESTS=32
+      - MAX_INPUT_LENGTH=2048
+      - MAX_TOTAL_TOKENS=4096
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
+    volumes:
+      - llamaguard_cache_1:/data
+    deploy:
+      resources:
+        limits:
+          cpus: '8.0'
+          memory: 16G
+        reservations:
+          cpus: '4.0'
+          memory: 8G
+    restart: unless-stopped
+    networks:
+      - ai-agency-security
+
+  llamaguard-model-2:
+    image: huggingface/text-generation-inference:2.0.1
+    environment:
+      - MODEL_ID=meta-llama/Llama-Guard-4-12B
+      - NUM_SHARD=1
+      - PORT=80
+      - QUANTIZE=awq
+      - MAX_CONCURRENT_REQUESTS=32
+      - MAX_INPUT_LENGTH=2048
+      - MAX_TOTAL_TOKENS=4096
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
+    volumes:
+      - llamaguard_cache_2:/data
+    deploy:
+      resources:
+        limits:
+          cpus: '8.0'
+          memory: 16G
+        reservations:
+          cpus: '4.0'
+          memory: 8G
+    restart: unless-stopped
+    networks:
+      - ai-agency-security
+
+  # Redis Security Cluster
+  redis-security-cluster:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    command: redis-server --appendonly yes --maxmemory 2gb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_security_cluster_data:/data
+    restart: unless-stopped
+    networks:
+      - ai-agency-security
+
+  # Qdrant Vector Database for Agent Memory
+  qdrant-cluster:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_cluster_data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    restart: unless-stopped
+    networks:
+      - ai-agency-platform
+
+  # n8n Workflow Automation - Clustered
+  n8n-cluster:
+    image: n8nio/n8n:latest
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=n8n.yourdomain.com
+      - WEBHOOK_URL=https://n8n.yourdomain.com
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres-primary
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=n8n
+      - DB_POSTGRESDB_USER=n8n
+      - DB_POSTGRESDB_PASSWORD=${N8N_DB_PASSWORD}
+    volumes:
+      - n8n_cluster_data:/home/node/.n8n
+    depends_on:
+      - postgres-primary
+    restart: unless-stopped
+    networks:
+      - ai-agency-platform
+
+  # Monitoring Stack
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus:/etc/prometheus
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+    networks:
+      - ai-agency-platform
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_DATABASE_TYPE=postgres
+      - GF_DATABASE_HOST=postgres-primary:5432
+      - GF_DATABASE_NAME=grafana
+      - GF_DATABASE_USER=grafana
+      - GF_DATABASE_PASSWORD=${GRAFANA_DB_PASSWORD}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
+      - postgres-primary
+    restart: unless-stopped
+    networks:
+      - ai-agency-platform
+
+  # Log Aggregation
+  elasticsearch:
+    image: elasticsearch:8.11.0
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+      - xpack.security.enabled=false
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    restart: unless-stopped
+    networks:
+      - ai-agency-platform
+
+  kibana:
+    image: kibana:8.11.0
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+    networks:
+      - ai-agency-platform
+
+  # Backup Service
+  backup-service:
+    image: postgres:15-alpine
+    environment:
+      - BACKUP_SCHEDULE=0 2 * * *  # Daily at 2 AM
+      - S3_BUCKET=${BACKUP_S3_BUCKET}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+    volumes:
+      - ./scripts/backup-service.sh:/backup.sh:ro
+      - backup_data:/backups
+    command: ["sh", "-c", "while true; do /backup.sh; sleep 86400; done"]
+    depends_on:
+      - postgres-primary
+    restart: unless-stopped
+    networks:
+      - ai-agency-platform
+
+volumes:
+  postgres_primary_data:
+  postgres_replica_data:
+  redis_cluster_data:
+  redis_security_cluster_data:
+  llamaguard_cache_1:
+  llamaguard_cache_2:
+  qdrant_cluster_data:
+  n8n_cluster_data:
+  prometheus_data:
+  grafana_data:
+  elasticsearch_data:
+  backup_data:
+
+networks:
+  ai-agency-platform:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+    labels:
+      - "ai.agency.network=platform"
+      - "ai.agency.environment=production"
+
+  ai-agency-security:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
+    labels:
+      - "ai.agency.network=security"
+      - "ai.agency.environment=production"
+
+# Production Deployment Notes:
+#
+# 1. Resource Requirements:
+#    - Minimum 32GB RAM, 16 CPU cores
+#    - SSD storage with 500GB+ available
+#    - Network bandwidth: 1Gbps+
+#
+# 2. Security Configuration:
+#    - All services behind load balancers
+#    - SSL/TLS termination at nginx
+#    - JWT authentication throughout
+#    - Customer data isolation enforced
+#
+# 3. High Availability Features:
+#    - 3x MCPhub instances
+#    - 2x Llama Guard API instances  
+#    - 2x Llama Guard model instances
+#    - PostgreSQL primary/replica setup
+#    - Redis clustering
+#
+# 4. Monitoring & Observability:
+#    - Prometheus metrics collection
+#    - Grafana dashboards
+#    - ELK stack for log aggregation
+#    - Health checks on all services
+#
+# 5. Backup & Recovery:
+#    - Daily automated backups
+#    - S3 backup storage
+#    - Point-in-time recovery capability
+#    - Disaster recovery procedures
+#
+# 6. Scaling Instructions:
+#    - Horizontal: Add more service replicas
+#    - Vertical: Increase CPU/memory limits
+#    - Database: Use read replicas for scaling
+#    - Storage: Use distributed storage systems

@@ -1,0 +1,333 @@
+# AI Agency Platform - Llama Guard 4 Safety Policies
+# Tier-based content safety and policy enforcement configuration
+
+# Global Configuration
+global_settings:
+  version: "1.0.0"
+  last_updated: "2025-01-21"
+  default_timeout_ms: 5000
+  max_content_length: 8192
+  enable_audit_logging: true
+  fail_secure: true  # Block content when safety evaluation fails
+
+# Customer Tier-Based Safety Policies
+customer_tiers:
+  
+  # Basic Tier - Standard Safety Protection
+  basic:
+    policy_type: "general"
+    strict_mode: false
+    timeout_ms: 3000
+    description: "Standard content safety for basic tier customers"
+    
+    # MLCommons Safety Categories (Enabled)
+    safety_categories:
+      violence: true
+      hate_speech: true
+      sexual_content: true
+      criminal_planning: true
+      harassment: true
+      self_harm: true
+      
+    # Business-Specific Categories
+    business_categories:
+      spam_detection: true
+      prompt_injection: true
+      off_topic: false
+      profanity: true
+      
+    # Response Configuration
+    response_handling:
+      block_unsafe: true
+      provide_explanation: true
+      suggest_alternatives: false
+      escalate_to_human: false
+      
+    # Rate Limiting
+    rate_limits:
+      requests_per_minute: 100
+      requests_per_hour: 1000
+      burst_allowance: 20
+  
+  # Professional Tier - Enhanced Safety + Business Rules  
+  professional:
+    policy_type: "strict"
+    strict_mode: true
+    timeout_ms: 5000
+    description: "Enhanced safety with business-specific protections"
+    
+    # All MLCommons Safety Categories
+    safety_categories:
+      violence: true
+      hate_speech: true
+      sexual_content: true
+      criminal_planning: true
+      defamation: true
+      elections: true
+      privacy: true
+      intellectual_property: true
+      harassment: true
+      specialized_advice: true
+      discrimination: true
+      self_harm: true
+      
+    # Advanced Business Categories
+    business_categories:
+      spam_detection: true
+      prompt_injection: true
+      off_topic: true
+      profanity: true
+      competitor_mentions: true
+      confidential_data: true
+      
+    # Enhanced Response Handling
+    response_handling:
+      block_unsafe: true
+      provide_explanation: true
+      suggest_alternatives: true
+      escalate_to_human: true
+      custom_block_message: "Content blocked by professional safety policy"
+      
+    # Higher Rate Limits
+    rate_limits:
+      requests_per_minute: 500
+      requests_per_hour: 10000
+      burst_allowance: 100
+  
+  # Enterprise Tier - Maximum Security + Compliance
+  enterprise:
+    policy_type: "enterprise"
+    strict_mode: true
+    timeout_ms: 8000
+    description: "Maximum security with industry compliance"
+    
+    # All Safety Categories + Enterprise Extensions
+    safety_categories:
+      violence: true
+      hate_speech: true
+      sexual_content: true
+      criminal_planning: true
+      defamation: true
+      elections: true
+      privacy: true
+      intellectual_property: true
+      harassment: true
+      specialized_advice: true
+      discrimination: true
+      self_harm: true
+      
+    # Enterprise Business Categories
+    business_categories:
+      spam_detection: true
+      prompt_injection: true
+      off_topic: true
+      profanity: true
+      competitor_mentions: true
+      confidential_data: true
+      financial_advice: true
+      medical_advice: true
+      legal_advice: true
+      regulatory_compliance: true
+      
+    # Maximum Security Response
+    response_handling:
+      block_unsafe: true
+      provide_explanation: true
+      suggest_alternatives: true
+      escalate_to_human: true
+      require_approval: true
+      custom_block_message: "Enterprise security policy violation"
+      
+    # Enterprise Rate Limits
+    rate_limits:
+      requests_per_minute: 2000
+      requests_per_hour: 50000
+      burst_allowance: 500
+      
+    # Compliance Features
+    compliance:
+      audit_all_requests: true
+      data_retention_days: 2555  # 7 years
+      encryption_at_rest: true
+      gdpr_compliant: true
+      hipaa_ready: true
+      soc2_controls: true
+
+# Industry-Specific Policy Templates
+industry_policies:
+  
+  # Healthcare Industry
+  healthcare:
+    extends: "enterprise"
+    description: "Healthcare-specific safety and HIPAA compliance"
+    
+    additional_categories:
+      phi_detection: true        # Protected Health Information
+      medical_misinformation: true
+      unauthorized_diagnosis: true
+      prescription_advice: true
+      
+    compliance_requirements:
+      hipaa_compliance: true
+      phi_masking: true
+      medical_professional_only: true
+      
+    custom_prompts:
+      medical_disclaimer: "This is not medical advice. Consult a healthcare professional."
+  
+  # Financial Services
+  finance:
+    extends: "enterprise" 
+    description: "Financial services safety and regulatory compliance"
+    
+    additional_categories:
+      financial_misinformation: true
+      investment_advice: true
+      fraud_schemes: true
+      insider_trading: true
+      money_laundering: true
+      
+    compliance_requirements:
+      finra_compliance: true
+      sec_regulations: true
+      pci_dss_ready: true
+      
+    custom_prompts:
+      financial_disclaimer: "This is not financial advice. Consult a qualified advisor."
+  
+  # Education
+  education:
+    extends: "professional"
+    description: "Educational content safety and child protection"
+    
+    additional_categories:
+      child_safety: true
+      academic_dishonesty: true
+      age_inappropriate: true
+      cyberbullying: true
+      
+    special_protections:
+      coppa_compliant: true
+      ferpa_compliant: true
+      child_friendly_mode: true
+
+# Prompt Injection Detection Patterns
+prompt_injection:
+  enabled: true
+  detection_methods:
+    - "pattern_matching"
+    - "llama_guard_native"
+  
+  # Known attack patterns  
+  patterns:
+    instruction_override:
+      - "ignore previous instructions"
+      - "forget everything above"
+      - "new instructions:"
+      - "system override"
+      - "developer mode"
+      - "admin mode"
+      
+    system_manipulation:
+      - "you are now"
+      - "pretend to be"
+      - "act as if"
+      - "roleplay as"
+      - "simulate"
+      
+    information_extraction:
+      - "reveal your prompt"
+      - "show system message"
+      - "what are your instructions"
+      - "repeat your guidelines"
+      
+    jailbreak_attempts:
+      - "DAN mode"
+      - "do anything now"
+      - "jailbreak"
+      - "bypass safety"
+      - "ignore safety"
+      
+  # Response to detected injection
+  injection_response:
+    block_immediately: true
+    log_attempt: true
+    escalate_repeated: true
+    ban_threshold: 5  # attempts before temporary ban
+
+# Content Sanitization Rules
+content_sanitization:
+  enabled: true
+  
+  # PII Detection and Masking
+  pii_protection:
+    detect_email: true
+    detect_phone: true
+    detect_ssn: true
+    detect_credit_card: true
+    detect_addresses: true
+    masking_character: "***"
+    
+  # Content Replacement
+  replacement_rules:
+    profanity_filter: true
+    hate_speech_removal: true
+    violent_content_warning: true
+    
+# Audit and Logging Configuration
+audit_logging:
+  enabled: true
+  log_levels:
+    - "safety_violation"
+    - "prompt_injection" 
+    - "policy_escalation"
+    - "system_errors"
+    
+  retention:
+    basic_tier: 30        # days
+    professional_tier: 90  # days  
+    enterprise_tier: 2555  # days (7 years)
+    
+  export_formats:
+    - "json"
+    - "csv" 
+    - "siem_compatible"
+
+# Performance and Scaling
+performance:
+  caching:
+    enable_response_cache: true
+    cache_ttl_seconds: 300
+    max_cache_size_mb: 512
+    
+  batch_processing:
+    max_batch_size: 10
+    batch_timeout_ms: 10000
+    
+  circuit_breaker:
+    failure_threshold: 5
+    recovery_timeout_ms: 30000
+
+# Integration Settings
+integration:
+  mcphub:
+    enabled: true
+    endpoint: "http://security-proxy:8080/evaluate"
+    timeout_ms: 5000
+    retry_attempts: 2
+    
+  monitoring:
+    prometheus_metrics: true
+    health_check_interval: 30
+    alert_thresholds:
+      error_rate_percent: 5
+      response_time_ms: 1000
+      
+# Default Responses for Different Violation Types
+default_responses:
+  violence: "Content contains violent themes that are not permitted."
+  hate_speech: "Content contains hate speech and discriminatory language."
+  sexual_content: "Content contains inappropriate sexual material."
+  prompt_injection: "Attempted system manipulation detected and blocked."
+  pii_violation: "Content contains personally identifiable information that has been protected."
+  service_error: "Content safety check temporarily unavailable. Request blocked for security."
