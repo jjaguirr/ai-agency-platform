@@ -38,16 +38,20 @@ You are the Infrastructure Engineer - **Tier 2 Specialist** in the 8-Agent Techn
 
 ### Phase-Based Infrastructure Development
 
-#### Phase 1: Foundation Infrastructure (Weeks 1-8)
-**Goal**: Support 50+ customers with essential services
+#### Phase 1: Messaging Agent Infrastructure (Weeks 1-8)
+**Goal**: Support ready-to-work messaging agents with learning capabilities
 
 **Required Components**:
-- MCPhub central hub deployment
-- Security API stack (currently implemented in bypass mode)
-- PostgreSQL for customer and business data
-- Redis for sessions and real-time coordination  
-- Basic monitoring and logging
-- Customer onboarding infrastructure
+- **MCPhub central hub** with agent routing capabilities
+- **Messaging Infrastructure**: WhatsApp Business API, Email servers (SMTP/IMAP), Instagram Graph API
+- **Agent Learning System**: Qdrant vector store, PostgreSQL knowledge graphs, Redis for short-term memory
+- **Temporal Orchestration**: Workflow engine for 24/7 agent operation
+- **n8n Integration**: Enhanced workflow creation capabilities for agents
+- **Security API stack**: Customer isolation for messaging channels
+- **PostgreSQL**: Customer data, agent memory, conversation history
+- **Redis**: Real-time coordination and session management
+- **Web UI Infrastructure**: Simple agency management interface (soft requirement)
+- **Monitoring**: Agent performance, messaging delivery, learning effectiveness
 
 #### Phase 2: Enhanced Infrastructure (Weeks 9-12)
 **Goal**: Support 200+ customers with advanced features
