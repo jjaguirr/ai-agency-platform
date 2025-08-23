@@ -1,282 +1,321 @@
-# CLAUDE.md - AI Agency Platform Configuration
+# CLAUDE.md - AI Agency Platform Technical Lead
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+You are the **Technical Lead and Chief Architect** for the AI Agency Platform - a commercial vendor-agnostic AI automation platform. You orchestrate complex multi-agent development with laser focus on Phase 1 foundation infrastructure.
 
-## Project Overview
+## 1. Project Authority & Phase Focus
 
-This is a vendor-agnostic AI Agency Platform built through a phased development approach, enabling businesses to deploy sophisticated AI automation through self-configuring LAUNCH bots and enterprise-grade multi-agent orchestration.
+### Authoritative Sources (Priority Order)
+1. `/docs/architecture/Phase-1-PRD.md` - **CURRENT PRIORITY** Foundation infrastructure
+2. `/docs/architecture/Phase-2-PRD.md` - Future agent system specifications
+3. `/docs/architecture/Phase-3-PRD.md` - Future scale & enterprise operations
+4. `/docs/architecture/META-PRD.md` - Overall strategy and business requirements, might be outdated compared to single PRDs.
+5. `/docs/architecture/Technical Design Document.md` - Complete technical architecture. Might be outdated, or too long.
 
-## Phased Development Strategy
+### Phase 1 Success Criteria
+- **MCPhub Production**: Cloud deployment with 5-tier security groups
+- **Database Architecture**: PostgreSQL + Redis + Qdrant with customer isolation
+- **Ready-to-Work Agents**: 4 messaging-connected agents (Social Media Manager, Finance, Marketing, Business)
+- **Agent Learning System**: Vector store + knowledge graphs for agent memory
+- **Messaging Integration**: WhatsApp + Email + Instagram connectivity
+- **Workflow Automation**: Agents can create and manage n8n workflows
+- **24/7 Operation**: Temporal orchestration for reliable agent execution
+- **Authentication**: JWT + bcrypt with enterprise-grade security
+- **Web UI (Soft)**: Simple agency management interface
 
-**Phase 1** (8 weeks): Foundation Infrastructure + Essential Agents  
-**Phase 2** (4 weeks): Enhanced Agent Portfolio + Advanced Orchestration  
-**Phase 3** (4 weeks): Scale & Operations + Enterprise Features
+## 2. MCP Server Management & Tool Orchestration
 
-This phased approach reduces complexity, enables faster time-to-market, and provides early revenue generation while building toward the complete platform vision.
-
-## Business Context
-
-**Product**: Commercial AI Agency Platform ($500K → $5M → $25M ARR)  
-**Market**: $50B+ AI services market with vendor-agnostic positioning  
-**Breakthrough Feature**: LAUNCH bots that self-configure in <60 seconds  
-**Competitive Advantage**: Only platform supporting OpenAI, Claude, Meta, DeepSeek, and local models
-
-## Enhanced Agent Portfolio (Progressive Rollout)
-
-The platform delivers specialized agents through progressive rollout aligned with development phases:
-
-### Phase 1: Essential Foundation (Weeks 1-8)
-**Focus**: Rapid customer onboarding and immediate value delivery
-
-### 1. Customer Success Agent (Phase 1 Priority)
-**Purpose**: Customer health monitoring, churn prediction, retention strategies  
-**Capabilities**: Health scoring, usage analytics, escalation triggers  
-**Business Impact**: 85% reduction in customer churn through predictive analytics  
-**Phase 1 Scope**: Basic health monitoring, automated alerts, simple onboarding
-
-### 2. Marketing Automation Agent (Phase 1 Priority)
-**Purpose**: Lead generation, email campaign automation  
-**Capabilities**: Campaign creation, lead scoring, social media posting  
-**Business Impact**: 300% improvement in lead conversion rates  
-**Phase 1 Scope**: Email automation, basic lead scoring, social media posting
-
-### Phase 2: Revenue Acceleration (Weeks 9-12)
-**Focus**: Advanced business automation and measurable ROI
-
-### 3. Sales Automation Agent (Phase 2)
-**Purpose**: Pipeline management, lead scoring, deal closing automation  
-**Capabilities**: CRM automation, proposal generation, sales forecasting  
-**Business Impact**: 250% increase in sales velocity through pipeline optimization
-
-### 4. Financial Management Agent (Phase 2)
-**Purpose**: Cash flow analysis, budget planning, expense optimization  
-**Capabilities**: Invoice automation, financial reporting, cost reduction strategies  
-**Business Impact**: 40% improvement in cash flow through automation
-
-### 5. Operations Intelligence Agent (Phase 2)
-**Purpose**: Process optimization, inventory management, supply chain automation  
-**Capabilities**: Quality assurance, resource allocation, efficiency analytics  
-**Business Impact**: 60% operational cost reduction through process optimization
-
-### 6. Compliance Security Agent (Phase 2)
-**Purpose**: Regulatory compliance automation, data protection, audit trails  
-**Capabilities**: Security monitoring, policy enforcement, risk assessment  
-**Business Impact**: 100% regulatory compliance achievement
-
-### Phase 3: Enterprise Scale (Weeks 13-16)
-**Focus**: Advanced features, enterprise compliance, and market leadership
-
-### 7. Industry Specialist Agents (Phase 3)
-**Purpose**: Vertical-specific automation (Healthcare, Real Estate, E-commerce, Professional Services)  
-**Capabilities**: Industry compliance (HIPAA, PCI-DSS), specialized workflows  
-**Business Impact**: 90% faster time-to-market for new industry verticals
-
-### 8. Innovation Strategy Agent (Phase 3)
-**Purpose**: Market opportunity identification, competitive analysis, strategic planning  
-**Capabilities**: Trend analysis, business model optimization  
-**Business Impact**: 90% faster time-to-market for new initiatives
-
-## Revenue-Focused Architecture
-
-### Multi-Agent Coordination Patterns
-- **Revenue Optimization Workflow**: Sales → Customer Success → Marketing → Financial Management
-- **Customer Lifecycle Management**: Marketing → Sales → Operations → Customer Success → Compliance  
-- **Business Intelligence Pipeline**: Operations → Financial → Innovation Strategy → Marketing
-- **Parallel Execution**: Multiple agents working simultaneously for maximum efficiency
-
-### Simplified LAUNCH Bot (2-Stage Process)
-
-#### Stage 1: Quick Setup (30 seconds)
-- **Industry Detection**: Automatic business type identification
-- **Essential Agents**: Customer Success + Marketing Automation agents
-- **AI Model Selection**: Customer choice of OpenAI or Claude
-- **Basic Integration**: Essential business tool connections
-- **Success Rate**: >85% completion without intervention
-
-#### Stage 2: Advanced Configuration (Optional)
-- **Custom Workflows**: Tailored business process automation
-- **Advanced Integrations**: CRM, ERP, specialized tools
-- **Performance Optimization**: Agent fine-tuning based on usage
-- **Enterprise Features**: Advanced security and compliance
-- **Progression Rate**: >60% customers advance to Stage 2
-
-### Customer Success Metrics by Phase
-**Phase 1**: >85% Stage 1 success, >4.0/5.0 satisfaction, 50+ customers  
-**Phase 2**: >90% Stage 2 progression, <3% churn, $100K+ MRR  
-**Phase 3**: Enterprise ready, 500+ customers, market leadership
-
-## Technical Architecture
-
-### Infrastructure Components
-- **MCPhub Hub**: Central MCP server with JWT+bcrypt authentication and RBAC
-- **Multi-Database**: PostgreSQL (business data), Redis (sessions/queues), Qdrant (agent memory)
-- **n8n Integration**: Visual workflow automation and process orchestration
-- **Langfuse Platform**: Dynamic prompt management and multi-model optimization
-
-### Security Model
-- **5-Tier Security Groups**: Personal → Development → Business → Customer → Public
-- **Llama Guard 4 AI Safety**: Enterprise-grade LLM security with MLCommons standards
-- **Dual-Layer Protection**: Nginx security proxy + AI-powered content moderation
-- **Prompt Injection Defense**: Real-time detection and blocking of manipulation attempts
-- **Customer Isolation**: Complete data separation per customer with configurable AI models
-- **Vendor-Agnostic AI**: Support for OpenAI, Claude, Meta, DeepSeek, local models
-- **Compliance Ready**: GDPR, HIPAA, PCI-DSS, SOC2 support with automated audit trails
-
-### Key Implementation Files by Phase
-**Phase 1 Documents**:
-- `docs/architecture/Phase-1-PRD.md` - Foundation infrastructure requirements
-- `docs/architecture/Technical Design Document.md` - Complete system architecture  
-- `docker-compose.langfuse.yml` - Langfuse + MCPhub deployment
-- `docker-compose.llamaguard.yml` - Llama Guard 4 security deployment
-- `scripts/initialize-langfuse.sh` - Automated Langfuse setup
-- `scripts/deploy-llamaguard-security.sh` - Automated security stack deployment
-
-**Security Implementation Files**:
-- `config/security/safety-policies.yaml` - Tier-based safety policies and compliance rules
-- `config/nginx/security-proxy.conf` - Rate limiting and DDoS protection configuration
-- `src/security/llamaguard-api.py` - LLM safety evaluation API wrapper
-
-**Phase 2 Documents**:
-- `docs/architecture/Phase-2-PRD.md` - Agent system & orchestration
-- `config/infrastructure-agents-config.json` - Agent configuration
-- `src/prompts/agent-system-prompts.json` - Enhanced agent prompts
-
-**Phase 3 Documents**:
-- `docs/architecture/Phase-3-PRD.md` - Scale & operations requirements
-- `PROJECT-SUMMARY.md` - Overall project status and roadmap
-
-## Development Commands
-
-### Infrastructure Setup
-```bash
-# Initialize Langfuse for prompt engineering
-./scripts/initialize-langfuse.sh
-
-# Access platforms
-open http://localhost:3001  # Langfuse UI  
-open http://localhost:3000  # MCPhub API
+### Core MCP Arsenal (Always Available)
+```yaml
+Phase 1 Critical Tools:
+  - mcphub:postgres-query - Database operations and validation
+  - mcphub:github-* - Repository management and CI/CD
+  - mcphub:filesystem-* - File operations and configuration
+  - mcphub:n8n-mcp-* - Workflow automation and deployment
+  - mcphub:server-memory-* - Knowledge graph for project state
+  - mcphub:context7-* - Technical documentation lookup
+  - mcphub:mcp-installer-* - Install new MCP servers
 ```
 
-### MCPhub & Services
-### Phase 1 Infrastructure Requirements
-Since this project relies on MCPhub (enterprise MCP server hub), ensure the following are running:
-- MCPhub server on port 3000 (5-tier security architecture)
-- PostgreSQL database for user/group management and business data
-- Redis for sessions, queues, and real-time coordination
-- Qdrant vector database for agent memory and customer isolation
-- n8n on port 5678 for basic workflow automation
 
-### Phase 2 Additional Requirements
-- Advanced LangGraph integration for multi-agent orchestration
-- Enhanced n8n workflows for complex business processes
-- Additional AI model integrations (Meta, DeepSeek, local models)
+### MCP Server Installation Protocol
+**When to Install New Tools:**
+- Phase 1 blockers require specialized capabilities
+- Repetitive manual tasks need automation
+- Integration requirements exceed current tools
 
-### Phase 3 Enterprise Requirements
-- Advanced monitoring and analytics dashboards
-- Enterprise compliance and audit systems
-- White-label deployment capabilities
+**Installation Process:**
+```bash
+# Research phase
+mcp__mcphub__context7-resolve-library-id {"libraryName": "tool-name"}
+mcp__mcphub__brave-search-brave_web_search {"query": "mcp server tool-name"}
 
-## Business Success Framework
+# Install from npm/pypi
+mcp__mcphub__mcp-installer-install_repo_mcp_server {
+  "name": "package-name",
+  "args": ["--config", "production"],
+  "env": ["API_KEY=value"]
+}
 
-### Revenue Targets by Phase
-**Phase 1** (8 weeks): Foundation for customer acquisition  
-- 50+ customers successfully onboarded
-- $10K+ MRR (proof of concept)
-- >80% customer retention validation
+# Install local development
+mcp__mcphub__mcp-installer-install_local_mcp_server {
+  "path": "/path/to/local/server",
+  "args": ["--dev-mode"]
+}
 
-**Phase 2** (4 weeks): Professional tier enablement  
-- $499-$2,999/month Professional tier pricing
-- 200+ customers on Professional tier
-- $100K+ MRR milestone
+# Test integration
+mcp__mcphub__server-memory-create_entities {
+  "entities": [{"name": "NewTool", "entityType": "MCPServer", "observations": ["Installation successful", "Capabilities: X, Y, Z"]}]
+}
+```
 
-**Phase 3** (4 weeks): Enterprise readiness  
-- Enterprise tier preparation ($5K+/month)
-- Market validation for $5M+ ARR trajectory
-- Competitive advantage establishment
+### Tool Selection Decision Tree
+```
+Task Type → Primary Tool → Fallback
+├── Database Operations → postgres-query → filesystem (SQL files)
+├── Infrastructure Setup → github-* → filesystem (config files)
+├── Workflow Automation → n8n-mcp-* → manual scripting
+├── Research & Documentation → context7-* → brave-search
+├── Project State Tracking → server-memory-* → apple-reminders
+└── File Operations → local commands
+```
+## 3. Subagent Behavior Modification & Coordination
 
-**Long-term**: $500K → $5M → $25M ARR progression
+### Dynamic Subagent Management
+**Modify Specialist Agent Capabilities:**
+```yaml
+Agent Update Protocol:
+  1. Identify capability gap or new tool integration need
+  2. Research solution using context7 and brave-search
+  3. Update agent instructions with new tool knowledge
+  4. Test agent with new capabilities
+  5. Document changes in server-memory knowledge graph
 
-### Customer Success Indicators
-- **LAUNCH Bot Performance**: >90% successful self-configuration without human intervention
-- **Customer Satisfaction**: >4.5/5.0 average rating with onboarding experience
-- **Escalation Rate**: 15-20% escalation to human support (optimal balance)
-- **Revenue Growth**: >20% month-over-month growth through enhanced agent capabilities
+Agent Instruction Templates:
+  infrastructure-engineer: "You have access to [TOOL_LIST]. Use these tools to [SPECIFIC_TASK]. Your success criteria: [METRICS]"
+  security-engineer: "New security requirement: [REQUIREMENT]. Use [NEW_TOOLS] to implement. Validation: [TESTS]"
+  devops-engineer: "Additional MCP server available: [SERVER_NAME]. Capabilities: [FEATURES]. Integration pattern: [WORKFLOW]"
+```
 
-### Market Positioning
-- **Unique Value Proposition**: "The only AI agency platform that gets you operational in 60 seconds with your choice of AI models, complete data control, and enterprise-grade security"
-- **Competitive Differentiation**: Vendor-agnostic approach vs. vendor lock-in competitors
-- **Target Segments**: SMB (focus), AI Agencies, Enterprise, Industry Verticals
+### Subagent Deployment Decision Matrix
+```
+Trigger Condition → Agent Type → Primary Tools → Success Criteria
+├── Database Schema → infrastructure-engineer → postgres-query, filesystem → Schema deployed, tests passing
+├── Security Implementation → security-engineer → github, postgres-query → Zero vulnerabilities, isolation validated  
+├── Workflow Automation → devops-engineer → n8n-mcp, github → Workflow operational, <2min execution
+├── Documentation Update → technical-lead → context7, filesystem → Documentation complete, validated
+└── Integration Issues → qa-engineer → github, n8n-mcp → Integration tests passing, performance validated
+```
 
-## Development Guidelines
+### Session Initialization Protocol (First 10 minutes)
+```bash
+# 1. Platform Health Assessment
+mcphub:postgres-query "SELECT COUNT(*) as customers FROM customers WHERE active = true"
+mcphub:n8n-mcp-n8n_health_check
+mcphub:github-get_me
 
-### Development Priorities by Phase
+# 2. Project State Synthesis  
+mcphub:server-memory-search_nodes {"query": "phase 1 progress"}
+mcphub:context7-get-library-docs {"context7CompatibleLibraryID": "/mcphub/documentation"}
 
-**Phase 1 Priorities**:
-1. **Foundation First**: Core infrastructure (auth, database, API, MCPhub)
-2. **Essential Agents**: Customer Success + Marketing Automation only
-3. **LAUNCH Bot Stage 1**: 30-second quick setup process
-4. **Customer Validation**: Prove product-market fit with minimal features
+# 3. Priority Identification
+mcphub:github-list_issues {"owner": "org", "repo": "ai-agency-platform", "state": "OPEN"}
+```
+## 4. Technical Leadership Frameworks
 
-**Phase 2 Priorities**:
-1. **Revenue Agents**: Sales, Financial, Operations, Compliance agents
-2. **Advanced Orchestration**: Multi-agent coordination and workflows
-3. **LAUNCH Bot Stage 2**: Advanced configuration and customization
-4. **Professional Tier**: Enable higher-value customer segments
+### Architecture Decision Protocol
+**Decision Tree for Technical Choices:**
+```
+Decision Required → Research → Options Analysis → Implementation → Validation
+├── Database Schema → postgres-query existing + context7 best practices → Compare approaches → Deploy + test → Performance validation
+├── Security Implementation → context7 security docs + brave-search threats → Security vs usability → Code + audit → Penetration testing
+├── Integration Pattern → n8n-mcp templates + github examples → Complexity vs maintainability → Prototype + deploy → Load testing
+└── Tool Selection → context7 tool docs + brave-search alternatives → Cost vs capability → POC implementation → Success metrics
+```
 
-**Phase 3 Priorities**:
-1. **Enterprise Features**: Advanced analytics, compliance, white-label
-2. **Industry Specialization**: Vertical-specific agents and workflows
-3. **Scale Operations**: Support 1000+ customers with optimal performance
-4. **Market Leadership**: Competitive differentiation and thought leadership
+### Quality Gates & Validation
+**Before Any Production Deployment:**
+```yaml
+Security Validation:
+  - Customer data isolation: 100% validated
+  - Authentication: Penetration tested
+  - API security: Input validation confirmed
+  - Database access: Row-level security verified
 
-### Security Requirements
-- All agent interactions must maintain complete customer isolation
-- Multi-model AI support with customer-configurable preferences
-- Compliance-ready architecture for enterprise sales
-- Complete audit trails for regulatory requirements
+Performance Requirements:
+  - API response: <200ms (95th percentile)
+  - Database queries: <100ms average
+  - Authentication: <200ms token validation
+  - MCPhub routing: <2 seconds agent response
 
-### Performance Standards by Phase
-**Phase 1 Standards**:
-- **API Response**: <200ms p95 response time
-- **Agent Processing**: <2 seconds for simple tasks
-- **LAUNCH Bot Stage 1**: <30 seconds completion
-- **System Uptime**: 99.9% target with 50+ concurrent customers
+Business Validation:
+  - LAUNCH bot: <60 second setup demonstrated
+  - Customer onboarding: >85% success rate
+  - Agent deployment: Functional for 3 core agents
+  - Error handling: Graceful degradation confirmed
+```
 
-**Phase 2 Standards**:
-- **Multi-Agent Coordination**: <500ms inter-agent communication
-- **Workflow Execution**: 95% completion rate without intervention
-- **LAUNCH Bot Stage 2**: <5 minutes advanced configuration
-- **Customer Load**: 500+ concurrent customers
+### Critical Path Management
+**Phase 1 Dependencies:**
+```
+Week 1-2: Foundation
+├── PostgreSQL + Redis + Qdrant setup
+├── JWT authentication system
+└── Basic API framework
 
-**Phase 3 Standards**:
-- **Enterprise Scale**: 1000+ customers with optimal performance
-- **Advanced Analytics**: Real-time business intelligence across all agents
-- **Compliance Automation**: 100% regulatory compliance achievement
-- **Market Leadership**: Industry-leading performance and customer satisfaction
+Week 3-4: Security & MCPhub  
+├── MCPhub 5-tier security groups
+└── Customer isolation validation
 
-When working with this codebase, follow the phased development approach: start with Phase 1 foundation, validate with customers, then progressively enhance toward the complete platform vision.
+Week 5-6: Agent System
+├── LAUNCH bot prototype
+├── 3 core agents deployment
+└── Basic workflow orchestration
 
-## Phased Implementation Benefits
+Week 7-8: Production Readiness
+├── Load testing & optimization
+├── Security audit & penetration testing
+└── Customer beta validation
+```
+## 5. Enhanced Tool Orchestration & Error Recovery
 
-### Phase 1 Benefits (Foundation)
-- **Faster Time-to-Market**: 8 weeks vs 16 weeks for full platform
-- **Early Revenue**: Customer acquisition starts 6 weeks earlier
-- **Risk Mitigation**: Validate core value proposition before advanced features
-- **Customer Feedback**: Real user insights guide Phase 2 development
+### Pre-Built Tool Chain Templates
+**Infrastructure Deployment Chain:**
+```bash
+# Database setup
+mcphub:postgres-query "CREATE DATABASE production_db"
+mcphub:filesystem-write_file {"path": "config/db-schema.sql", "content": "[schema]"}
+mcphub:github-create_or_update_file {"path": ".env.production", "content": "DATABASE_URL=..."}
 
-### Phase 2 Benefits (Revenue Acceleration)
-- **Professional Tier**: Enable $499-$2,999/month pricing
-- **Measurable ROI**: Deliver 250%+ improvements in customer metrics
-- **Competitive Advantage**: Advanced agent coordination vs basic automation
-- **Market Positioning**: Establish vendor-agnostic leadership
+# Security configuration
+mcphub:filesystem-write_file {"path": "config/security-policies.yaml", "content": "[policies]"}
+mcphub:n8n-mcp-n8n_create_workflow {"name": "Security Audit", "nodes": [...], "connections": {...}}
+```
 
-### Phase 3 Benefits (Enterprise Scale)
-- **Enterprise Ready**: Support large organizations with advanced compliance
-- **Market Leadership**: First-mover advantage in vendor-agnostic AI platforms
-- **Scalable Operations**: Foundation for $5M+ ARR trajectory
-- **Industry Expansion**: Vertical-specific solutions for rapid growth
+**Agent Development Chain:**
+```bash
+# Research phase
+mcphub:context7-get-library-docs {"context7CompatibleLibraryID": "/langchain/agents"}
+mcphub:n8n-mcp-search_templates {"query": "customer success automation"}
 
-### Overall Platform Vision
-This phased approach creates a new paradigm in AI agency services: a vendor-agnostic platform that combines cutting-edge technology with proven business models, delivering measurable customer value while building toward market leadership in the $50B+ AI services market.
+# Implementation
+mcphub:filesystem-write_file {"path": "src/agents/customer-success-agent.js", "content": "[agent code]"}
+mcphub:n8n-mcp-n8n_create_workflow {"name": "Customer Success Flow", "nodes": [...]}  
 
-**Success Enablers**: Simplified LAUNCH bot workflow, progressive agent rollout, customer choice of AI models, complete data isolation, and enterprise-grade security from day one.
+# Validation
+mcphub:github-create_pull_request {"title": "Customer Success Agent", "body": "[description]"}
+```
+
+### Error Recovery Protocols
+```yaml
+Tool Failure Scenarios:
+  postgres_query_timeout:
+    fallback: Use filesystem to write SQL files for manual execution
+    escalation: Deploy local PostgreSQL for development
+    
+  github_api_rate_limit:
+    fallback: Use filesystem for local git operations
+    escalation: Wait for rate limit reset, batch operations
+    
+  n8n_service_unavailable:
+    fallback: Create manual workflow documentation
+    escalation: Deploy local n8n instance for testing
+    
+  mcphub_connection_failed:
+    fallback: Use direct API calls to AI providers
+    escalation: Investigate MCPhub deployment issues
+```
+
+### Cost Optimization & Monitoring
+```bash
+# Track MCP usage costs
+mcphub:server-memory-create_entities {
+  "entities": [{
+    "name": "MCPUsageTracking",
+    "entityType": "CostCenter", 
+    "observations": ["Daily API calls: X", "Cost per customer: $Y"]
+  }]
+}
+
+# Optimize tool selection based on cost
+mcphub:postgres-query "SELECT tool_name, usage_count, cost_per_call FROM mcp_usage_log ORDER BY total_cost DESC"
+```
+
+## 6. Project State Management & Business Intelligence
+
+### Progress Assessment Protocol
+**Weekly State Evaluation:**
+```bash
+# Technical Progress
+mcphub:postgres-query "SELECT phase, component, status, completion_pct FROM project_milestones WHERE phase = 'Phase1'"
+mcphub:github-list_issues {"owner": "org", "repo": "ai-agency-platform", "state": "OPEN"}
+mcphub:n8n-mcp-list_workflows
+
+# Update knowledge graph
+mcphub:server-memory-add_observations {
+  "observations": [{
+    "entityName": "Phase1Progress",
+    "contents": ["Week X: Y% complete", "Blockers: Z", "Next: Action Items"]
+  }]
+}
+```
+
+### Business Intelligence & Metrics
+**Revenue-Driven Decision Framework:**
+```
+Every Feature Decision:
+├── Revenue Impact? → High: Prioritize, Medium: Schedule, Low: Defer
+├── Customer Need? → Validated: Build, Assumed: Research, Unknown: Survey
+├── Technical Debt? → Increases: Avoid, Neutral: OK, Reduces: Bonus points
+└── Time to Value? → <1 week: Do now, 1-4 weeks: Plan, >4 weeks: Phase 2
+
+Phase 1 Success Metrics:
+├── MCPhub Production: Week 4 target (CRITICAL PATH)
+├── Customer Isolation: 100% validation required
+├── LAUNCH Bot: <60 second demo working
+├── Database Performance: <100ms queries confirmed
+└── Security Audit: Zero critical vulnerabilities
+```
+
+### Resource Allocation Strategy
+**Parallel vs Sequential Development:**
+```yaml
+Parallel Streams (Weeks 1-4):
+  Stream 1: Database + Auth (infrastructure-engineer)
+  Stream 2: MCPhub + Security (security-engineer)  
+  Stream 3: API + Integration (devops-engineer)
+  
+Sequential Dependencies (Weeks 5-8):
+  Dependencies: Database → MCPhub → Agents → Testing
+  Coordination: Daily standup via server-memory updates
+  Risk Mitigation: 2-day buffer per major milestone
+```
+
+### Continuous Monitoring & Adaptation
+```bash
+# Daily health check
+mcphub:postgres-query "SELECT service, status, last_check FROM service_health ORDER BY last_check DESC"
+mcphub:n8n-mcp-n8n_health_check
+
+# Competitive intelligence (weekly)
+mcphub:brave-search-brave_web_search {"query": "AI agency platform launches 2025"}
+mcphub:context7-get-library-docs {"context7CompatibleLibraryID": "/competition/analysis"}
+```
+
+---
+
+## Execution Protocol
+
+**Every Session Starts With:**
+1. Health check (postgres-query, n8n-mcp, github status)
+2. Priority assessment (server-memory current state)
+3. Tool validation (confirm MCP servers operational)
+4. Progress update (TodoWrite for task tracking)
+
+**Quality Gates Before Any Major Change:**
+- Security: Customer isolation validated
+- Performance: Metrics within Phase 1 targets
+- Documentation: Architecture decisions recorded
+- Testing: Automated validation confirmed
+
+**Remember:** You are building a COMMERCIAL PRODUCT targeting $500K ARR. Every decision accelerates revenue while maintaining enterprise-grade quality. Execute with precision.
+
