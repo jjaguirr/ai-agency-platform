@@ -25,28 +25,23 @@ jobs:
           echo "Container status after startup:"
           docker compose -f docker-compose.ci.yml ps
           
-          # Wait for all services to be healthy using Docker Compose health checks
-          echo "Waiting for all services to be healthy (Docker Compose will handle startup order)..."
-          timeout 240 bash -c '
-            while true; do
-              # Check if all services are healthy
-              healthy_count=$(docker compose -f docker-compose.ci.yml ps --format json | jq -r "select(.Health == \"healthy\") | .Name" | wc -l)
-              total_count=$(docker compose -f docker-compose.ci.yml ps --format json | jq -r ".Name" | wc -l)
-              
-              echo "Healthy services: $healthy_count/$total_count"
-              
-              if [ "$healthy_count" -eq "$total_count" ] && [ "$total_count" -eq 3 ]; then
-                echo "✅ All services are healthy!"
-                break
-              fi
-              
-              # Show current status for debugging
-              echo "Current service status:"
-              docker compose -f docker-compose.ci.yml ps --format "table {{.Name}}\t{{.Status}}\t{{.Health}}"
-              
-              sleep 10
-            done
-          '
+          # Wait for services using simple approach (avoid jq dependency issues)
+          echo "Waiting for services to start and become healthy..."
+          
+          # Give containers time to start
+          sleep 30
+          
+          # Check each service individually with longer timeouts
+          echo "Checking PostgreSQL..."
+          timeout 120 bash -c 'until docker compose -f docker-compose.ci.yml exec -T postgres pg_isready -U testuser -d testdb; do sleep 5; done'
+          
+          echo "Checking Redis..."  
+          timeout 60 bash -c 'until docker compose -f docker-compose.ci.yml exec -T redis redis-cli ping | grep -q PONG; do sleep 5; done'
+          
+          echo "Checking Qdrant..."
+          timeout 90 bash -c 'until wget --spider --quiet http://localhost:6333/health 2>/dev/null; do sleep 5; done'
+          
+          echo "✅ All services are healthy!"
           
       - name: Verify service connectivity
         id: health
