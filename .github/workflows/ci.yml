@@ -66,6 +66,13 @@ jobs:
           
           echo "✅ All services are healthy!"
       
+      - name: Test EA Basic Conversation
+        run: |
+          echo "Testing Executive Assistant core conversation flow..."
+          python3 -m pip install --quiet redis qdrant-client openai langchain-core langgraph psycopg2-binary requests
+          python3 test_ea_basic.py
+          echo "✅ EA basic test complete"
+      
       - name: Run basic tests
         run: |
           echo "Running basic validation tests..."
