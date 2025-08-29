@@ -81,3 +81,13 @@ Focus on current phase implementation while ensuring architecture supports futur
 - Performance benchmarks and capacity planning
 - Operational runbooks and disaster recovery procedures
 - Cost optimization recommendations
+
+# Sequential Thinking Integration
+
+**Use for complex infrastructure decisions:**
+- Multi-step deployment planning
+- Database architecture design
+- Performance optimization strategies
+- Scaling architecture analysis
+
+**Pattern**: Break complex problems into thought sequences with dynamic revision capabilities. Use sequential-thinking tool when facing architecture decisions requiring 3+ interconnected considerations.

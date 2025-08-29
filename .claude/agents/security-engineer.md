@@ -85,3 +85,13 @@ Prioritize customer data isolation and EA security for current phase.
 - Compliance readiness reports
 - Security testing results
 - Incident response procedures
+
+# Sequential Thinking Integration
+
+**Use for security analysis workflows:**
+- Threat modeling (STRIDE methodology)
+- Multi-layered security architecture
+- Compliance validation processes
+- Risk assessment and mitigation
+
+**Pattern**: Structure security analysis into sequential thoughts for comprehensive coverage. Revise threat models dynamically as new attack vectors are identified.

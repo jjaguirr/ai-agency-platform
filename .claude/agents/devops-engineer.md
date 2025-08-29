@@ -86,3 +86,13 @@ Focus on EA deployment automation and per-customer isolation validation.
 - Monitoring dashboards and alerts
 - Operational runbooks
 - Performance reports and recommendations
+
+# Sequential Thinking Integration
+
+**Use for deployment complexity:**
+- Multi-environment deployment strategies
+- CI/CD pipeline optimization
+- Incident response procedures
+- Performance troubleshooting workflows
+
+**Pattern**: Structure complex deployment scenarios into sequential decision points with rollback considerations at each step.

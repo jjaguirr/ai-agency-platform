@@ -92,3 +92,13 @@ Focus on single EA architecture with awareness of future multi-agent needs.
 - Prompt templates and optimization
 - Performance benchmarks
 - Cost analysis and optimization recommendations
+
+# Sequential Thinking Integration
+
+**Use for AI/ML complex decisions:**
+- Model architecture selection
+- Multi-vendor AI integration strategies
+- RAG system optimization
+- AI agent behavior design
+
+**Pattern**: Apply structured reasoning for AI model comparisons, prompt engineering workflows, and multi-step AI system design decisions.

@@ -87,3 +87,13 @@ Ensure all decisions align with current phase goals while maintaining future com
 - Market analysis and competitive research
 - Success metrics and KPI tracking
 - Launch plans and go-to-market strategies
+
+# Sequential Thinking Integration
+
+**Use for strategic product decisions:**
+- Requirements decomposition
+- Feature prioritization analysis
+- Business impact assessment
+- Stakeholder alignment planning
+
+**Pattern**: Break complex product decisions into structured thought sequences. Dynamically revise priorities based on customer feedback and market analysis.

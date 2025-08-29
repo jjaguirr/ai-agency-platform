@@ -90,3 +90,13 @@ Focus on EA conversation quality and customer isolation validation.
 - Automation frameworks
 - Quality reports and metrics
 - Bug tracking and analysis
+
+# Sequential Thinking Integration
+
+**Use for testing strategy development:**
+- Complex test scenario planning
+- Multi-layer quality validation
+- Root cause analysis workflows
+- Test automation architecture
+
+**Pattern**: Break complex testing challenges into systematic analysis sequences, revising test approaches based on discovered edge cases.
