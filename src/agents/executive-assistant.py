@@ -19,8 +19,7 @@ from dataclasses import dataclass, asdict
 from enum import Enum
 
 import redis
-from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct
+from .memory.mcp_memory_client import MCPMemoryServiceClient
 import openai
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langgraph.graph import StateGraph, END
@@ -94,8 +93,9 @@ class ConversationState:
 class ExecutiveAssistantMemory:
     """Multi-layer memory system for complete business context"""
     
-    def __init__(self, customer_id: str):
+    def __init__(self, customer_id: str, mcp_memory_url: str = "http://localhost:40000"):
         self.customer_id = customer_id
+        self.mcp_memory_url = mcp_memory_url
         
         # Working memory (Redis) - Active conversation context
         self.redis_client = redis.Redis(
@@ -105,9 +105,11 @@ class ExecutiveAssistantMemory:
             decode_responses=True
         )
         
-        # Semantic memory (Qdrant) - Business knowledge and patterns
-        self.qdrant_client = QdrantClient("localhost", port=6333)
-        self.collection_name = f"customer_{customer_id}_memory"
+        # Semantic memory (MCP Memory Service) - Business knowledge and patterns with autonomous consolidation
+        self.memory_client = MCPMemoryServiceClient(
+            base_url=mcp_memory_url,
+            customer_id=customer_id
+        )
         
         # Persistent memory (PostgreSQL) - Complete business history
         self.db_connection = psycopg2.connect(
@@ -117,20 +119,20 @@ class ExecutiveAssistantMemory:
             password="mcphub_password"
         )
         
-        self._ensure_vector_collection()
+        # Initialize memory collection
+        asyncio.create_task(self._ensure_memory_collection())
     
-    def _ensure_vector_collection(self):
-        """Ensure customer's vector collection exists"""
+    async def _ensure_memory_collection(self):
+        """Ensure customer's memory collection exists in MCP Memory Service"""
         try:
-            collections = self.qdrant_client.get_collections().collections
-            if not any(c.name == self.collection_name for c in collections):
-                self.qdrant_client.create_collection(
-                    collection_name=self.collection_name,
-                    vectors_config=VectorParams(size=1536, distance=Distance.COSINE)
-                )
-                logger.info(f"Created vector collection: {self.collection_name}")
+            async with self.memory_client:
+                success = await self.memory_client.ensure_collection()
+                if success:
+                    logger.info(f"Memory collection ready for customer {self.customer_id}")
+                else:
+                    logger.error(f"Failed to ensure memory collection for customer {self.customer_id}")
         except Exception as e:
-            logger.error(f"Error creating vector collection: {e}")
+            logger.error(f"Error ensuring memory collection: {e}")
     
     async def store_conversation_context(self, conversation_id: str, context: Dict):
         """Store active conversation context in Redis"""
@@ -144,61 +146,45 @@ class ExecutiveAssistantMemory:
         return json.loads(context) if context else {}
     
     async def store_business_knowledge(self, knowledge: str, metadata: Dict):
-        """Store business knowledge in vector database"""
+        """Store business knowledge using MCP Memory Service with autonomous consolidation"""
         try:
-            # Generate embedding
-            embedding_response = await openai.Embedding.acreate(
-                model="text-embedding-ada-002",
-                input=knowledge
-            )
-            embedding = embedding_response.data[0].embedding
-            
-            # Store in Qdrant
-            point_id = str(uuid.uuid4())
-            self.qdrant_client.upsert(
-                collection_name=self.collection_name,
-                points=[
-                    PointStruct(
-                        id=point_id,
-                        vector=embedding,
-                        payload={
-                            "content": knowledge,
-                            "timestamp": datetime.now().isoformat(),
-                            **metadata
-                        }
-                    )
-                ]
-            )
-            logger.info(f"Stored business knowledge: {knowledge[:100]}...")
-            
+            async with self.memory_client:
+                # MCP Memory Service handles embedding generation automatically
+                memory_id = await self.memory_client.store_memory(
+                    content=knowledge,
+                    metadata=metadata
+                )
+                logger.info(f"Stored business knowledge {memory_id}: {knowledge[:100]}...")
+                
+                # Optional: Trigger consolidation for better memory organization
+                if len(knowledge) > 500:  # For substantial content
+                    await self.memory_client.trigger_consolidation()
+                    
         except Exception as e:
             logger.error(f"Error storing business knowledge: {e}")
     
     async def search_business_knowledge(self, query: str, limit: int = 10) -> List[Dict]:
-        """Search business knowledge using semantic similarity"""
+        """Search business knowledge using MCP Memory Service semantic search"""
         try:
-            # Generate query embedding
-            embedding_response = await openai.Embedding.acreate(
-                model="text-embedding-ada-002",
-                input=query
-            )
-            query_embedding = embedding_response.data[0].embedding
-            
-            # Search in Qdrant
-            results = self.qdrant_client.search(
-                collection_name=self.collection_name,
-                query_vector=query_embedding,
-                limit=limit
-            )
-            
-            return [
-                {
-                    "content": result.payload["content"],
-                    "score": result.score,
-                    "metadata": {k: v for k, v in result.payload.items() if k != "content"}
-                }
-                for result in results
-            ]
+            async with self.memory_client:
+                # MCP Memory Service handles embedding generation and semantic search
+                search_results = await self.memory_client.search_memories(
+                    query=query,
+                    limit=limit,
+                    score_threshold=0.1  # Filter low-relevance results
+                )
+                
+                # Convert to format expected by existing code
+                results = []
+                for result in search_results:
+                    results.append({
+                        "content": result.content,
+                        "score": result.score,
+                        "metadata": result.metadata
+                    })
+                
+                logger.info(f"Found {len(results)} relevant memories for: {query[:50]}...")
+                return results
             
         except Exception as e:
             logger.error(f"Error searching business knowledge: {e}")
@@ -426,12 +412,23 @@ class ExecutiveAssistant:
     - Handles everything a real EA would do
     """
     
-    def __init__(self, customer_id: str, mcp_server_url: str):
+    def __init__(self, customer_id: str, mcp_server_url: str, mcp_memory_url: str = None):
         self.customer_id = customer_id
         self.mcp_server_url = mcp_server_url
         
+        # Default to customer-specific memory service URL or development URL
+        if mcp_memory_url is None:
+            # For development, use shared service; for production, use customer-specific
+            if "localhost" in mcp_server_url:
+                mcp_memory_url = "http://localhost:40000"  # Development
+            else:
+                # Production: calculate customer-specific port
+                customer_hash = abs(hash(customer_id)) % 10000
+                memory_port = 40000 + customer_hash
+                mcp_memory_url = f"http://localhost:{memory_port}"
+        
         # Initialize memory and workflow systems
-        self.memory = ExecutiveAssistantMemory(customer_id)
+        self.memory = ExecutiveAssistantMemory(customer_id, mcp_memory_url)
         self.workflow_creator = WorkflowCreator(customer_id)
         
         # Initialize LangGraph workflow

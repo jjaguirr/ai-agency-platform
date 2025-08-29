@@ -18,11 +18,11 @@ All Customers → Shared MCPhub → 5-Tier Security Groups
 
 ### Solution (Per-Customer MCP Servers)
 ```
-Customer A → Dedicated MCP Server A → Customer A's AI Models
-Customer B → Dedicated MCP Server B → Customer B's AI Models
-Customer C → Dedicated MCP Server C → Customer C's AI Models
-                    ↓
-            True Isolation, Simplified RBAC
+Customer A → Dedicated MCP Server A + Memory Service A → Customer A's AI Models
+Customer B → Dedicated MCP Server B + Memory Service B → Customer B's AI Models
+Customer C → Dedicated MCP Server C + Memory Service C → Customer C's AI Models
+                            ↓
+            True Isolation, Autonomous Memory, Simplified RBAC
 ```
 
 ## Technical Implementation
@@ -31,27 +31,68 @@ Customer C → Dedicated MCP Server C → Customer C's AI Models
 
 ```yaml
 Per_Customer_Deployment:
-  container_name: "mcp-server-{customer_id}"
-  image: "samanhappy/mcphub:customer-isolated"
-  ports:
-    - "30000-39999" # Dynamic port allocation per customer
-  environment:
-    - CUSTOMER_ID={customer_id}
-    - DATABASE_URL=postgresql://customer_{customer_id}@localhost:5432/customer_{customer_id}
-    - REDIS_URL=redis://localhost:6379/customer_{customer_id}
-    - QDRANT_URL=http://localhost:6333/collections/customer_{customer_id}
-    - AI_PROVIDER_KEYS={customer_specific_keys}
-    
-  volumes:
-    - "./customer-data/{customer_id}:/app/data"
-    - "./customer-workflows/{customer_id}:/app/workflows"
-    
-  networks:
-    - "customer-{customer_id}-network"
-    
-  resource_limits:
-    memory: "2GB"    # Scalable based on customer tier
-    cpu: "1.0"       # Adjustable per customer needs
+  # MCP Server Container
+  mcp_server:
+    container_name: "mcp-server-{customer_id}"
+    image: "samanhappy/mcphub:customer-isolated"
+    ports:
+      - "30000-39999" # Dynamic port allocation per customer
+    environment:
+      - CUSTOMER_ID={customer_id}
+      - DATABASE_URL=postgresql://customer_{customer_id}@localhost:5432/customer_{customer_id}
+      - REDIS_URL=redis://localhost:6379/customer_{customer_id}
+      - MCP_MEMORY_URL=http://mcp-memory-{customer_id}:40000
+      - AI_PROVIDER_KEYS={customer_specific_keys}
+    volumes:
+      - "./customer-data/{customer_id}:/app/data"
+      - "./customer-workflows/{customer_id}:/app/workflows"
+    networks:
+      - "customer-{customer_id}-network"
+    resource_limits:
+      memory: "2GB"    # Scalable based on customer tier
+      cpu: "1.0"       # Adjustable per customer needs
+
+  # MCP Memory Service Container
+  mcp_memory_service:
+    container_name: "mcp-memory-{customer_id}"
+    image: "doobidoo/mcp-memory-service:latest"
+    ports:
+      - "40000-49999" # Dynamic port allocation per customer
+    environment:
+      - CUSTOMER_ID={customer_id}
+      - MCP_MEMORY_STORAGE_BACKEND=chromadb
+      - CHROMADB_HOST=chromadb-{customer_id}
+      - CHROMADB_PORT=8000
+      - MCP_MEMORY_PORT=40000
+      - MCP_HTTP_ENABLED=true
+    depends_on:
+      - chromadb-{customer_id}
+    volumes:
+      - "./customer-memory/{customer_id}:/app/data"
+    networks:
+      - "customer-{customer_id}-network"
+    resource_limits:
+      memory: "1GB"    # Memory service resources
+      cpu: "0.5"       # Autonomous consolidation CPU
+
+  # ChromaDB Container
+  chromadb:
+    container_name: "chromadb-{customer_id}"
+    image: "chromadb/chroma:latest"
+    ports:
+      - "8000-8999"   # Internal port per customer
+    environment:
+      - CHROMA_SERVER_HOST=0.0.0.0
+      - CHROMA_SERVER_HTTP_PORT=8000
+      - ANONYMIZED_TELEMETRY=false
+      - CUSTOMER_ID={customer_id}
+    volumes:
+      - "./customer-chromadb/{customer_id}:/chroma/chroma"
+    networks:
+      - "customer-{customer_id}-network"
+    resource_limits:
+      memory: "2GB"    # Vector database resources
+      cpu: "1.0"       # Search and indexing CPU
 ```
 
 ### 2. Auto-Provisioning System
@@ -63,23 +104,39 @@ class CustomerMCPProvisioner {
         const startTime = Date.now();
         
         try {
-            // 1. Allocate dedicated port (5 seconds)
-            const mcpPort = await this.allocatePort();
+            // 1. Allocate dedicated ports (5 seconds)
+            const mcpPort = await this.allocatePort(30000, 39999);
+            const memoryPort = await this.allocatePort(40000, 49999);
+            const chromaPort = await this.allocatePort(8000, 8999);
             
             // 2. Create customer-isolated database (10 seconds)
             await this.createCustomerDatabase(customerId);
             
-            // 3. Deploy dedicated MCP server container (10 seconds)
+            // 3. Deploy ChromaDB container (8 seconds)
+            const chromaDbId = await this.deployChromaDBContainer({
+                customerId,
+                port: chromaPort
+            });
+            
+            // 4. Deploy MCP Memory Service container (7 seconds)
+            const memoryServiceId = await this.deployMemoryServiceContainer({
+                customerId,
+                port: memoryPort,
+                chromaDbHost: `chromadb-${customerId}`,
+                chromaDbPort: 8000
+            });
+            
+            // 5. Deploy dedicated MCP server container (10 seconds)
             const mcpServerId = await this.deployMCPContainer({
                 customerId,
                 port: mcpPort,
                 dbUrl: `postgresql://customer_${customerId}@localhost:5432/customer_${customerId}`,
                 redisNamespace: `customer_${customerId}`,
-                qdrantCollection: `customer_${customerId}`
+                memoryServiceUrl: `http://mcp-memory-${customerId}:40000`
             });
             
-            // 4. Initialize EA with MCP server connection (5 seconds)
-            await this.initializeEA(customerId, mcpServerId, mcpPort);
+            // 6. Initialize EA with MCP server and memory service connections (5 seconds)
+            await this.initializeEA(customerId, mcpServerId, mcpPort, memoryPort);
             
             const provisioningTime = Date.now() - startTime;
             
@@ -88,9 +145,14 @@ class CustomerMCPProvisioner {
                 customerId,
                 mcpServerId,
                 mcpPort,
+                memoryServiceId,
+                memoryPort,
+                chromaDbId,
+                chromaPort,
                 provisioningTime,
                 status: 'ready',
-                eaEndpoint: `http://localhost:${mcpPort}/ea`
+                eaEndpoint: `http://localhost:${mcpPort}/ea`,
+                memoryEndpoint: `http://localhost:${memoryPort}/api/v1`
             };
             
         } catch (error) {
@@ -151,17 +213,95 @@ class CustomerMCPProvisioner {
         return container.id;
     }
     
-    async initializeEA(customerId, mcpServerId, mcpPort) {
+    async deployChromaDBContainer(config) {
+        const containerName = `chromadb-${config.customerId}`;
+        
+        const dockerConfig = {
+            name: containerName,
+            image: 'chromadb/chroma:latest',
+            ports: {
+                '8000/tcp': config.port
+            },
+            environment: {
+                CHROMA_SERVER_HOST: '0.0.0.0',
+                CHROMA_SERVER_HTTP_PORT: '8000',
+                ANONYMIZED_TELEMETRY: 'false',
+                CUSTOMER_ID: config.customerId
+            },
+            volumes: {
+                [`chromadb_data_${config.customerId}`]: '/chroma/chroma'
+            },
+            networks: [`customer-${config.customerId}-network`],
+            labels: {
+                'ai-agency.customer-id': config.customerId,
+                'ai-agency.service': 'chromadb'
+            },
+            resources: {
+                memory: 2147483648, // 2GB
+                cpu: 1000000000     // 1 CPU
+            }
+        };
+        
+        const container = await docker.createContainer(dockerConfig);
+        await container.start();
+        
+        // Health check - wait for ChromaDB to be ready
+        await this.waitForChromaHealth(`http://localhost:${config.port}/api/v1/heartbeat`);
+        
+        return container.id;
+    }
+
+    async deployMemoryServiceContainer(config) {
+        const containerName = `mcp-memory-${config.customerId}`;
+        
+        const dockerConfig = {
+            name: containerName,
+            image: 'doobidoo/mcp-memory-service:latest',
+            ports: {
+                '40000/tcp': config.port
+            },
+            environment: {
+                CUSTOMER_ID: config.customerId,
+                MCP_MEMORY_STORAGE_BACKEND: 'chromadb',
+                CHROMADB_HOST: config.chromaDbHost,
+                CHROMADB_PORT: config.chromaDbPort.toString(),
+                MCP_MEMORY_PORT: '40000',
+                MCP_HTTP_ENABLED: 'true',
+                LOG_LEVEL: 'INFO'
+            },
+            networks: [`customer-${config.customerId}-network`],
+            labels: {
+                'ai-agency.customer-id': config.customerId,
+                'ai-agency.service': 'mcp-memory'
+            },
+            resources: {
+                memory: 1073741824, // 1GB
+                cpu: 500000000      // 0.5 CPU
+            }
+        };
+        
+        const container = await docker.createContainer(dockerConfig);
+        await container.start();
+        
+        // Health check - wait for MCP Memory Service to be ready
+        await this.waitForMemoryServiceHealth(`http://localhost:${config.port}/health`);
+        
+        return container.id;
+    }
+
+    async initializeEA(customerId, mcpServerId, mcpPort, memoryPort) {
         const eaConfig = {
             customerId,
             mcpServerUrl: `http://localhost:${mcpPort}`,
+            mcpMemoryUrl: `http://localhost:${memoryPort}`,
             mcpServerId,
             personality: 'professional', // Configurable per customer
             businessContext: {}, // Will be learned through conversation
-            communicationChannels: ['phone', 'whatsapp', 'email']
+            communicationChannels: ['phone', 'whatsapp', 'email'],
+            autonomousConsolidation: true // Enable memory consolidation
         };
         
-        // Deploy EA with connection to customer's MCP server
+        // Deploy EA with connection to customer's MCP server and memory service
         await this.deployExecutiveAssistant(eaConfig);
     }
 }
