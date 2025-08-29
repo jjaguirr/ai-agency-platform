@@ -19,18 +19,18 @@ jobs:
       
       - name: Start Docker services
         run: |
-          echo "Starting Docker services..."
-          docker compose up -d
+          echo "Starting Docker services (using lightweight CI config)..."
+          docker compose -f docker-compose.ci.yml up -d
           
-          # Wait for services to be healthy
+          # Wait for services to be healthy (shorter timeouts for lighter services)
           echo "Waiting for PostgreSQL..."
-          timeout 60 bash -c 'until docker compose exec -T postgres pg_isready -U mcphub; do sleep 2; done'
+          timeout 30 bash -c 'until docker compose -f docker-compose.ci.yml exec -T postgres pg_isready -U testuser; do sleep 2; done'
           
           echo "Waiting for Redis..."
-          timeout 30 bash -c 'until docker compose exec -T redis redis-cli ping | grep -q PONG; do sleep 2; done'
+          timeout 20 bash -c 'until docker compose -f docker-compose.ci.yml exec -T redis redis-cli ping | grep -q PONG; do sleep 2; done'
           
           echo "Waiting for Qdrant..."
-          timeout 30 bash -c 'until curl -f http://localhost:6333/health > /dev/null 2>&1; do sleep 2; done'
+          timeout 20 bash -c 'until curl -f http://localhost:6333/health > /dev/null 2>&1; do sleep 2; done'
           
       - name: Check service health
         id: health
@@ -38,7 +38,7 @@ jobs:
           echo "Checking service health..."
           
           # PostgreSQL check
-          if docker compose exec -T postgres pg_isready -U mcphub; then
+          if docker compose -f docker-compose.ci.yml exec -T postgres pg_isready -U testuser; then
             echo "✅ PostgreSQL is healthy"
           else
             echo "❌ PostgreSQL is not responding"
@@ -46,7 +46,7 @@ jobs:
           fi
           
           # Redis check
-          if docker compose exec -T redis redis-cli ping | grep -q PONG; then
+          if docker compose -f docker-compose.ci.yml exec -T redis redis-cli ping | grep -q PONG; then
             echo "✅ Redis is healthy"
           else
             echo "❌ Redis is not responding"
@@ -123,4 +123,4 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          docker compose down -v
+          docker compose -f docker-compose.ci.yml down -v

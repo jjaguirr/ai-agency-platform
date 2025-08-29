@@ -1,0 +1,49 @@
+# Lightweight Docker Compose for CI Testing
+# Only essential services with minimal overhead
+
+services:
+  # Core Database - PostgreSQL (small, fast to pull)
+  postgres:
+    image: postgres:15-alpine
+    container_name: ci-postgres
+    environment:
+      POSTGRES_DB: testdb
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: testpass
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testuser"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Cache Store - Redis (tiny image)
+  redis:
+    image: redis:7-alpine
+    container_name: ci-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Vector Database - Qdrant (essential for EA)
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: ci-qdrant
+    ports:
+      - "6333:6333"
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+# Note: Skipping heavy services for CI (langfuse, minio, security-api, etc.)
+# These can be tested in staging/integration environments
