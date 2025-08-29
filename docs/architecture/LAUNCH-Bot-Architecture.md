@@ -1,24 +1,24 @@
 # LAUNCH Bot Architecture
-## <60 Second Customer Onboarding System
+## EA Provisioning System - 30-60 Second Customer Onboarding
 
 ### Overview
-LAUNCH Bot is the automated customer onboarding system that provisions a complete AI agency workspace in under 60 seconds.
+LAUNCH Bot is the automated customer onboarding system that provisions a complete Executive Assistant with per-customer MCP server in under 60 seconds, aligned with Phase-1-PRD requirements.
 
 ### Architecture Components
 
 ```mermaid
 graph TD
-    A[Customer Landing] -->|Starts Onboarding| B[LAUNCH Bot]
+    A[Customer Landing] -->|Starts EA Onboarding| B[LAUNCH Bot]
     B --> C[Account Creation]
-    C --> D[Workspace Provisioning]
-    D --> E[Agent Deployment]
-    E --> F[Welcome Dashboard]
+    C --> D[Per-Customer MCP Provisioning]
+    D --> E[EA Deployment]
+    E --> F[EA Welcome Call]
     
     B -.->|Orchestrates| G[n8n Workflow]
-    G --> H[Database Setup]
-    G --> I[MCPHub Config]
-    G --> J[Agent Templates]
-    G --> K[Security Policies]
+    G --> H[Customer Database Schema]
+    G --> I[Per-Customer MCP Config]
+    G --> J[EA Template]
+    G --> K[Isolation Policies]
 ```
 
 ### Technical Implementation
@@ -39,72 +39,76 @@ Actions:
 #### 2. Account Creation (5-15 seconds)
 ```yaml
 Database Operations:
-  - Create customer record
-  - Generate JWT tokens
-  - Set up tenant isolation
-  - Initialize billing record
+  - Create customer record with MCP server assignment
+  - Generate JWT tokens for EA access
+  - Set up complete per-customer isolation
+  - Initialize billing record for EA service
 Security:
   - bcrypt password hashing
-  - JWT token generation
-  - Row-level security policies
+  - JWT token generation for EA authentication
+  - Per-customer MCP server security policies
 ```
 
-#### 3. Workspace Provisioning (15-30 seconds)
+#### 3. Per-Customer MCP Provisioning (15-30 seconds)
 ```yaml
 Infrastructure:
-  - Create isolated database schema
-  - Configure MCPHub routing
-  - Set up n8n workflow space
-  - Initialize vector store partition
+  - Create dedicated customer MCP server instance
+  - Configure isolated database schema
+  - Set up customer-specific n8n workspace
+  - Initialize private Qdrant collection
 Resources:
-  - Allocate compute resources
-  - Set rate limits
-  - Configure monitoring
+  - Allocate per-customer compute resources
+  - Set customer-specific rate limits
+  - Configure per-customer monitoring
 ```
 
-#### 4. Agent Deployment (30-45 seconds)
+#### 4. EA Deployment (30-45 seconds)
 ```yaml
-Core Agents:
-  - Customer Success Agent
-  - Data Processing Agent
-  - Workflow Automation Agent
+Executive Assistant:
+  - Deploy Executive Assistant instance
+  - Initialize business learning system
+  - Configure conversation engine
+  - Set up workflow creation capabilities
 Configuration:
-  - Load agent templates
-  - Set permissions
-  - Configure tool access
+  - Load EA template with business context capabilities
+  - Set customer-specific EA permissions
+  - Configure communication channel access (Phone, WhatsApp, Email)
 ```
 
-#### 5. Welcome Experience (45-60 seconds)
+#### 5. EA Welcome Experience (45-60 seconds)
 ```yaml
-Dashboard Setup:
-  - Personalized welcome message
-  - Quick start guides
-  - Sample workflows
-  - Integration tutorials
+EA Introduction:
+  - EA calls customer within 60 seconds
+  - Personalized EA welcome message
+  - Business discovery conversation initiation
+  - Real-time workflow creation demo
+  - Communication channel preferences setup
 ```
 
 ### Database Schema
 
 ```sql
--- Customer onboarding tables
+-- EA customer onboarding tables
 CREATE TABLE customers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email VARCHAR(255) UNIQUE NOT NULL,
     company_name VARCHAR(255) NOT NULL,
-    workspace_id UUID UNIQUE NOT NULL,
-    use_case VARCHAR(50),
+    mcp_server_id UUID UNIQUE NOT NULL,
+    ea_phone_number VARCHAR(20),
+    preferred_communication VARCHAR(20) DEFAULT 'phone',
     onboarded_at TIMESTAMP DEFAULT NOW(),
     onboarding_duration_ms INTEGER,
     status VARCHAR(50) DEFAULT 'active'
 );
 
-CREATE TABLE workspaces (
+CREATE TABLE mcp_servers (
     id UUID PRIMARY KEY,
     customer_id UUID REFERENCES customers(id),
     schema_name VARCHAR(100) UNIQUE NOT NULL,
-    mcphub_config JSONB,
-    agent_config JSONB,
+    mcp_server_config JSONB,
+    ea_config JSONB,
     resource_limits JSONB,
+    isolation_status VARCHAR(20) DEFAULT 'active',
     created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -124,7 +128,7 @@ ALTER TABLE workspaces ENABLE ROW LEVEL SECURITY;
 CREATE POLICY customer_isolation ON customers
     FOR ALL USING (id = current_setting('app.customer_id')::UUID);
 
-CREATE POLICY workspace_isolation ON workspaces
+CREATE POLICY mcp_server_isolation ON mcp_servers
     FOR ALL USING (customer_id = current_setting('app.customer_id')::UUID);
 ```
 
@@ -286,54 +290,42 @@ CREATE POLICY workspace_isolation ON workspaces
 
 ```yaml
 Target Metrics:
-  - Total onboarding time: <60 seconds
+  - Total EA onboarding time: <60 seconds (aligned with Phase-1-PRD)
   - Account creation: <5 seconds
-  - Workspace provisioning: <15 seconds
-  - Agent deployment: <20 seconds
+  - Per-customer MCP provisioning: <15 seconds
+  - EA deployment: <20 seconds
+  - EA first call within: 60 seconds
   - Success rate: >95%
 
 Monitoring:
-  - Real-time onboarding dashboard
-  - Event tracking for each step
+  - Real-time EA onboarding dashboard
+  - Event tracking for each EA provisioning step
   - Performance bottleneck alerts
-  - Customer journey analytics
+  - EA customer journey analytics
 ```
 
-### Agent Templates
+### EA Template
 
 ```yaml
-Customer Success Agent:
-  tools:
-    - Email communication
-    - Ticket management
-    - Knowledge base search
-    - Sentiment analysis
-  initial_prompts:
-    - "Help customers get started"
-    - "Answer product questions"
-    - "Collect feedback"
-
-Data Processing Agent:
-  tools:
-    - Data transformation
-    - CSV/JSON processing
-    - Database queries
-    - Report generation
-  initial_prompts:
-    - "Process customer data"
-    - "Generate insights"
-    - "Create reports"
-
-Workflow Automation Agent:
-  tools:
-    - n8n workflow creation
-    - API integration
-    - Schedule management
-    - Event triggers
-  initial_prompts:
-    - "Automate repetitive tasks"
-    - "Connect systems"
-    - "Monitor workflows"
+Executive Assistant:
+  communication_channels:
+    - Phone (Twilio + ElevenLabs TTS + Whisper STT)
+    - WhatsApp Business API
+    - Email SMTP/IMAP
+  business_capabilities:
+    - Conversational business learning
+    - Real-time workflow creation from templates
+    - Complete business context memory
+    - Proactive business assistance
+  memory_systems:
+    - Qdrant vector store (business knowledge)
+    - PostgreSQL (business context)
+    - Redis (conversation memory)
+  initial_capabilities:
+    - "Learn your business through conversation"
+    - "Create automations during our call"
+    - "Handle everything through natural dialogue"
+    - "Remember all business context forever"
 ```
 
 ### Error Handling
@@ -341,15 +333,15 @@ Workflow Automation Agent:
 ```yaml
 Failure Scenarios:
   - Database connection failure: Retry with exponential backoff
-  - MCPHub unavailable: Queue for later provisioning
-  - Agent deployment failure: Rollback and alert
-  - Email delivery failure: Store credentials securely for retrieval
+  - MCP server unavailable: Queue for later EA provisioning
+  - EA deployment failure: Rollback and alert customer
+  - Communication setup failure: Fallback to email notification
 
 Recovery Process:
   - Automatic retry for transient failures
-  - Manual intervention queue for persistent issues
-  - Customer notification of delays
-  - Compensation for extended onboarding times
+  - Manual intervention queue for persistent EA issues
+  - Customer notification via preferred channel
+  - Compensation for extended EA onboarding times
 ```
 
 ### Security Considerations

@@ -1,53 +1,54 @@
 # AI Agency Platform - Technical Design Document (TDD)
 
 **Document Type:** Technical Design Document  
-**Version:** 5.0 - Compact & PRD-Mapped  
-**Date:** August 22, 2025
+**Version:** 6.0 - EA-First Architecture  
+**Date:** August 29, 2025
 
 ## Executive Summary
 
 ### Vision Statement
-Vendor-agnostic AI Agency Platform enabling businesses to deploy ready-to-work messaging agents (WhatsApp/Email/Instagram) that learn, adapt, and create their own workflows through n8n and Temporal orchestration.
+Vendor-agnostic AI Agency Platform enabling businesses to deploy an Executive Assistant that learns entire businesses through conversation and creates automations in real-time with complete per-customer isolation.
 
 ### Technical Innovation
-- **Ready-to-Work Agents:** 4 messaging-connected agents (Social Media Manager, Finance, Marketing, Business)
-- **Agent Learning System:** Qdrant vector store + PostgreSQL knowledge graphs + Redis memory
-- **Workflow Automation:** Agents create and manage n8n workflows autonomously
-- **24/7 Operation:** Temporal orchestration for reliable execution
-- **Vendor-Agnostic AI:** OpenAI, Claude, Meta, DeepSeek, local model support
+- **Executive Assistant Core:** Single sophisticated EA that handles everything through natural dialogue
+- **Per-Customer MCP Servers:** Complete isolation via dedicated MCP server instances
+- **Conversational Learning:** EA learns business through phone calls, WhatsApp, and email
+- **Real-Time Workflow Creation:** EA creates n8n workflows during conversations
+- **Vendor-Agnostic AI:** Customer choice of OpenAI, Claude, Meta, DeepSeek, local models
 
 ---
 
 ## System Architecture
 
-### Phase 1 Architecture (Current Priority)
+### Phase 1 Architecture - Executive Assistant Foundation
 
 ```mermaid
 graph TB
-    subgraph "Messaging Channels"
+    subgraph "Communication Channels"
         MC1[WhatsApp Business API]
         MC2[Email SMTP/IMAP]
-        MC3[Instagram Graph API]
+        MC3[Phone/Voice (Twilio + ElevenLabs)]
     end
     
-    subgraph "Ready-to-Work Agents"
-        AG1[Social Media Manager]
-        AG2[Finance Agent] 
-        AG3[Marketing Agent]
-        AG4[Business Agent]
+    subgraph "Executive Assistant Core"
+        EA1[Executive Assistant]
+        EA2[Business Learning System]
+        EA3[Workflow Creation Engine]
+        EA4[Customer Relationship Memory]
     end
     
-    subgraph "Agent Learning System"
-        AL1[Qdrant Vector Store]
-        AL2[PostgreSQL Knowledge Graphs]
-        AL3[Redis Short-term Memory]
+    subgraph "Per-Customer MCP Servers"
+        MCP1[Customer MCP Server Instance]
+        MCP2[Dedicated PostgreSQL Schema]
+        MCP3[Isolated Qdrant Collection]
+        MCP4[Private Redis Namespace]
     end
     
-    subgraph "MCPhub Central Hub"
-        MH1[MCPhub Server :3000]
-        MH2[5-Tier Security Groups]
-        MH3[Agent Routing Engine]
-        MH4[Customer Isolation]
+    subgraph "Business Memory System"
+        BM1[Qdrant Vector Store]
+        BM2[PostgreSQL Business Context]
+        BM3[Redis Conversation Memory]
+        BM4[Pattern Recognition Engine]
     end
     
     subgraph "Workflow Orchestration"
@@ -62,119 +63,121 @@ graph TB
         AI3[Vendor-Agnostic Router]
     end
     
-    subgraph "Web UI (Soft Requirement)"
-        UI1[Agency Dashboard]
-        UI2[Agent Configuration]
-        UI3[Client Management]
+    subgraph "Management Interface (Future)"
+        UI1[EA Dashboard]
+        UI2[Business Context Viewer]
+        UI3[Workflow Monitor]
     end
     
-    MC1 --> MH1
-    MC2 --> MH1
-    MC3 --> MH1
-    MH1 --> AG1
-    MH1 --> AG2
-    MH1 --> AG3
-    MH1 --> AG4
-    AG1 --> AL1
-    AG2 --> AL2
-    AG3 --> AL3
-    AG4 --> WO1
+    MC1 --> MCP1
+    MC2 --> MCP1
+    MC3 --> MCP1
+    MCP1 --> EA1
+    EA1 --> EA2
+    EA2 --> BM1
+    EA3 --> WO1
+    EA4 --> BM2
+    BM3 --> EA1
     WO2 --> WO1
-    MH3 --> AI1
-    MH3 --> AI2
-    UI1 --> MH1
+    EA1 --> AI1
+    EA1 --> AI2
+    UI1 --> MCP1
 ```
 
 ### Database Architecture
 
 ```yaml
-PostgreSQL_Primary:
+PostgreSQL_Per_Customer:
   customers:
-    - customer_id, email, company, workspace_id
-    - Row-level security for complete isolation
+    - customer_id, email, company, mcp_server_id
+    - Complete customer isolation via per-customer MCP servers
   
-  agent_knowledge_graphs:
-    - agent_id, entity_type, relationships, metadata
-    - Customer-isolated knowledge storage
+  business_knowledge:
+    - entity_type, relationships, business_context
+    - EA's learned business understanding
     
   conversation_history:
-    - session_id, customer_id, agent_id, messages
-    - Learning data for agent improvement
+    - session_id, channel, messages, business_insights
+    - Complete interaction history for EA learning
     
   workflows:
-    - workflow_id, agent_id, n8n_data, status
-    - Agent-created workflow storage
+    - workflow_id, ea_created, n8n_data, business_purpose
+    - EA-created workflow storage with business context
 
-Qdrant_Vector_Store:
-  agent_memory_collections:
+Qdrant_Per_Customer:
+  business_memory_collections:
     - Customer-isolated vector collections
-    - Semantic search for agent responses
-    - Learning pattern storage
+    - Semantic search for business context
+    - Pattern recognition and learning
     
-Redis_Cache:
-  sessions: Short-term conversation context
-  queues: Temporal workflow tasks
-  real_time: Agent coordination data
+Redis_Per_Customer:
+  conversation_context: Active EA conversation state
+  business_memory: Real-time business context access
+  workflow_state: EA workflow creation status
 ```
 
 ## Core Components
 
-### 1. Ready-to-Work Agent System
+### 1. Executive Assistant System
 
 ```typescript
-// Base Agent Architecture
-interface ReadyToWorkAgent {
+// Executive Assistant Architecture
+interface ExecutiveAssistant {
   id: string;
-  type: 'social_media' | 'finance' | 'marketing' | 'business';
-  messagingChannels: ['whatsapp', 'email', 'instagram'];
-  learningSystem: AgentMemory;
+  customerId: string;
+  mcpServerId: string;
+  communicationChannels: ['whatsapp', 'email', 'phone'];
+  businessMemory: BusinessMemorySystem;
   workflowCreator: N8nIntegration;
-  temporalOrchestrator: TemporalClient;
+  conversationEngine: ConversationEngine;
 }
 
-class AgentMemory {
+class BusinessMemorySystem {
   vectorStore: QdrantClient;
-  knowledgeGraph: PostgreSQLGraph;
-  shortTermMemory: RedisClient;
+  businessContext: PostgreSQLGraph;
+  conversationMemory: RedisClient;
   
-  async learn(interaction: CustomerInteraction): Promise<void> {
-    // Store interaction in vector store for semantic retrieval
+  async learnBusiness(interaction: BusinessInteraction): Promise<void> {
+    // Store business insight in vector store for semantic retrieval
     await this.vectorStore.upsert({
       id: interaction.id,
-      vector: await this.embedInteraction(interaction),
+      vector: await this.embedBusinessContext(interaction),
       payload: interaction
     });
     
-    // Update knowledge graph relationships
-    await this.knowledgeGraph.updateRelationships(interaction);
+    // Update business knowledge graph
+    await this.businessContext.updateBusinessRelationships(interaction);
     
-    // Cache for immediate access
-    await this.shortTermMemory.setex(
-      `session:${interaction.sessionId}`, 
+    // Cache conversation context for immediate access
+    await this.conversationMemory.setex(
+      `business_context:${interaction.customerId}`, 
       3600, 
       JSON.stringify(interaction)
     );
   }
   
-  async recall(query: string): Promise<CustomerInteraction[]> {
-    const queryVector = await this.embedQuery(query);
+  async recallBusinessContext(query: string): Promise<BusinessInteraction[]> {
+    const queryVector = await this.embedBusinessQuery(query);
     return await this.vectorStore.search(queryVector, { limit: 10 });
   }
 }
 ```
 
-### 2. Messaging Integration Layer
+### 2. Communication Integration Layer
 
 ```typescript
-// Multi-Channel Messaging System
-class MessagingHub {
+// Executive Assistant Communication System
+class CommunicationHub {
   whatsappAPI: WhatsAppBusinessAPI;
   emailService: EmailSMTPService;
-  instagramAPI: InstagramGraphAPI;
+  phoneService: TwilioVoiceAPI;
+  ttsService: ElevenLabsTTS;
+  sttService: WhisperSTT;
   
-  async routeMessage(message: IncomingMessage, agent: ReadyToWorkAgent): Promise<void> {
-    // Route message to appropriate agent based on content and customer
-    const response = await agent.processMessage(message);
+  async handleCustomerCommunication(message: IncomingMessage, ea: ExecutiveAssistant): Promise<void> {
+    // Process message through EA with business context
+    const businessContext = await ea.businessMemory.recallBusinessContext(message.content);
+    const response = await ea.processWithBusinessContext(message, businessContext);
     
     // Send response through appropriate channel
     switch (message.channel) {
@@ -184,49 +187,55 @@ class MessagingHub {
       case 'email':
         await this.emailService.sendEmail(message.from, response);
         break;
-      case 'instagram':
-        await this.instagramAPI.sendDM(message.from, response);
+      case 'phone':
+        const audioResponse = await this.ttsService.synthesize(response);
+        await this.phoneService.playAudio(message.from, audioResponse);
         break;
     }
     
-    // Log interaction for learning
-    await agent.learningSystem.learn({
+    // Log interaction for business learning
+    await ea.businessMemory.learnBusiness({
       input: message.content,
       output: response,
       channel: message.channel,
+      businessInsights: await this.extractBusinessInsights(message, response),
       timestamp: Date.now()
     });
   }
 }
 ```
 
-### 3. Workflow Automation System
+### 3. EA Workflow Creation System
 
 ```typescript
-// Agent Workflow Creation
-class AgentWorkflowCreator {
+// Executive Assistant Workflow Creation
+class EAWorkflowCreator {
   n8nClient: N8nAPIClient;
   temporalClient: TemporalClient;
+  templateEngine: WorkflowTemplateEngine;
   
-  async createWorkflow(agent: ReadyToWorkAgent, task: AutomationTask): Promise<string> {
-    // Analyze task to determine optimal workflow
-    const workflowTemplate = await this.analyzeTaskRequirements(task);
+  async createWorkflowDuringConversation(ea: ExecutiveAssistant, businessNeed: BusinessNeed): Promise<string> {
+    // Match business need to pre-built template
+    const template = await this.templateEngine.matchBusinessNeedToTemplate(businessNeed);
+    
+    // Customize template based on business context
+    const customizedWorkflow = await this.customizeTemplate(template, ea.businessMemory);
     
     // Generate n8n workflow JSON
     const n8nWorkflow = {
-      name: `${agent.type}_${task.type}_${Date.now()}`,
-      nodes: await this.generateNodes(workflowTemplate),
-      connections: await this.generateConnections(workflowTemplate)
+      name: `${ea.customerId}_${businessNeed.type}_${Date.now()}`,
+      nodes: await this.generateNodes(customizedWorkflow),
+      connections: await this.generateConnections(customizedWorkflow)
     };
     
-    // Deploy to n8n
-    const workflowId = await this.n8nClient.createWorkflow(n8nWorkflow);
+    // Deploy to customer's isolated n8n instance
+    const workflowId = await this.n8nClient.createWorkflow(n8nWorkflow, ea.mcpServerId);
     
     // Schedule with Temporal for 24/7 execution
     await this.temporalClient.startWorkflow({
-      workflowId: `agent_${agent.id}_workflow_${workflowId}`,
-      taskQueue: 'agent-workflows',
-      workflowType: 'AgentWorkflowExecutor'
+      workflowId: `ea_${ea.id}_workflow_${workflowId}`,
+      taskQueue: `customer-${ea.customerId}-workflows`,
+      workflowType: 'EAWorkflowExecutor'
     });
     
     return workflowId;
@@ -234,30 +243,33 @@ class AgentWorkflowCreator {
 }
 ```
 
-### 4. Temporal Orchestration
+### 4. EA Temporal Orchestration
 
 ```typescript
-// 24/7 Agent Operation with Temporal
+// 24/7 Executive Assistant Operation with Temporal
 @Workflow()
-export class AgentWorkflowExecutor {
+export class EAWorkflowExecutor {
   @WorkflowMain()
-  async execute(params: AgentWorkflowParams): Promise<void> {
-    // Continuous agent operation loop
+  async execute(params: EAWorkflowParams): Promise<void> {
+    // Continuous EA operation loop
     while (true) {
-      // Check for pending messages
-      const messages = await Activities.checkPendingMessages(params.agentId);
+      // Check for pending customer communications
+      const communications = await Activities.checkPendingCommunications(params.eaId);
       
-      // Process each message
-      for (const message of messages) {
-        await Activities.processMessage(params.agentId, message);
+      // Process each communication with business context
+      for (const communication of communications) {
+        await Activities.processWithBusinessContext(params.eaId, communication);
       }
       
-      // Check for workflow creation opportunities
-      const automationOpportunities = await Activities.identifyAutomationOpportunities(params.agentId);
+      // Identify workflow creation opportunities during conversations
+      const workflowOpportunities = await Activities.identifyWorkflowOpportunities(params.eaId);
       
-      for (const opportunity of automationOpportunities) {
-        await Activities.createWorkflow(params.agentId, opportunity);
+      for (const opportunity of workflowOpportunities) {
+        await Activities.createWorkflowFromTemplate(params.eaId, opportunity);
       }
+      
+      // Check for proactive business insights
+      await Activities.generateProactiveInsights(params.eaId);
       
       // Sleep for optimal polling interval
       await sleep('30s');
@@ -265,98 +277,104 @@ export class AgentWorkflowExecutor {
   }
 }
 
-// Temporal Activities for reliable execution
+// Temporal Activities for reliable EA execution
 export const Activities = {
-  async processMessage(agentId: string, message: Message): Promise<void> {
-    // Implement with retry logic and error handling
+  async processWithBusinessContext(eaId: string, communication: Communication): Promise<void> {
+    // Process communication with full business context and memory
   },
   
-  async createWorkflow(agentId: string, opportunity: AutomationOpportunity): Promise<void> {
-    // Implement workflow creation with rollback on failure
+  async createWorkflowFromTemplate(eaId: string, opportunity: WorkflowOpportunity): Promise<void> {
+    // Create workflow using pre-built templates with customization
+  },
+  
+  async generateProactiveInsights(eaId: string): Promise<void> {
+    // Generate proactive business insights and suggestions
   }
 };
 ```
 
-### 5. MCPhub Security & Routing
+### 5. Per-Customer MCP Server Architecture
 
 ```yaml
-MCPhub_Configuration:
-  security_groups:
-    tier_0_personal: Owner-only access
-    tier_1_development: Team infrastructure
-    tier_2_business: Business operations
-    tier_3_customer: Customer-isolated access
-    tier_4_public: Public demo access
+Per_Customer_MCP_Configuration:
+  isolation_model:
+    dedicated_servers: Each customer gets own MCP server instance
+    complete_separation: No shared infrastructure between customers
+    resource_allocation: Per-customer compute and storage limits
+    network_isolation: Customer-specific network namespaces
     
-  agent_routing:
-    social_media_management: Routes to social media agent based on keywords
-    financial_queries: Routes to finance agent for money-related topics
-    marketing_campaigns: Routes to marketing agent for campaigns
-    business_operations: Routes to business agent for general tasks
+  ea_integration:
+    direct_access: EA has complete control over customer MCP server
+    tool_orchestration: Full MCP protocol tool access and routing
+    ai_model_selection: Customer choice of OpenAI, Claude, local models
+    workflow_automation: Direct n8n integration per customer
     
-  customer_isolation:
-    database_separation: Row-level security per customer
-    vector_collections: Customer-specific Qdrant collections
+  security_architecture:
+    database_isolation: Customer-specific PostgreSQL schemas
+    vector_isolation: Private Qdrant collections per customer
     workflow_isolation: Customer-specific n8n workspaces
+    credential_management: Isolated API keys and access tokens
 ```
 
 ## Performance & Scalability
 
-### Phase 1 Requirements
+### Phase 1 Performance Requirements
 ```yaml
-Performance_Targets:
-  agent_response_time: <2 seconds average
-  messaging_delivery: <5 seconds across all channels
-  learning_update: <1 second for memory storage
-  workflow_creation: <30 seconds for simple workflows
-  concurrent_customers: 100+ simultaneous users
+EA_Performance_Targets:
+  ea_response_time: <2 seconds for communication responses
+  provisioning_time: <30 seconds from purchase to working EA
+  memory_recall: <500ms for business context retrieval
+  workflow_creation: <2 minutes for template-based workflows
+  concurrent_eas: 100+ active Executive Assistants
   
-Scalability_Design:
-  horizontal_scaling: Docker containers with load balancing
-  database_optimization: Connection pooling and read replicas
-  vector_store_sharding: Customer-based Qdrant sharding
-  temporal_scaling: Worker pools for workflow execution
+Per_Customer_Scalability:
+  mcp_provisioning: <30 seconds per customer MCP server
+  isolation_scaling: Support 1,000+ individual MCP servers
+  database_optimization: Per-customer schema with connection pooling
+  vector_store_scaling: Customer-isolated Qdrant collections
+  temporal_scaling: Per-customer workflow execution queues
 ```
 
 ## Security Implementation
 
-### Customer Isolation
+### Complete Customer Isolation
 ```yaml
-Data_Separation:
-  database_rls: Row-level security policies per customer
-  vector_collections: Isolated Qdrant collections
-  message_channels: Customer-specific API credentials
-  workflow_storage: Tenant-separated n8n workspaces
+Per_Customer_Isolation:
+  dedicated_mcp_servers: Each customer gets own MCP server instance
+  database_separation: Customer-specific PostgreSQL schemas
+  vector_collections: Private Qdrant collections per customer
+  workflow_storage: Customer-specific n8n workspaces
+  credential_isolation: Customer-owned API keys and tokens
   
-Messaging_Security:
-  api_authentication: Secure API keys for all channels
-  message_encryption: End-to-end encryption for sensitive data
-  audit_logging: Complete message and interaction trails
-  rate_limiting: Per-customer API rate limits
+Communication_Security:
+  channel_authentication: Secure API keys per customer
+  conversation_encryption: End-to-end encryption for all communications
+  business_audit_trails: Complete EA interaction logging
+  customer_rate_limits: Per-customer MCP server rate limiting
 ```
 
 ## Deployment Architecture
 
 ### Infrastructure Components
 ```yaml
-Core_Services:
-  mcphub: samanhappy/mcphub:latest (Port 3000)
-  postgresql: pgvector/pgvector:pg16 (Port 5432)
-  redis: redis:7-alpine (Port 6379)
-  qdrant: qdrant/qdrant:latest (Port 6333)
-  n8n: n8nio/n8n:latest (Port 5678)
-  temporal: temporalio/auto-setup:latest (Port 7233)
+Per_Customer_MCP_Services:
+  mcp_server: Customer-specific MCP server instance
+  postgresql: pgvector/pgvector:pg16 with customer schema
+  redis: redis:7-alpine with customer namespace
+  qdrant: qdrant/qdrant with customer collection
+  n8n: n8nio/n8n with customer workspace
+  temporal: temporalio/auto-setup with customer queue
   
-Agent_Services:
-  social_media_agent: aiagency/social-media-agent:1.0
-  finance_agent: aiagency/finance-agent:1.0
-  marketing_agent: aiagency/marketing-agent:1.0
-  business_agent: aiagency/business-agent:1.0
+EA_Services:
+  executive_assistant: aiagency/executive-assistant:1.0
+  conversation_engine: aiagency/conversation-engine:1.0
+  workflow_creator: aiagency/workflow-creator:1.0
+  business_memory: aiagency/business-memory:1.0
   
-External_Integrations:
+Communication_Integrations:
   whatsapp_business: Meta WhatsApp Business API
-  email_service: SMTP/IMAP providers (Gmail, Outlook)
-  instagram_api: Instagram Graph API
+  email_service: SMTP/IMAP providers (Gmail, Outlook) 
+  phone_service: Twilio Voice API + ElevenLabs TTS + Whisper STT
 ```
 
 ---
@@ -380,7 +398,12 @@ External_Integrations:
 
 ### Success Metrics Implementation
 | Metric | Monitoring Implementation |
-|--------|--------------------------|
+|--------|------------------------------|
+| EA available within 60 seconds | Provisioning time monitoring |
+| Multi-channel communication | Channel-specific delivery confirmations |
+| Business learning functional | Vector store business context metrics |
+| Workflow creation during calls | Template-based workflow success rates |
+| Per-customer isolation validated | MCP server isolation automated tests |
 | 4 agents operational | Health checks + status endpoints |
 | Multi-channel messaging | Channel-specific delivery confirmations |
 | Agent learning functional | Vector store update metrics |
@@ -389,7 +412,7 @@ External_Integrations:
 
 ---
 
-**Document Classification:** Technical Design Document - Phase 1 Focus  
-**Version:** 5.0 - Compact & PRD-Mapped  
-**Next Review:** Weekly during Phase 1 implementation  
-**Success Criteria:** Ready-to-work agents deployed with learning capabilities
+**Document Classification:** Technical Design Document - EA-First Architecture  
+**Version:** 6.0 - Phase-1-PRD Aligned  
+**Next Review:** Weekly during Phase 1 EA implementation  
+**Success Criteria:** Executive Assistant deployed with per-customer isolation and conversational learning
