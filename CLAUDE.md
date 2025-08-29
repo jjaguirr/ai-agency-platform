@@ -558,6 +558,32 @@ market_intelligence = {
 
 ---
 
+## GitHub Workflow Protocol
+
+### Branch Management
+All agents must follow these GitHub workflow standards:
+- **Create feature branches**: `feat/[task-description]` for new features
+- **Never commit directly to main**: All changes via pull requests
+- **Check CI status**: Run `gh run list --branch [your-branch]` before creating PRs
+
+### CI-Aware Development
+The CI pipeline provides clear signals for code quality:
+- **Green CI (✅)**: All checks passing - ready to create PR
+- **Red CI (❌)**: Issues detected - fix before creating PR
+- **Review CI logs**: Understand failures and address root causes
+
+### Pull Request Standards
+Only create PRs when:
+1. CI pipeline is passing (all green checks)
+2. Feature/task is complete and tested
+3. Docker services start successfully
+4. No security vulnerabilities detected
+
+### Agent Collaboration
+- Tag relevant agents for review based on changes
+- Respond to PR feedback before merging
+- Use GitHub issues to track blockers
+
 ## Execution Protocol
 
 ### Session Initialization Sequence

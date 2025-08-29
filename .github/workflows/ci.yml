@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: ['main']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Start Docker services
+        run: |
+          echo "Starting Docker services..."
+          docker compose up -d
+          
+          # Wait for services to be healthy
+          echo "Waiting for PostgreSQL..."
+          timeout 60 bash -c 'until docker compose exec -T postgres pg_isready -U mcphub; do sleep 2; done'
+          
+          echo "Waiting for Redis..."
+          timeout 30 bash -c 'until docker compose exec -T redis redis-cli ping | grep -q PONG; do sleep 2; done'
+          
+          echo "Waiting for Qdrant..."
+          timeout 30 bash -c 'until curl -f http://localhost:6333/health > /dev/null 2>&1; do sleep 2; done'
+          
+      - name: Check service health
+        id: health
+        run: |
+          echo "Checking service health..."
+          
+          # PostgreSQL check
+          if docker compose exec -T postgres pg_isready -U mcphub; then
+            echo "✅ PostgreSQL is healthy"
+          else
+            echo "❌ PostgreSQL is not responding"
+            exit 1
+          fi
+          
+          # Redis check
+          if docker compose exec -T redis redis-cli ping | grep -q PONG; then
+            echo "✅ Redis is healthy"
+          else
+            echo "❌ Redis is not responding"
+            exit 1
+          fi
+          
+          # Qdrant check
+          if curl -f http://localhost:6333/health > /dev/null 2>&1; then
+            echo "✅ Qdrant is healthy"
+          else
+            echo "❌ Qdrant is not responding"
+            exit 1
+          fi
+          
+          echo "✅ All services are healthy!"
+      
+      - name: Run basic tests
+        run: |
+          echo "Running basic validation tests..."
+          
+          # Check if EA Python script exists and is valid
+          if [ -f "src/agents/executive-assistant.py" ]; then
+            python3 -m py_compile src/agents/executive-assistant.py
+            echo "✅ EA script is valid Python"
+          else
+            echo "⚠️ EA script not found (expected for early development)"
+          fi
+          
+          # Check if database schema exists
+          if [ -f "src/database/schema.sql" ]; then
+            echo "✅ Database schema found"
+          else
+            echo "❌ Database schema missing"
+            exit 1
+          fi
+          
+          # Check critical configuration files
+          if [ -f "docker-compose.yml" ]; then
+            echo "✅ Docker Compose configuration valid"
+          else
+            echo "❌ Docker Compose configuration missing"
+            exit 1
+          fi
+      
+      - name: Security check
+        continue-on-error: true
+        run: |
+          echo "Running basic security checks..."
+          
+          # Check for exposed secrets
+          if grep -r "password\|secret\|api_key" --include="*.yml" --include="*.yaml" --include="*.json" --exclude-dir=node_modules . | grep -v "#\|//"; then
+            echo "⚠️ Potential secrets found in config files - please review"
+          else
+            echo "✅ No obvious secrets in config files"
+          fi
+      
+      - name: Generate status summary
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "## ✅ CI Status: PASSING" >> $GITHUB_STEP_SUMMARY
+            echo "All checks completed successfully. Ready for PR!" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ❌ CI Status: FAILING" >> $GITHUB_STEP_SUMMARY
+            echo "Please fix the issues above before creating a PR." >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Services Status" >> $GITHUB_STEP_SUMMARY
+          echo "- PostgreSQL: Checked" >> $GITHUB_STEP_SUMMARY
+          echo "- Redis: Checked" >> $GITHUB_STEP_SUMMARY
+          echo "- Qdrant: Checked" >> $GITHUB_STEP_SUMMARY
+      
+      - name: Cleanup
+        if: always()
+        run: |
+          docker compose down -v
