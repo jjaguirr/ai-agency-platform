@@ -20,7 +20,7 @@ services:
       - mcphub-3
     restart: unless-stopped
     networks:
-      - ai-agency-platform
+      - ai-agency-network
 
   # MCPhub Instances (3 replicas for HA)
   mcphub-1:
@@ -35,7 +35,7 @@ services:
       - redis-cluster
     restart: unless-stopped
     networks:
-      - ai-agency-platform
+      - ai-agency-network
 
   mcphub-2:
     image: ai-agency-platform/mcphub:latest
@@ -49,7 +49,7 @@ services:
       - redis-cluster
     restart: unless-stopped
     networks:
-      - ai-agency-platform
+      - ai-agency-network
 
   mcphub-3:
     image: ai-agency-platform/mcphub:latest
@@ -63,7 +63,7 @@ services:
       - redis-cluster
     restart: unless-stopped
     networks:
-      - ai-agency-platform
+      - ai-agency-network
 
   # PostgreSQL High Availability Setup
   postgres-primary:
@@ -83,7 +83,7 @@ services:
       - "5432:5432"
     restart: unless-stopped
     networks:
-      - ai-agency-platform
+      - ai-agency-network
 
   postgres-replica:
     image: postgres:15-alpine
@@ -99,7 +99,7 @@ services:
       - postgres_replica_data:/var/lib/postgresql/data
     restart: unless-stopped
     networks:
-      - ai-agency-platform
+      - ai-agency-network
 
   # Redis Cluster for High Availability
   redis-cluster:
@@ -111,7 +111,7 @@ services:
       - redis_cluster_data:/data
     restart: unless-stopped
     networks:
-      - ai-agency-platform
+      - ai-agency-network
 
   # Llama Guard Security Stack - Load Balanced
   security-lb:
@@ -128,7 +128,7 @@ services:
       - llamaguard-api-2
     restart: unless-stopped
     networks:
-      - ai-agency-security
+      - ai-agency-network
 
   # Llama Guard API Instances (2 replicas)
   llamaguard-api-1:
@@ -151,7 +151,7 @@ services:
       - ./logs/security:/app/logs
     restart: unless-stopped
     networks:
-      - ai-agency-security
+      - ai-agency-network
 
   llamaguard-api-2:
     build:
@@ -173,7 +173,7 @@ services:
       - ./logs/security:/app/logs
     restart: unless-stopped
     networks:
-      - ai-agency-security
+      - ai-agency-network
 
   # Llama Guard Model Service - Horizontally Scaled
   llamaguard-model-cluster:
@@ -187,7 +187,7 @@ services:
       - llamaguard-model-2
     restart: unless-stopped
     networks:
-      - ai-agency-security
+      - ai-agency-network
 
   llamaguard-model-1:
     image: huggingface/text-generation-inference:2.0.1
@@ -212,7 +212,7 @@ services:
           memory: 8G
     restart: unless-stopped
     networks:
-      - ai-agency-security
+      - ai-agency-network
 
   llamaguard-model-2:
     image: huggingface/text-generation-inference:2.0.1
@@ -237,7 +237,7 @@ services:
           memory: 8G
     restart: unless-stopped
     networks:
-      - ai-agency-security
+      - ai-agency-network
 
   # Redis Security Cluster
   redis-security-cluster:
@@ -249,7 +249,7 @@ services:
       - redis_security_cluster_data:/data
     restart: unless-stopped
     networks:
-      - ai-agency-security
+      - ai-agency-network
 
   # Qdrant Vector Database for Agent Memory
   qdrant-cluster:
@@ -263,7 +263,7 @@ services:
       - QDRANT__SERVICE__GRPC_PORT=6334
     restart: unless-stopped
     networks:
-      - ai-agency-platform
+      - ai-agency-network
 
   # n8n Workflow Automation - Clustered
   n8n-cluster:
@@ -285,7 +285,7 @@ services:
       - postgres-primary
     restart: unless-stopped
     networks:
-      - ai-agency-platform
+      - ai-agency-network
 
   # Monitoring Stack
   prometheus:
@@ -304,7 +304,7 @@ services:
       - '--web.enable-lifecycle'
     restart: unless-stopped
     networks:
-      - ai-agency-platform
+      - ai-agency-network
 
   grafana:
     image: grafana/grafana:latest
@@ -325,7 +325,7 @@ services:
       - postgres-primary
     restart: unless-stopped
     networks:
-      - ai-agency-platform
+      - ai-agency-network
 
   # Log Aggregation
   elasticsearch:
@@ -340,7 +340,7 @@ services:
       - "9200:9200"
     restart: unless-stopped
     networks:
-      - ai-agency-platform
+      - ai-agency-network
 
   kibana:
     image: kibana:8.11.0
@@ -352,7 +352,7 @@ services:
       - elasticsearch
     restart: unless-stopped
     networks:
-      - ai-agency-platform
+      - ai-agency-network
 
   # Backup Service
   backup-service:
@@ -370,7 +370,7 @@ services:
       - postgres-primary
     restart: unless-stopped
     networks:
-      - ai-agency-platform
+      - ai-agency-network
 
 volumes:
   postgres_primary_data:
@@ -387,22 +387,13 @@ volumes:
   backup_data:
 
 networks:
-  ai-agency-platform:
+  ai-agency-network:
     driver: bridge
     ipam:
       config:
         - subnet: 172.20.0.0/16
     labels:
       - "ai.agency.network=platform"
-      - "ai.agency.environment=production"
-
-  ai-agency-security:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.30.0.0/16
-    labels:
-      - "ai.agency.network=security"
       - "ai.agency.environment=production"
 
 # Production Deployment Notes:

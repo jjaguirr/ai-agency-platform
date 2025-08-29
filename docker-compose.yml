@@ -1,0 +1,257 @@
+# AI Agency Platform - Consolidated Development Stack
+# Core services for local development and testing
+# Usage: docker compose up -d
+
+services:
+  # Core Database - PostgreSQL
+  postgres:
+    image: postgres:15-alpine
+    container_name: ai-agency-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mcphub}
+      POSTGRES_USER: ${POSTGRES_USER:-mcphub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mcphub_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./config/postgres/init-multiple-dbs.sql:/docker-entrypoint-initdb.d/init-multiple-dbs.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mcphub}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - ai-agency-network
+
+  # Cache & Session Store - Redis
+  redis:
+    image: redis:7-alpine
+    container_name: ai-agency-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - ai-agency-network
+
+  # Vector Database - Qdrant
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: ai-agency-qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - ai-agency-network
+
+  # Security API - Development Mode (Bypass Llama Guard)
+  security-api:
+    build:
+      context: ./src/security
+      dockerfile: Dockerfile.llamaguard-api
+    container_name: ai-agency-security-api
+    ports:
+      - "8083:8080"
+    environment:
+      - LLAMAGUARD_ENABLED=${LLAMAGUARD_ENABLED:-false}  # Bypass mode for development
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_URL=postgresql://${POSTGRES_USER:-mcphub}:${POSTGRES_PASSWORD:-mcphub_password}@postgres:5432/${POSTGRES_DB:-mcphub}
+      - JWT_SECRET=${JWT_SECRET:-dev-secret-key}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./config/security/safety-policies.yaml:/app/config/safety-policies.yaml:ro
+      - ./logs/security:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - ai-agency-network
+
+  # Security Proxy - Rate Limiting and Basic Protection
+  security-proxy:
+    image: nginx:1.25-alpine
+    container_name: ai-agency-security-proxy
+    ports:
+      - "8080:80"
+    volumes:
+      - ./config/nginx/security-proxy.conf:/etc/nginx/nginx.conf:ro
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - security-api
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - ai-agency-network
+
+  # LangFuse Observability - Server
+  langfuse-server:
+    image: langfuse/langfuse:2
+    container_name: ai-agency-langfuse-server
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-mcphub}:${POSTGRES_PASSWORD:-mcphub_password}@postgres:5432/langfuse
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-dev-nextauth-secret}
+      - SALT=${SALT:-dev-salt-value}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
+      - TELEMETRY_ENABLED=${TELEMETRY_ENABLED:-true}
+      - LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES=${LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES:-true}
+      # AI Agency Platform specific configuration
+      - LANGFUSE_DEFAULT_PROJECT_ID=ai-agency-platform
+      - LANGFUSE_DEFAULT_PROJECT_NAME=AI Agency Platform
+      # Object Storage (MinIO)
+      - S3_ENDPOINT=http://minio:9000
+      - S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID:-minioadmin}
+      - S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY:-minioadmin}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-langfuse}
+      - S3_REGION=${S3_REGION:-us-east-1}
+      # Redis Configuration
+      - REDIS_CONNECTION_STRING=redis://redis:6379/1
+    networks:
+      - ai-agency-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/public/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # LangFuse Background Worker
+  langfuse-worker:
+    image: langfuse/langfuse:2
+    container_name: ai-agency-langfuse-worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    command: ["node", "--loader", "tsx/esm", "./src/worker.ts"]
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-mcphub}:${POSTGRES_PASSWORD:-mcphub_password}@postgres:5432/langfuse
+      - REDIS_CONNECTION_STRING=redis://redis:6379/1
+      # Object Storage (MinIO)
+      - S3_ENDPOINT=http://minio:9000
+      - S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID:-minioadmin}
+      - S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY:-minioadmin}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-langfuse}
+      - S3_REGION=${S3_REGION:-us-east-1}
+    networks:
+      - ai-agency-network
+    restart: unless-stopped
+
+  # Object Storage - MinIO
+  minio:
+    image: minio/minio:RELEASE.2024-01-16T16-07-38Z
+    container_name: ai-agency-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9090"
+    healthcheck:
+      test: ["CMD", "timeout", "5s", "bash", "-c", "</dev/tcp/localhost/9000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    environment:
+      - MINIO_ROOT_USER=${S3_ACCESS_KEY_ID:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${S3_SECRET_ACCESS_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9090"  # MinIO Console
+    networks:
+      - ai-agency-network
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  qdrant_data:
+    driver: local
+  minio_data:
+    driver: local
+
+networks:
+  ai-agency-network:
+    driver: bridge
+    name: ai-agency-network
+
+# Development Configuration Notes:
+#
+# 1. Service Endpoints:
+#    - PostgreSQL: localhost:5432
+#    - Redis: localhost:6379
+#    - Qdrant: localhost:6333
+#    - Security API: localhost:8083
+#    - Security Proxy: localhost:8080
+#    - LangFuse: localhost:3000
+#    - MinIO: localhost:9000 (API), localhost:9001 (Console)
+#
+# 2. Database Setup:
+#    - Primary database: mcphub
+#    - LangFuse database: langfuse (auto-created)
+#    - Default credentials: mcphub/mcphub_password
+#
+# 3. Security Configuration:
+#    - Llama Guard disabled by default (LLAMAGUARD_ENABLED=false)
+#    - JWT secret configurable via environment
+#    - Basic rate limiting via nginx proxy
+#
+# 4. Development Features:
+#    - All services use development-friendly defaults
+#    - Persistent volumes for data retention
+#    - Health checks for service reliability
+#    - Shared network for easy inter-service communication
+#
+# 5. Environment File:
+#    - Copy .env.example to .env and customize
+#    - Required for production deployment
+#    - Optional for development (uses defaults)
+#
+# 6. Getting Started:
+#    - docker compose up -d
+#    - Access LangFuse at http://localhost:3000
+#    - Access MinIO Console at http://localhost:9001
+#    - Security API available at http://localhost:8083

@@ -17,7 +17,7 @@ services:
       - '--web.console.templates=/etc/prometheus/consoles'
       - '--web.enable-lifecycle'
     networks:
-      - ai-agency-phase1
+      - ai-agency-network
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
       interval: 30s
@@ -37,7 +37,7 @@ services:
       - grafana_data:/var/lib/grafana
       - ./config/monitoring/grafana:/etc/grafana/provisioning
     networks:
-      - ai-agency-phase1
+      - ai-agency-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
       interval: 30s
@@ -50,9 +50,9 @@ services:
     ports:
       - "9121:9121"
     environment:
-      - REDIS_ADDR=redis://host.docker.internal:6379
+      - REDIS_ADDR=redis://ai-agency-redis:6379
     networks:
-      - ai-agency-phase1
+      - ai-agency-network
 
   postgres-exporter:
     image: prometheuscommunity/postgres-exporter:latest
@@ -60,9 +60,9 @@ services:
     ports:
       - "9187:9187"
     environment:
-      - DATA_SOURCE_NAME=postgresql://mcphub:mcphub_password@host.docker.internal:5433/mcphub?sslmode=disable
+      - DATA_SOURCE_NAME=postgresql://mcphub:mcphub_password@ai-agency-postgres:5432/mcphub?sslmode=disable
     networks:
-      - ai-agency-phase1
+      - ai-agency-network
 
   node-exporter:
     image: prom/node-exporter:latest
@@ -79,7 +79,7 @@ services:
       - '--path.sysfs=/host/sys'
       - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
     networks:
-      - ai-agency-phase1
+      - ai-agency-network
 
   alertmanager:
     image: prom/alertmanager:latest
@@ -90,7 +90,7 @@ services:
       - ./config/monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml
       - alertmanager_data:/alertmanager
     networks:
-      - ai-agency-phase1
+      - ai-agency-network
 
 volumes:
   prometheus_data:
@@ -98,5 +98,5 @@ volumes:
   alertmanager_data:
 
 networks:
-  ai-agency-phase1:
+  ai-agency-network:
     external: true
