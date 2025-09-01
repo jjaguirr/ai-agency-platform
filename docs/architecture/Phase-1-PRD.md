@@ -56,7 +56,7 @@ Requirements:
     hybrid_approach: Voice for quick interactions, text for complex business setup
     
   business_memory_system:
-    vector_memory: Qdrant for semantic business knowledge
+    vector_memory: [MEMORY_LAYER: Mem0] for semantic business knowledge
     working_memory: Redis for active conversation context
     persistent_storage: PostgreSQL for complete business history
     pattern_recognition: Learn recurring tasks for automation
@@ -96,7 +96,7 @@ Requirements:
   data_architecture:
     postgresql_per_customer: Customer-specific database schemas
     redis_isolation: Dedicated Redis namespace per customer  
-    qdrant_collections: Private vector collections per customer
+    memory_isolation: Private Mem0 memory spaces per customer
     backup_separation: Isolated backup and recovery per customer
 
 Success Metrics:
@@ -198,7 +198,7 @@ Requirements:
     
   multi_layer_storage:
     working_memory: Redis for active conversation context and immediate recall
-    semantic_memory: Qdrant vector store for business knowledge and patterns
+    semantic_memory: [MEMORY_LAYER: Mem0] for business knowledge and patterns
     persistent_memory: PostgreSQL for complete historical business data
     analytical_memory: Pattern analysis for business optimization insights
     
@@ -296,7 +296,7 @@ Executive_Assistant_Functions:
 
 Technical_Foundation:
   ai_models: Customer choice (OpenAI GPT-4o, Claude 3.5 Sonnet, local models)
-  memory_system: Complete business context with Redis + Qdrant + PostgreSQL
+  memory_system: Complete business context with [MEMORY_LAYER: Mem0] + Redis + PostgreSQL
   communication: Phone (Twilio), WhatsApp Business, SMTP/IMAP
   automation: Real-time n8n workflow creation and management
   availability: 24/7 operation with <2 minute response times
@@ -345,7 +345,7 @@ Communication_Stack_Priority:
   
 Memory_Architecture:
   working_memory: Redis for active conversation context
-  semantic_memory: Qdrant for business knowledge and patterns  
+  semantic_memory: [MEMORY_LAYER: Mem0] for business knowledge and patterns  
   persistent_storage: PostgreSQL for complete business history
   per_customer: Complete memory isolation per MCP server
   
@@ -396,7 +396,7 @@ Technical_Risks:
   mcp_server_scaling: Per-customer MCP servers with automated provisioning
   voice_system_reliability: Twilio enterprise SLA with multiple fallbacks
   workflow_creation_complexity: Simplified n8n node generation with templates
-  memory_system_performance: Optimized Redis + Qdrant for <500ms recall
+  memory_system_performance: Optimized [MEMORY_LAYER: Mem0] + Redis for <500ms recall
   
 Business_Risks:
   ea_market_validation: Focus on "real assistant" positioning vs software
@@ -412,7 +412,7 @@ Business_Risks:
 ### Week 1-2: EA Core & Per-Customer Architecture
 - Executive Assistant agent core implementation (LangGraph)
 - Per-customer MCP server deployment system
-- Memory architecture: Redis + Qdrant + PostgreSQL integration
+- Memory architecture: [MEMORY_LAYER: Mem0] + Redis + PostgreSQL integration
 - Basic phone integration with Twilio + Whisper + TTS
 
 ### Week 3-4: Zero-Touch Provisioning

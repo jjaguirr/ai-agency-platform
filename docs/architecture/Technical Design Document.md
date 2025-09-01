@@ -40,12 +40,12 @@ graph TB
     subgraph "Per-Customer MCP Servers"
         MCP1[Customer MCP Server Instance]
         MCP2[Dedicated PostgreSQL Schema]
-        MCP3[Isolated Qdrant Collection]
+        MCP3[Isolated Memory Layer - Mem0]
         MCP4[Private Redis Namespace]
     end
     
     subgraph "Business Memory System"
-        BM1[Qdrant Vector Store]
+        BM1[Mem0 Memory Layer]
         BM2[PostgreSQL Business Context]
         BM3[Redis Conversation Memory]
         BM4[Pattern Recognition Engine]
@@ -104,7 +104,7 @@ PostgreSQL_Per_Customer:
     - workflow_id, ea_created, n8n_data, business_purpose
     - EA-created workflow storage with business context
 
-Qdrant_Per_Customer:
+Mem0_Per_Customer:
   business_memory_collections:
     - Customer-isolated vector collections
     - Semantic search for business context
@@ -133,7 +133,7 @@ interface ExecutiveAssistant {
 }
 
 class BusinessMemorySystem {
-  vectorStore: QdrantClient;
+  memoryLayer: Mem0Client; // TODO: Implement Mem0 client
   businessContext: PostgreSQLGraph;
   conversationMemory: RedisClient;
   
@@ -311,7 +311,7 @@ Per_Customer_MCP_Configuration:
     
   security_architecture:
     database_isolation: Customer-specific PostgreSQL schemas
-    vector_isolation: Private Qdrant collections per customer
+    memory_isolation: Private Mem0 memory spaces per customer
     workflow_isolation: Customer-specific n8n workspaces
     credential_management: Isolated API keys and access tokens
 ```
@@ -331,7 +331,7 @@ Per_Customer_Scalability:
   mcp_provisioning: <30 seconds per customer MCP server
   isolation_scaling: Support 1,000+ individual MCP servers
   database_optimization: Per-customer schema with connection pooling
-  vector_store_scaling: Customer-isolated Qdrant collections
+  memory_scaling: Customer-isolated Mem0 memory spaces
   temporal_scaling: Per-customer workflow execution queues
 ```
 
@@ -342,7 +342,7 @@ Per_Customer_Scalability:
 Per_Customer_Isolation:
   dedicated_mcp_servers: Each customer gets own MCP server instance
   database_separation: Customer-specific PostgreSQL schemas
-  vector_collections: Private Qdrant collections per customer
+  memory_spaces: Private Mem0 memory spaces per customer
   workflow_storage: Customer-specific n8n workspaces
   credential_isolation: Customer-owned API keys and tokens
   
@@ -361,7 +361,7 @@ Per_Customer_MCP_Services:
   mcp_server: Customer-specific MCP server instance
   postgresql: pgvector/pgvector:pg16 with customer schema
   redis: redis:7-alpine with customer namespace
-  qdrant: qdrant/qdrant with customer collection
+  mem0: mem0ai/mem0 with customer memory spaces
   n8n: n8nio/n8n with customer workspace
   temporal: temporalio/auto-setup with customer queue
   
@@ -386,12 +386,12 @@ Communication_Integrations:
 |----------------|-------------------------|----------|
 | Social Media Manager | AgentWorkflowCreator + MessagingHub | Core Components §1,§2 |
 | Finance Agent | AgentMemory + TemporalOrchestrator | Core Components §1,§4 |
-| Marketing Agent | N8nIntegration + QdrantVectorStore | Core Components §1,§3 |
+| Marketing Agent | N8nIntegration + Mem0MemoryLayer | Core Components §1,§3 |
 | Business Agent | PostgreSQLGraph + MCPhubRouting | Core Components §1,§5 |
 | WhatsApp Integration | WhatsAppBusinessAPI | Messaging Layer §2 |
 | Email Integration | EmailSMTPService | Messaging Layer §2 |
 | Instagram Integration | InstagramGraphAPI | Messaging Layer §2 |
-| Agent Learning | QdrantClient + PostgreSQLGraph | AgentMemory §1 |
+| Agent Learning | Mem0Client + PostgreSQLGraph | AgentMemory §1 |
 | Workflow Creation | N8nAPIClient + WorkflowCreator | Workflow System §3 |
 | 24/7 Operation | TemporalWorkflowExecutor | Temporal Orchestration §4 |
 | Customer Isolation | MCPhub Security Groups | Security Implementation |
