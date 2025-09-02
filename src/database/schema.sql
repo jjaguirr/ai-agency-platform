@@ -213,6 +213,18 @@ CREATE TABLE IF NOT EXISTS message_queue (
 );
 
 -- ====================================================================
+-- EXECUTIVE ASSISTANT & BUSINESS CONTEXT MANAGEMENT
+-- ====================================================================
+
+-- Business context storage for Executive Assistant with complete customer isolation
+CREATE TABLE IF NOT EXISTS customer_business_context (
+    customer_id VARCHAR(255) PRIMARY KEY,
+    business_context JSONB NOT NULL DEFAULT '{}'::JSONB,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ====================================================================
 -- BUSINESS INTELLIGENCE & ANALYTICS
 -- ====================================================================
 
@@ -289,6 +301,7 @@ CREATE INDEX IF NOT EXISTS idx_agents_customer_type ON agents(customer_id, agent
 CREATE INDEX IF NOT EXISTS idx_agent_memories_customer_agent ON agent_memories(customer_id, agent_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_workflows_customer_status ON workflows(customer_id, status);
 CREATE INDEX IF NOT EXISTS idx_messaging_channels_customer ON messaging_channels(customer_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_customer_business_context_updated ON customer_business_context(updated_at);
 
 -- Performance indexes for real-time operations
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires ON refresh_tokens(expires_at) WHERE is_revoked = false;
@@ -319,6 +332,7 @@ ALTER TABLE workflows ENABLE ROW LEVEL SECURITY;
 ALTER TABLE workflow_executions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE messaging_channels ENABLE ROW LEVEL SECURITY;
 ALTER TABLE message_queue ENABLE ROW LEVEL SECURITY;
+ALTER TABLE customer_business_context ENABLE ROW LEVEL SECURITY;
 ALTER TABLE customer_activities ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ai_usage_costs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
@@ -345,6 +359,7 @@ CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECU
 CREATE TRIGGER update_agents_updated_at BEFORE UPDATE ON agents FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_workflows_updated_at BEFORE UPDATE ON workflows FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_messaging_channels_updated_at BEFORE UPDATE ON messaging_channels FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_customer_business_context_updated_at BEFORE UPDATE ON customer_business_context FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_security_incidents_updated_at BEFORE UPDATE ON security_incidents FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Automatic API quota reset function

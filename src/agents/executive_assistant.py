@@ -151,13 +151,14 @@ class ExecutiveAssistantMemory:
         # Semantic memory (Mem0) - Business knowledge with customer isolation
         import os
         
-        # Configure Mem0 based on available API keys
+        # Configure Mem0 to use Docker ChromaDB service with customer isolation
         mem0_config = {
             "vector_store": {
                 "provider": "chroma",
                 "config": {
                     "collection_name": f"customer_{customer_id}_memory",
-                    "path": f"./memory_db/{customer_id}"
+                    "host": "localhost",
+                    "port": 8000
                 }
             }
         }
@@ -777,7 +778,7 @@ class ExecutiveAssistant:
                 state.current_intent = ConversationIntent.WORKFLOW_CREATION
                 
                 try:
-                    analysis_result = await analyze_business_process(last_message)
+                    analysis_result = await analyze_business_process.ainvoke({"process_description": last_message})
                     state.messages.append(AIMessage(content=analysis_result))
                 except Exception as e:
                     logger.error(f"Error analyzing business process: {e}")
@@ -806,8 +807,14 @@ class ExecutiveAssistant:
                     
                     if state.workflow_customization_params:
                         customization_params = json.dumps(state.workflow_customization_params)
+                    else:
+                        customization_params = "{}"
                     
-                    workflow_result = await create_workflow(process_description, template_id, customization_params)
+                    workflow_result = await create_workflow.ainvoke({
+                        "process_description": process_description,
+                        "template_id": template_id or "custom",
+                        "customization_params": customization_params
+                    })
                     state.messages.append(AIMessage(content=workflow_result))
                     state.workflow_created = True
                     
@@ -830,27 +837,56 @@ class ExecutiveAssistant:
                     
                     try:
                         if any(keyword in content for keyword in ["business", "company", "work", "clients", "customers"]):
-                            business_info = await extract_business_info(original_content, "business_details")
-                            await store_business_insight(business_info, "business_info", "high")
+                            business_info = await extract_business_info.ainvoke({
+                                "conversation_text": original_content,
+                                "info_type": "business_details"
+                            })
+                            await store_business_insight.ainvoke({
+                                "insight": business_info,
+                                "category": "business_info",
+                                "priority": "high"
+                            })
                         
                         if any(keyword in content for keyword in ["daily", "every day", "routine", "process"]):
-                            process_info = await extract_business_info(original_content, "daily_operations")
-                            await store_business_insight(process_info, "daily_operations")
+                            process_info = await extract_business_info.ainvoke({
+                                "conversation_text": original_content,
+                                "info_type": "daily_operations"
+                            })
+                            await store_business_insight.ainvoke({
+                                "insight": process_info,
+                                "category": "daily_operations"
+                            })
                             state.business_context.daily_operations.append(original_content)
                         
                         if any(keyword in content for keyword in ["problem", "challenge", "difficult", "time consuming"]):
-                            pain_point = await extract_business_info(original_content, "pain_points")
-                            await store_business_insight(pain_point, "pain_points", "high")
+                            pain_point = await extract_business_info.ainvoke({
+                                "conversation_text": original_content,
+                                "info_type": "pain_points"
+                            })
+                            await store_business_insight.ainvoke({
+                                "insight": pain_point,
+                                "category": "pain_points",
+                                "priority": "high"
+                            })
                             state.business_context.pain_points.append(original_content)
                         
                         if any(keyword in content for keyword in ["tool", "software", "system", "platform"]):
-                            tools_info = await extract_business_info(original_content, "current_tools")
-                            await store_business_insight(tools_info, "current_tools")
+                            tools_info = await extract_business_info.ainvoke({
+                                "conversation_text": original_content,
+                                "info_type": "current_tools"
+                            })
+                            await store_business_insight.ainvoke({
+                                "insight": tools_info,
+                                "category": "current_tools"
+                            })
                             tool_names = re.findall(r'\\b[A-Z][a-zA-Z]+(?:\\s+[A-Z][a-zA-Z]+)*\\b', original_content)
                             state.business_context.current_tools.extend(tool_names)
                         
                         if any(phrase in content for phrase in ["i run", "my business", "we are", "i own"]):
-                            business_extraction = await extract_business_info(original_content, "business_name_and_type")
+                            business_extraction = await extract_business_info.ainvoke({
+                                "conversation_text": original_content,
+                                "info_type": "business_name_and_type"
+                            })
                             if "business name:" in business_extraction.lower():
                                 lines = business_extraction.split('\\n')
                                 for line in lines:
@@ -950,7 +986,7 @@ class ExecutiveAssistant:
             
             return state
         
-        # Build the sophisticated conversation graph
+        # Build the sophisticated conversation graph with conditional routing
         workflow = StateGraph(ConversationState)
         
         # Core conversation nodes
@@ -959,16 +995,171 @@ class ExecutiveAssistant:
         workflow.add_node("analyze_opportunities", analyze_automation_opportunities)
         workflow.add_node("create_workflow", create_workflow_node)
         workflow.add_node("update_context", update_business_context)
+        workflow.add_node("handle_general_assistance", self._handle_general_assistance)
+        workflow.add_node("handle_clarification", self._handle_clarification)
         
-        # Simple but effective flow for demonstration
+        # Intent-based conditional routing functions
+        def route_after_intent_classification(state: ConversationState) -> str:
+            """Route conversation based on classified intent"""
+            intent = state.current_intent
+            confidence = state.confidence_score
+            
+            # Low confidence - need clarification
+            if confidence < 0.4:
+                return "handle_clarification"
+            
+            # Intent-based routing
+            if intent == ConversationIntent.WORKFLOW_CREATION:
+                return "analyze_opportunities"
+            elif intent == ConversationIntent.BUSINESS_DISCOVERY:
+                return "business_discovery"
+            elif intent in [ConversationIntent.BUSINESS_ASSISTANCE, ConversationIntent.TASK_DELEGATION]:
+                return "handle_general_assistance"
+            elif intent == ConversationIntent.CLARIFICATION_NEEDED:
+                return "handle_clarification"
+            elif intent == ConversationIntent.PROCESS_OPTIMIZATION:
+                return "analyze_opportunities"
+            else:
+                # Default to business discovery for unknown/general conversation
+                return "business_discovery"
+        
+        def route_after_opportunities(state: ConversationState) -> str:
+            """Route after analyzing automation opportunities"""
+            if state.needs_workflow and not state.workflow_created:
+                return "create_workflow"
+            else:
+                return "update_context"
+        
+        def route_after_workflow_creation(state: ConversationState) -> str:
+            """Route after workflow creation attempt"""
+            return "update_context"
+        
+        def route_after_business_discovery(state: ConversationState) -> str:
+            """Route after business discovery based on message content"""
+            try:
+                if hasattr(state, 'messages') and state.messages:
+                    message_content = " ".join([
+                        msg.content for msg in state.messages 
+                        if hasattr(msg, 'content') and msg.content
+                    ]).lower()
+                    
+                    automation_keywords = ["automate", "workflow", "process", "repetitive", "manual"]
+                    if any(keyword in message_content for keyword in automation_keywords):
+                        return "analyze_opportunities"
+                
+                return "update_context"
+            except Exception as e:
+                logger.error(f"Error routing after business discovery: {e}")
+                return "update_context"
+        
+        # Set entry point and conditional routing
         workflow.set_entry_point("intent_classification")
-        workflow.add_edge("intent_classification", "business_discovery")
-        workflow.add_edge("business_discovery", "analyze_opportunities")
-        workflow.add_edge("analyze_opportunities", "create_workflow")
+        
+        # Conditional edges based on intent classification
+        workflow.add_conditional_edges(
+            "intent_classification",
+            route_after_intent_classification,
+            {
+                "business_discovery": "business_discovery",
+                "analyze_opportunities": "analyze_opportunities", 
+                "handle_general_assistance": "handle_general_assistance",
+                "handle_clarification": "handle_clarification"
+            }
+        )
+        
+        # Business discovery can lead to opportunities or general assistance
+        workflow.add_conditional_edges(
+            "business_discovery",
+            route_after_business_discovery,
+            {
+                "analyze_opportunities": "analyze_opportunities",
+                "update_context": "update_context"
+            }
+        )
+        
+        # Conditional routing after opportunity analysis
+        workflow.add_conditional_edges(
+            "analyze_opportunities",
+            route_after_opportunities,
+            {
+                "create_workflow": "create_workflow",
+                "update_context": "update_context"
+            }
+        )
+        
+        # After workflow creation, always update context
         workflow.add_edge("create_workflow", "update_context")
+        workflow.add_edge("handle_general_assistance", "update_context")
+        workflow.add_edge("handle_clarification", "update_context")
         workflow.add_edge("update_context", END)
         
         return workflow.compile()
+    
+    async def _handle_general_assistance(self, state: ConversationState) -> ConversationState:
+        """Handle general business assistance requests"""
+        context = await self.memory.get_business_context()
+        last_message = state.messages[-1].content if state.messages else ""
+        
+        assistance_prompt = f"""
+        As Sarah, the Executive Assistant for {context.business_name or '[Business Name]'}, 
+        provide helpful business assistance for this request: {last_message}
+        
+        Business Context:
+        - Business: {context.business_name or 'Not specified'}
+        - Industry: {context.industry or 'Not specified'} 
+        - Daily Operations: {', '.join(context.daily_operations) if context.daily_operations else 'Learning...'}
+        - Current Tools: {', '.join(context.current_tools) if context.current_tools else 'None identified'}
+        
+        Provide practical, actionable assistance while maintaining a professional, helpful tone.
+        If this seems like something that could be automated, mention that as well.
+        """
+        
+        try:
+            if self.llm:
+                response = await self.llm.ainvoke([HumanMessage(content=assistance_prompt)])
+                assistance_response = response.content
+            else:
+                assistance_response = f"I'm here to help with your {context.business_name or 'business'} needs. Let me assist you with that request."
+        except Exception as e:
+            logger.error(f"Error generating assistance response: {e}")
+            assistance_response = "I'm happy to help with your business needs. Could you provide a bit more detail about what you're looking for?"
+        
+        state.messages.append(AIMessage(content=assistance_response))
+        state.current_intent = ConversationIntent.BUSINESS_ASSISTANCE
+        
+        return state
+    
+    async def _handle_clarification(self, state: ConversationState) -> ConversationState:
+        """Handle requests that need clarification"""
+        context = await self.memory.get_business_context()
+        last_message = state.messages[-1].content if state.messages else ""
+        
+        clarification_prompt = f"""
+        As Sarah, the Executive Assistant, I need to ask for clarification about: {last_message}
+        
+        Business Context Available:
+        - Business: {context.business_name or 'Not yet identified'}
+        - Industry: {context.industry or 'Not specified'}
+        
+        Ask 1-2 specific, helpful questions to better understand what the customer needs.
+        Be warm and professional, explaining that you want to provide the best possible assistance.
+        """
+        
+        try:
+            if self.llm:
+                response = await self.llm.ainvoke([HumanMessage(content=clarification_prompt)])
+                clarification_response = response.content
+            else:
+                clarification_response = "I want to make sure I understand exactly how I can help you. Could you tell me a bit more about what you're looking for?"
+        except Exception as e:
+            logger.error(f"Error generating clarification response: {e}")
+            clarification_response = "I'd like to understand better how I can help you. Could you provide a bit more detail about what you need?"
+        
+        state.messages.append(AIMessage(content=clarification_response))
+        state.current_intent = ConversationIntent.CLARIFICATION_NEEDED
+        state.requires_clarification = True
+        
+        return state
     
     async def handle_customer_interaction(
         self, 
@@ -999,27 +1190,52 @@ class ExecutiveAssistant:
             # Run through sophisticated LangGraph conversation flow
             result = await self.graph.ainvoke(state)
             
-            # Get the final response
-            if result.messages:
-                final_message = result.messages[-1]
-                if isinstance(final_message, AIMessage):
-                    response = final_message.content
+            # Handle both dict and ConversationState results
+            if isinstance(result, dict):
+                # Convert dict result to ConversationState for consistency
+                messages = result.get("messages", [])
+                if messages:
+                    final_message = messages[-1]
+                    if isinstance(final_message, AIMessage):
+                        response = final_message.content
+                    else:
+                        response = "I'm here to help! How can I assist you with your business today?"
                 else:
-                    response = "I'm here to help! How can I assist you with your business today?"
+                    response = "Hello! I'm Sarah, your Executive Assistant. How can I help you today?"
+                
+                # Store conversation context with dict access
+                await self.memory.store_conversation_context(conversation_id, {
+                    "last_message": message,
+                    "last_response": response,
+                    "channel": channel.value,
+                    "timestamp": datetime.now().isoformat(),
+                    "workflow_created": result.get("workflow_created", False),
+                    "intent": result.get("current_intent", {}).value if hasattr(result.get("current_intent", {}), "value") else str(result.get("current_intent", "unknown")),
+                    "confidence": result.get("confidence_score", 0.0),
+                    "conversation_depth": result.get("conversation_depth", 0)
+                })
             else:
-                response = "Hello! I'm Sarah, your Executive Assistant. How can I help you today?"
-            
-            # Store enhanced conversation context
-            await self.memory.store_conversation_context(conversation_id, {
-                "last_message": message,
-                "last_response": response,
-                "channel": channel.value,
-                "timestamp": datetime.now().isoformat(),
-                "workflow_created": result.workflow_created,
-                "intent": result.current_intent.value,
-                "confidence": result.confidence_score,
-                "conversation_depth": result.conversation_depth
-            })
+                # Handle ConversationState object
+                if result.messages:
+                    final_message = result.messages[-1]
+                    if isinstance(final_message, AIMessage):
+                        response = final_message.content
+                    else:
+                        response = "I'm here to help! How can I assist you with your business today?"
+                else:
+                    response = "Hello! I'm Sarah, your Executive Assistant. How can I help you today?"
+                
+                # Store enhanced conversation context
+                await self.memory.store_conversation_context(conversation_id, {
+                    "last_message": message,
+                    "last_response": response,
+                    "channel": channel.value,
+                    "timestamp": datetime.now().isoformat(),
+                    "workflow_created": result.workflow_created,
+                    "intent": result.current_intent.value,
+                    "confidence": result.confidence_score,
+                    "conversation_depth": result.conversation_depth
+                })
             
             logger.info(f"Enhanced EA handled interaction for customer {self.customer_id} via {channel.value}")
             
