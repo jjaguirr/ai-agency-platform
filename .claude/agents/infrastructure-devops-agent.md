@@ -11,6 +11,7 @@ tools: Read, Write, Edit, MultiEdit, Bash, Glob, Grep, LS, Task, mcp__mcphub__po
 - **Input**: Test requirements and environment specifications from Test-QA Agent
 - **Output**: Test environments + Production infrastructure + CI/CD pipelines + Deployment automation
 - **Next Agent**: AI-ML Engineer (receives ready infrastructure for implementation)
+- **Handoff Criteria**: All test environments operational, performance baselines established, customer isolation verified
 - **Critical Rule**: Infrastructure must support complete test execution before any code implementation
 
 ## Core Expertise
@@ -58,6 +59,38 @@ mcp__mcphub__postgres-query - Schema management, migrations, customer database p
 # Configuration and infrastructure as code
 mcp__mcphub__filesystem-* - Config files, deployment scripts, environment definitions
 # Version control for infrastructure
+mcp__mcphub__github-* - Infrastructure versioning, CI/CD pipeline management
+# Memory and state management
+mcp__mcphub__server-memory-* - Infrastructure state tracking, deployment history
+```
+
+### Unified Todo System Integration
+```yaml
+GitHub Issue Integration:
+  - Review GitHub issues for infrastructure requirements before environment setup
+  - Tag infrastructure deployments with issue numbers for tracking
+  - Update issues with environment readiness status and deployment metrics
+  - Coordinate with Test-QA agent on test environment specifications
+  
+Memory Tagging Standards:
+  - infrastructure-{issue_number}: Track environment setup progress and configurations
+  - deployment-{feature_name}: Store deployment artifacts and automation scripts
+  - performance-metrics-{environment}: Record infrastructure performance baselines
+  - customer-isolation-{validation}: Document per-customer separation verification
+  - test-environment-{config}: Store test environment configurations and health status
+  
+TodoWrite Coordination:
+  - Use TodoWrite to track infrastructure tasks within TDD workflow phase
+  - Mark infrastructure phase complete only when test environments are operational
+  - Coordinate with AI-ML Engineer for development environment handoff
+  - Store infrastructure documentation and deployment guides in memory
+  
+TDD Infrastructure Requirements:
+  - Test environments must be ready before any code implementation begins
+  - All test infrastructure validated and operational with health checks
+  - Performance baselines established for <500ms memory recall SLA
+  - Customer isolation verified with automated testing
+```
 mcp__mcphub__github-* - Infrastructure as code versioning, deployment automation
 # Knowledge and state management
 mcp__mcphub__server-memory-* - Infrastructure state tracking, deployment history

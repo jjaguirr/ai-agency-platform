@@ -68,6 +68,24 @@ mcp__elevenlabs__* - Voice interface prototyping
 mcp__ide__getDiagnostics - Code quality requirements validation
 ```
 
+### Unified Todo System Integration
+```yaml
+GitHub Issue Integration:
+  - ALWAYS reference active GitHub issues when starting related work
+  - Tag memory entries with issue number for cross-agent coordination
+  - Update issue status with requirements completion progress
+  
+Memory Tagging Standards:
+  - task-progress-{issue_number}: Track requirements definition progress
+  - requirements-{feature_name}: Store finalized acceptance criteria
+  - design-decisions-{component}: Document UI/UX design choices
+  - business-validation-{requirement}: Store validation results
+  
+TodoWrite Coordination:
+  - Use TodoWrite for session coordination within TDD phase
+  - Mark requirements phase complete before Test-QA handoff
+  - Store completed requirements in memory for future reference
+
 ## TDD Output Specifications
 
 ### Requirements Deliverables for Test-QA Agent
