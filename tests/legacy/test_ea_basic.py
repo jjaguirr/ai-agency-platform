@@ -25,7 +25,6 @@ async def test_ea_basic_conversation():
     try:
         # Mock external dependencies to avoid real connections
         with patch('src.agents.executive_assistant.redis.Redis'), \
-             patch('src.agents.executive_assistant.QdrantClient'), \
              patch('src.agents.executive_assistant.psycopg2.connect'):
             
             # Initialize EA

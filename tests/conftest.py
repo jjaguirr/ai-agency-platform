@@ -5,6 +5,7 @@ Combines multiple 2024 testing frameworks for comprehensive EA evaluation
 
 import asyncio
 import pytest
+import pytest_asyncio
 import redis
 from unittest.mock import AsyncMock, MagicMock
 from typing import Dict, List, Any
@@ -44,12 +45,7 @@ class MockAgentJudge:
 from src.agents.executive_assistant import ExecutiveAssistant, ConversationChannel, BusinessContext
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an instance of the default event loop for the test session."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
+# Removed deprecated event_loop fixture - pytest-asyncio handles this automatically
 
 
 # === Real Infrastructure for Integration Tests ===
@@ -149,7 +145,7 @@ def consulting_business_context():
 
 # === Real Executive Assistant Test Fixtures ===
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def real_ea():
     """Real ExecutiveAssistant with test configuration and proper cleanup."""
     customer_id = "test_customer_123"
@@ -181,7 +177,7 @@ async def real_ea():
         print(f"Cleanup warning: {e}")
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def ea_with_business_context(real_ea, jewelry_business_context):
     """Real EA with pre-loaded business context."""
     ea = await real_ea
