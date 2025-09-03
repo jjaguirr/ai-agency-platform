@@ -164,14 +164,14 @@ class ExecutiveAssistantMemory:
         # Semantic memory (Mem0) - Business knowledge with customer isolation
         import os
         
-        # Configure Mem0 to use Docker ChromaDB service with customer isolation
+        # Configure Mem0 to use Docker Qdrant service with customer isolation
         mem0_config = {
             "vector_store": {
-                "provider": "chroma",
+                "provider": "qdrant",
                 "config": {
                     "collection_name": f"customer_{customer_id}_memory",
                     "host": "localhost",
-                    "port": 8000
+                    "port": 6333
                 }
             }
         }
