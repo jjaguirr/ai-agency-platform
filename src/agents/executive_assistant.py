@@ -33,6 +33,10 @@ from psycopg2.extras import RealDictCursor
 import requests
 import re
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # AI/ML Memory Integration
 try:
     from .memory.ea_memory_integration import EAMemoryIntegration
@@ -42,10 +46,6 @@ try:
 except ImportError as e:
     logger.warning(f"AI/ML memory features not available: {e}")
     AI_ML_AVAILABLE = False
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 class ConversationChannel(Enum):
     PHONE = "phone"
