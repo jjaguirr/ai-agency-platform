@@ -1,6 +1,6 @@
 """
-AI Agency Platform - Enhanced Executive Assistant Agent
-Sophisticated LangGraph conversation management with advanced routing and state tracking
+AI Agency Platform - Enhanced Executive Assistant Agent with AI/ML Memory Integration
+Sophisticated LangGraph conversation management with advanced business learning capabilities
 """
 
 import asyncio
@@ -13,9 +13,12 @@ from typing import Dict, List, Optional, Any, Literal
 from dataclasses import dataclass, asdict, field
 from enum import Enum
 
-# Load environment variables from .env file
-from dotenv import load_dotenv
-load_dotenv()
+# Load environment variables from .env file if available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv is optional
 
 import redis
 from mem0 import Memory
@@ -29,6 +32,16 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import requests
 import re
+
+# AI/ML Memory Integration
+try:
+    from .memory.ea_memory_integration import EAMemoryIntegration
+    from .ai_ml.business_learning_engine import BusinessLearningEngine
+    from .ai_ml.workflow_template_matcher import WorkflowTemplateMatcher
+    AI_ML_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"AI/ML memory features not available: {e}")
+    AI_ML_AVAILABLE = False
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -133,7 +146,7 @@ class ConversationState:
     automation_opportunities_found: List[str] = field(default_factory=list)
 
 class ExecutiveAssistantMemory:
-    """Multi-layer memory system for complete business context using Mem0"""
+    """Enhanced multi-layer memory system with AI/ML business learning capabilities"""
     
     def __init__(self, customer_id: str):
         self.customer_id = customer_id
@@ -171,8 +184,11 @@ class ExecutiveAssistantMemory:
                     "model": "text-embedding-3-small"
                 }
             }
+        
+        # Only add LLM config if API key is available
+        if os.getenv("OPENAI_API_KEY"):
             mem0_config["llm"] = {
-                "provider": "openai",
+                "provider": "openai", 
                 "config": {
                     "model": "gpt-4o-mini",
                     "temperature": 0.2
@@ -194,6 +210,23 @@ class ExecutiveAssistantMemory:
             logger.error(f"Failed to initialize Mem0 for customer {customer_id}: {e}")
             # Create a minimal memory client for testing
             self.memory_client = None
+            
+        # AI/ML Memory Integration - Enhanced business learning
+        if AI_ML_AVAILABLE:
+            try:
+                self.ai_memory_integration = EAMemoryIntegration(customer_id)
+                self.business_learning_engine = BusinessLearningEngine()
+                self.workflow_template_matcher = WorkflowTemplateMatcher()
+                logger.info(f"AI/ML memory integration initialized for customer {customer_id}")
+            except Exception as e:
+                logger.warning(f"AI/ML integration failed, falling back to basic memory: {e}")
+                self.ai_memory_integration = None
+                self.business_learning_engine = None
+                self.workflow_template_matcher = None
+        else:
+            self.ai_memory_integration = None
+            self.business_learning_engine = None 
+            self.workflow_template_matcher = None
         
         # Persistent memory (PostgreSQL) - Complete business history
         try:
@@ -219,8 +252,18 @@ class ExecutiveAssistantMemory:
         return json.loads(context) if context else {}
     
     async def store_business_knowledge(self, knowledge: str, metadata: Dict):
-        """Store business knowledge using Mem0 with customer-specific user_id"""
+        """Store business knowledge with AI/ML enhancement and pattern recognition"""
         try:
+            # AI/ML Enhanced Storage - extract business insights
+            if self.ai_memory_integration:
+                enhanced_result = await self.ai_memory_integration.store_with_learning(
+                    knowledge, metadata
+                )
+                if enhanced_result:
+                    logger.info(f"Enhanced storage with AI/ML insights: {len(enhanced_result.get('insights', []))} patterns detected")
+                    return enhanced_result
+            
+            # Fallback to basic Mem0 storage
             result = self.memory_client.add(
                 messages=knowledge,
                 user_id=self.customer_id,
@@ -234,13 +277,25 @@ class ExecutiveAssistantMemory:
             
             memory_id = result.get('id', 'unknown') if isinstance(result, dict) else str(result)
             logger.info(f"Stored business knowledge {memory_id}: {knowledge[:100]}...")
+            return result
                     
         except Exception as e:
             logger.error(f"Error storing business knowledge: {e}")
+            return None
     
     async def search_business_knowledge(self, query: str, limit: int = 10) -> List[Dict]:
-        """Search business knowledge using Mem0 with customer-specific user_id"""
+        """Search business knowledge with AI/ML semantic enhancement"""
         try:
+            # AI/ML Enhanced Search - semantic understanding
+            if self.ai_memory_integration:
+                enhanced_results = await self.ai_memory_integration.search_with_context(
+                    query, limit=limit
+                )
+                if enhanced_results:
+                    logger.info(f"Enhanced search returned {len(enhanced_results)} contextually relevant results")
+                    return enhanced_results
+            
+            # Fallback to basic Mem0 search
             search_results = self.memory_client.search(
                 query=query,
                 user_id=self.customer_id,

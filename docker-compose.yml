@@ -43,54 +43,92 @@ services:
     networks:
       - ai-agency-network
 
-  # Vector Database - ChromaDB for Memory Layer
-  chromadb:
-    image: chromadb/chroma:latest
-    container_name: ai-agency-chromadb
+  # Vector Database for Mem0 - Qdrant
+  qdrant:
+    image: qdrant/qdrant:v1.7.3
+    container_name: ai-agency-qdrant
     ports:
-      - "8000:8000"
+      - "6333:6333"
+      - "6334:6334"
     volumes:
-      - chromadb_data:/chroma/chroma
+      - qdrant_data:/qdrant/storage
     environment:
-      - ANONYMIZED_TELEMETRY=false
-      - IS_PERSISTENT=true
-      - CHROMA_SERVER_HOST=0.0.0.0
-      - CHROMA_SERVER_HTTP_PORT=8000
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      - QDRANT__SERVICE__GRPC_PORT=6334
+      - QDRANT__LOG_LEVEL=INFO
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v2/heartbeat"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=3", "--spider", "http://localhost:6333/health"]
       interval: 30s
       timeout: 10s
-      retries: 5
-      start_period: 20s
+      retries: 3
+      start_period: 40s
     restart: unless-stopped
     networks:
       - ai-agency-network
 
-  # Memory Layer - Mem0 with ChromaDB backend
-  mem0:
-    image: mem0ai/mem0:latest
-    container_name: ai-agency-mem0
-    depends_on:
-      chromadb:
-        condition: service_healthy
+  # Graph Database for Mem0 - Neo4j
+  neo4j:
+    image: neo4j:5.15-community
+    container_name: ai-agency-neo4j
     ports:
-      - "8080:8080"
+      - "7474:7474"
+      - "7687:7687"
     volumes:
-      - mem0_data:/app/data
+      - neo4j_data:/data
+      - neo4j_logs:/logs
     environment:
-      - MEM0_LLM=gpt-4o-mini
-      - MEM0_EMBEDDER=text-embedding-3-small
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - CHROMA_HOST=chromadb
-      - CHROMA_PORT=8000
-      - MEM0_VECTOR_STORE=chromadb
-      - MEM0_VECTOR_STORE_URL=http://chromadb:8000
+      - NEO4J_AUTH=neo4j/neo4j_password
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+      - NEO4J_dbms_security_procedures_allowlist=apoc.*
+      - NEO4J_dbms_memory_heap_initial__size=512m
+      - NEO4J_dbms_memory_heap_max__size=1G
+      - NEO4J_dbms_memory_pagecache_size=256m
+      # Per-customer database support
+      - NEO4J_server_config_strict__validation_enabled=false
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "neo4j_password", "RETURN 1"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 60s
+    restart: unless-stopped
+    networks:
+      - ai-agency-network
+
+  # Memory Infrastructure Monitor
+  memory-monitor:
+    build:
+      context: ./src/memory
+      dockerfile: Dockerfile.monitor
+    container_name: ai-agency-memory-monitor
+    ports:
+      - "8084:8080"
+    environment:
+      - POSTGRES_URL=postgresql://${POSTGRES_USER:-mcphub}:${POSTGRES_PASSWORD:-mcphub_password}@postgres:5432/${POSTGRES_DB:-mcphub}
+      - REDIS_URL=redis://redis:6379
+      - QDRANT_URL=http://qdrant:6333
+      - NEO4J_URL=neo4j://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=neo4j_password
+      - MONITORING_INTERVAL=30
+      - SLA_ENFORCEMENT=true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    volumes:
+      - ./logs/memory:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     restart: unless-stopped
     networks:
       - ai-agency-network
@@ -241,9 +279,11 @@ volumes:
     driver: local
   redis_data:
     driver: local
-  mem0_data:
+  qdrant_data:
     driver: local
-  chromadb_data:
+  neo4j_data:
+    driver: local
+  neo4j_logs:
     driver: local
   minio_data:
     driver: local
@@ -258,8 +298,9 @@ networks:
 # 1. Service Endpoints:
 #    - PostgreSQL: localhost:5432
 #    - Redis: localhost:6379
-#    - ChromaDB: localhost:8000
-#    - Mem0: localhost:8080
+#    - Qdrant Vector DB: localhost:6333 (HTTP), localhost:6334 (gRPC)
+#    - Neo4j Graph DB: localhost:7474 (Browser), localhost:7687 (Bolt)
+#    - Memory Monitor: localhost:8084
 #    - Security API: localhost:8083
 #    - Security Proxy: localhost:8080
 #    - LangFuse: localhost:3000
