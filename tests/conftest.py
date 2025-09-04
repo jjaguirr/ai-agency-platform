@@ -394,11 +394,13 @@ async def real_ea():
 
 
 @pytest_asyncio.fixture
+
 async def ea_with_business_context(jewelry_business_context):
     """EA with business context using clean isolation - no complex fixture chains."""
     # Generate unique customer ID for this specific test
     customer_id = test_resource_manager.generate_unique_customer_id("test_business")
     test_resource_manager.register_customer_id(customer_id)
+
     
     # Create EA instance directly (not through fixture chain)
     ea = ExecutiveAssistant(
