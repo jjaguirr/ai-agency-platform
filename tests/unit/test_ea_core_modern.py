@@ -46,7 +46,7 @@ class TestEABasicConversation:
     @pytest.mark.asyncio
     async def test_ea_responds_to_greeting_with_evaluation(self, real_ea, conversation_evaluator):
         """EA should respond professionally to basic greetings - evaluated by AI."""
-        ea = await real_ea
+        ea = real_ea  # No await needed - fixture returns EA directly
         
         # Given: A basic greeting message
         message = "Hello, I need help with my business"
@@ -82,7 +82,7 @@ class TestEABasicConversation:
     @pytest.mark.asyncio 
     async def test_ea_maintains_professional_tone(self, real_ea):
         """EA should maintain professional tone using structured evaluation."""
-        ea = await real_ea
+        ea = real_ea  # No await needed - fixture returns EA directly
         
         # Given: An urgent/emotional user message
         urgent_message = "This is super urgent!!! I'm totally overwhelmed with my business!"
@@ -115,7 +115,7 @@ class TestEABasicConversation:
     @pytest.mark.asyncio
     async def test_ea_asks_business_discovery_questions(self, real_ea, agent_evaluator):
         """EA should proactively ask questions to understand business - trace evaluation."""
-        ea = await real_ea
+        ea = real_ea  # No await needed - fixture returns EA directly
         
         # Given: Initial business context
         messages = [
@@ -150,7 +150,7 @@ class TestEABasicConversation:
     async def test_ea_remembers_business_context(self, ea_with_business_context, jewelry_business_context):
         """EA should remember and reference business context throughout conversation."""
         # Given: EA with established business context
-        ea = await ea_with_business_context
+        ea = ea_with_business_context  # No await needed - fixture returns EA directly
         
         # When: Multiple messages reference different aspects
         messages_and_responses = [
@@ -178,7 +178,7 @@ class TestEABasicConversation:
     @pytest.mark.performance
     async def test_ea_meets_response_time_requirements(self, real_ea, ea_performance_benchmarks):
         """EA should meet Phase-1 PRD response time requirements (<2 seconds)."""
-        ea = await real_ea
+        ea = real_ea  # No await needed - fixture returns EA directly
         import time
         
         # Given: A standard business message
@@ -228,7 +228,7 @@ class TestEAAutomationIdentification:
     @pytest.mark.evaluation
     async def test_ea_identifies_automation_opportunities_with_ai_scoring(self, real_ea, agent_evaluator):
         """EA should identify multiple automation opportunities from business description."""
-        ea = await real_ea
+        ea = real_ea  # No await needed - fixture returns EA directly
         
         # Given: A consulting business scenario with multiple automation opportunities
         conversation = [
@@ -266,7 +266,7 @@ class TestEAAutomationIdentification:
     @pytest.mark.asyncio
     async def test_ea_prioritizes_automations_by_impact(self, real_ea):
         """EA should prioritize automations by business impact (time saved, cost reduction)."""
-        ea = await real_ea
+        ea = real_ea  # No await needed - fixture returns EA directly
         
         # Given: Pain points with different time impacts
         pain_points = [
@@ -322,7 +322,7 @@ class TestEAROICommunication:
     @pytest.mark.asyncio
     async def test_ea_calculates_roi_projections(self, real_ea):
         """EA should calculate and communicate ROI for automation recommendations."""
-        ea = await real_ea
+        ea = real_ea  # No await needed - fixture returns EA directly
         
         # Given: A business problem with quantifiable time investment
         problem = "I spend 5 hours per week on social media posting for my consulting business, and my billable rate is $150/hour"
@@ -347,7 +347,7 @@ class TestEAROICommunication:
     @pytest.mark.asyncio
     async def test_ea_provides_specific_implementation_guidance(self, real_ea):
         """EA should provide specific, step-by-step implementation guidance."""
-        ea = await real_ea
+        ea = real_ea  # No await needed - fixture returns EA directly
         
         # Given: A request for solution implementation
         request = "How do I set up social media automation for my jewelry business?"

@@ -47,6 +47,14 @@ except ImportError as e:
     logger.warning(f"AI/ML memory features not available: {e}")
     AI_ML_AVAILABLE = False
 
+# Competitive Positioning System
+try:
+    from .competitive_positioning import competitive_positioning
+    COMPETITIVE_POSITIONING_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Competitive positioning system not available: {e}")
+    COMPETITIVE_POSITIONING_AVAILABLE = False
+
 class ConversationChannel(Enum):
     PHONE = "phone"
     WHATSAPP = "whatsapp"
@@ -745,12 +753,40 @@ class ExecutiveAssistant:
                 logger.error(f"Error extracting business info: {e}")
                 return f"Could not extract {info_type} information automatically."
         
+        @tool
+        async def handle_competitive_positioning(customer_message: str, business_context: str = "") -> str:
+            """Handle competitive positioning questions and value justification"""
+            if not COMPETITIVE_POSITIONING_AVAILABLE:
+                return "I'm your dedicated Executive Assistant, focused on learning your business and creating personalized automations to help you succeed."
+            
+            try:
+                # Get competitive response based on customer message
+                competitive_response = competitive_positioning.get_competitive_response(
+                    customer_message, business_context
+                )
+                
+                # Add value justification if business context is available
+                if business_context and len(business_context) > 50:
+                    value_justification = competitive_positioning.get_value_justification(business_context)
+                    competitive_response += f"\n\n**FOR YOUR SPECIFIC SITUATION:**\n{value_justification}"
+                
+                return competitive_response
+                
+            except Exception as e:
+                logger.error(f"Error handling competitive positioning: {e}")
+                return """I understand you're comparing options. Here's what makes me different:
+
+I'm not just software - I'm your dedicated Executive Assistant who learns your business through conversation and becomes your trusted business partner. Unlike automation tools that require manual setup, I create workflows while we talk and remember everything about your business forever.
+
+The key difference: automation tools give you software to configure. I give you a brilliant business partner who handles everything for you."""
+        
         tools = [
             analyze_business_process, 
             create_workflow, 
             store_business_insight, 
             match_workflow_template,
-            extract_business_info
+            extract_business_info,
+            handle_competitive_positioning
         ]
         tool_node = ToolNode(tools)
         
@@ -982,6 +1018,57 @@ class ExecutiveAssistant:
                 return state
             
             last_message = state.messages[-1].content if state.messages else ""
+            
+            # Enhanced competitive positioning detection - PRIORITY OVERRIDE
+            competitive_keywords = [
+                "zapier", "make.com", "automation platform", "competitor", "similar service", 
+                "cheaper", "price", "cost", "$199", "$299", "worth", "different", 
+                "why should", "what makes", "automation tools", "workflow automation",
+                "better", "premium price", "difference"
+            ]
+            
+            # Check for competitive questions with high priority
+            has_competitive_keyword = any(keyword in last_message.lower() for keyword in competitive_keywords)
+            is_pricing_question = any(term in last_message.lower() for term in ["$", "price", "cost", "cheaper", "worth"])
+            is_comparison_question = any(term in last_message.lower() for term in ["different", "better", "similar", "competitor", "vs"])
+            
+            if has_competitive_keyword or (is_pricing_question and is_comparison_question):
+                # DIRECT competitive positioning response - bypass all other logic
+                logger.info(f"🎯 COMPETITIVE POSITIONING DETECTED: {last_message[:100]}...")
+                try:
+                    business_context = f"{state.business_context.business_name} {state.business_context.industry} {' '.join(state.business_context.daily_operations)}"
+                    competitive_response = await handle_competitive_positioning.ainvoke({
+                        "customer_message": last_message,
+                        "business_context": business_context
+                    })
+                    state.messages.append(AIMessage(content=competitive_response))
+                    state.current_intent = ConversationIntent.BUSINESS_ASSISTANCE
+                    state.confidence_score = 0.95  # High confidence for competitive positioning
+                    logger.info("✅ Competitive positioning response generated successfully")
+                    return state
+                except Exception as e:
+                    logger.error(f"❌ Error handling competitive positioning: {e}")
+                    # Fallback to manual competitive response
+                    fallback_response = """I understand you're comparing options. Here's what makes me fundamentally different from automation tools like Zapier:
+
+🎯 **I'M YOUR BUSINESS PARTNER, NOT SOFTWARE**
+• I learn your business through conversation like a human EA would
+• I understand your goals, preferences, and business context
+• I proactively help you grow, not just execute predefined tasks
+
+💡 **THE KEY DIFFERENCE:**
+• **Automation tools:** You configure workflows manually
+• **Me:** I create automations during our conversations
+
+• **Tools:** Break when your business changes
+• **Me:** I adapt and learn as you grow
+
+**The bottom line:** You're not choosing between automation platforms - you're choosing between doing automation yourself vs having a dedicated Executive Assistant who handles everything for you."""
+                    
+                    state.messages.append(AIMessage(content=fallback_response))
+                    state.current_intent = ConversationIntent.BUSINESS_ASSISTANCE
+                    state.confidence_score = 0.8
+                    return state
             
             intent_prompt = f"""
             Classify the intent of this customer message in the context of an Executive Assistant conversation:

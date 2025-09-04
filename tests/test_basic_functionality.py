@@ -149,7 +149,7 @@ class TestBasicExecutiveAssistant:
         assert len(found_indicators) >= 2, f"Insufficient ROI discussion: {found_indicators}"
     
     @pytest.mark.asyncio
-    @pytest.mark.performance
+    @pytest.mark.integration_performance
     async def test_ea_response_time_under_2_seconds(self, basic_ea):
         """EA should meet Phase-1 PRD response time requirement (<2 seconds)."""
         # Given: A standard business message
@@ -160,8 +160,9 @@ class TestBasicExecutiveAssistant:
         response = await basic_ea.handle_message(message, ConversationChannel.PHONE)
         response_time = time.time() - start_time
         
-        # Then: Response time should be under 2 seconds
-        assert response_time < 2.0, f"Response time {response_time:.3f}s exceeds 2s requirement"
+        # Then: Response time should be under 2 seconds (Phase-1 PRD requirement)
+        from tests.utils.performance_utils import assert_performance_within_sla
+        assert_performance_within_sla(response_time, "text_response", "basic EA response")
         
         # And: Response should be meaningful
         assert len(response) >= 50, "Response too short to be meaningful"

@@ -24,11 +24,8 @@ class MockLlmJudge:
         mock_result.reasoning = "Mock evaluation passed"
         return mock_result
 
-# EA imports (using mock if imports fail)
-try:
-    from src.agents.executive_assistant import ExecutiveAssistant, ConversationChannel
-except ImportError:
-    from tests.conftest import ExecutiveAssistant, ConversationChannel
+# EA imports - standardized pattern
+from src.agents.executive_assistant import ExecutiveAssistant, ConversationChannel
 
 
 class CustomerPersona:
@@ -100,7 +97,7 @@ def skeptical_retailer():
 class ScenarioRunner:
     """Runs customer scenarios and evaluates outcomes."""
     
-    def __init__(self, ea: ExecutiveAssistant, evaluator: LlmJudge):
+    def __init__(self, ea: ExecutiveAssistant, evaluator: MockLlmJudge):
         self.ea = ea
         self.evaluator = evaluator
         self.conversation_log = []
