@@ -4,6 +4,7 @@
 mem0ai>=0.1.24
 qdrant-client>=1.7.0
 neo4j>=5.15.0
+
 spacy>=3.7.0
 
 # Core AI Framework
