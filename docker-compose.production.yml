@@ -19,7 +19,6 @@
 # ${TIER_CPU_LIMIT} - CPU limit based on customer tier
 # ${SECURE_PASSWORD} - Generated secure password for databases
 
-version: '3.8'
 
 services:
   # Customer-Dedicated PostgreSQL Database
@@ -39,11 +38,11 @@ services:
       POSTGRES_CHECKPOINT_COMPLETION_TARGET: 0.9
       POSTGRES_WAL_BUFFERS: 16MB
     volumes:
-      - postgres_data_${CUSTOMER_ID}:/var/lib/postgresql/data
+      - ./customer-volumes/${CUSTOMER_ID}/postgres:/var/lib/postgresql/data
       - ./config/postgres/customer-init.sql:/docker-entrypoint-initdb.d/01-customer-init.sql:ro
       - ./config/postgres/production.conf:/etc/postgresql/postgresql.conf:ro
     networks:
-      - customer-${CUSTOMER_ID}-network
+      - customer-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U customer_${CUSTOMER_ID} -d customer_${CUSTOMER_ID}"]
       interval: 10s
@@ -86,10 +85,10 @@ services:
       --tcp-keepalive 300
       --timeout 300
     volumes:
-      - redis_data_${CUSTOMER_ID}:/data
+      - ./customer-volumes/${CUSTOMER_ID}/redis:/data
       - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
     networks:
-      - customer-${CUSTOMER_ID}-network
+      - customer-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -134,10 +133,10 @@ services:
       QDRANT__STORAGE__OPTIMIZERS__MEMMAP_THRESHOLD_KB: 200000
       QDRANT__STORAGE__OPTIMIZERS__INDEXING_THRESHOLD_KB: 20000
     volumes:
-      - qdrant_data_${CUSTOMER_ID}:/qdrant/storage
+      - ./customer-volumes/${CUSTOMER_ID}/qdrant:/qdrant/storage
       - ./config/qdrant/production.yaml:/qdrant/config/production.yaml:ro
     networks:
-      - customer-${CUSTOMER_ID}-network
+      - customer-network
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=3", "--spider", "http://localhost:6333/health"]
       interval: 30s
@@ -188,12 +187,12 @@ services:
       NEO4J_dbms_transaction_timeout: 60s
       NEO4J_dbms_tx_log_rotation_retention_policy: "7 days"
     volumes:
-      - neo4j_data_${CUSTOMER_ID}:/data
-      - neo4j_logs_${CUSTOMER_ID}:/logs
-      - neo4j_import_${CUSTOMER_ID}:/var/lib/neo4j/import
+      - ./customer-volumes/${CUSTOMER_ID}/neo4j/data:/data
+      - ./customer-volumes/${CUSTOMER_ID}/neo4j/logs:/logs
+      - ./customer-volumes/${CUSTOMER_ID}/neo4j/import:/var/lib/neo4j/import
       - ./config/neo4j/neo4j.conf:/var/lib/neo4j/conf/neo4j.conf:ro
     networks:
-      - customer-${CUSTOMER_ID}-network
+      - customer-network
     healthcheck:
       test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "${SECURE_PASSWORD}", "RETURN 1"]
       interval: 30s
@@ -260,7 +259,7 @@ services:
       - ./logs/memory/${CUSTOMER_ID}:/app/logs
       - ./config/monitoring/alerts.yml:/app/config/alerts.yml:ro
     networks:
-      - customer-${CUSTOMER_ID}-network
+      - customer-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
@@ -365,7 +364,7 @@ services:
       - ./logs/mcp/${CUSTOMER_ID}:/app/logs
       - ./config/security/customer-policies.yaml:/app/config/security-policies.yaml:ro
     networks:
-      - customer-${CUSTOMER_ID}-network
+      - customer-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
       interval: 30s
@@ -420,7 +419,7 @@ services:
       - ./config/security/customer-${CUSTOMER_ID}.yaml:/app/config/security.yaml:ro
       - ./logs/security/${CUSTOMER_ID}:/app/logs
     networks:
-      - customer-${CUSTOMER_ID}-network
+      - customer-network
     deploy:
       resources:
         limits:
@@ -433,49 +432,13 @@ services:
       - "ai-agency.tier=${CUSTOMER_TIER}"
 
 # Customer-Dedicated Volumes for Data Persistence
-volumes:
-  postgres_data_${CUSTOMER_ID}:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ./customer-volumes/${CUSTOMER_ID}/postgres
-  redis_data_${CUSTOMER_ID}:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind  
-      device: ./customer-volumes/${CUSTOMER_ID}/redis
-  qdrant_data_${CUSTOMER_ID}:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ./customer-volumes/${CUSTOMER_ID}/qdrant
-  neo4j_data_${CUSTOMER_ID}:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ./customer-volumes/${CUSTOMER_ID}/neo4j/data
-  neo4j_logs_${CUSTOMER_ID}:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ./customer-volumes/${CUSTOMER_ID}/neo4j/logs
-  neo4j_import_${CUSTOMER_ID}:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ./customer-volumes/${CUSTOMER_ID}/neo4j/import
+# Using direct bind mounts instead of named volumes for better customer isolation
 
 # Customer-Dedicated Network for Complete Isolation
 networks:
-  customer-${CUSTOMER_ID}-network:
+  customer-network:
     driver: bridge
-    name: customer-${CUSTOMER_ID}-network
+    name: ${CUSTOMER_ID}-network
     ipam:
       driver: default
       config:
