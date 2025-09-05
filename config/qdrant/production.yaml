@@ -1,0 +1,84 @@
+# AI Agency Platform - Qdrant Production Configuration
+# Customer-specific vector database configuration for Mem0 integration
+
+service:
+  http_port: 6333
+  grpc_port: 6334
+  enable_cors: false
+  max_request_size_mb: 32
+  max_workers: 0  # Auto-detect CPU cores
+
+log_level: INFO
+
+storage:
+  # Customer-specific storage path
+  storage_path: /qdrant/storage
+  
+  # Snapshots for backup
+  snapshots_path: /qdrant/snapshots
+  
+  # Performance optimizations
+  optimizers:
+    # Default segment number for collections
+    default_segment_number: 2
+    
+    # Memory mapping threshold (KB)
+    memmap_threshold: 200000
+    
+    # Indexing threshold (KB)  
+    indexing_threshold: 20000
+    
+    # Maximum optimization threads
+    max_optimization_threads: 2
+    
+  # Write ahead log settings
+  wal:
+    wal_capacity_mb: 32
+    wal_segments_ahead: 0
+
+# Cluster configuration (disabled for per-customer instances)
+cluster:
+  enabled: false
+
+# Memory limits and performance
+limits:
+  # Maximum memory usage for segment
+  segment_max_size_kb: 1048576  # 1GB
+  
+  # Maximum vectors per segment  
+  vectors_per_segment: 100000
+
+# Collection-specific settings for customer isolation
+collections:
+  # Each customer gets isolated collections with naming pattern:
+  # customer_{customer_id}_memories
+  # customer_{customer_id}_business_context
+  # customer_{customer_id}_conversations
+  
+  default_vector_size: 1536  # OpenAI embedding size
+  default_distance: Cosine
+  
+  # Indexing settings
+  hnsw_config:
+    m: 16
+    ef_construct: 200
+    full_scan_threshold: 10000
+
+# Customer isolation notes:
+# - Each customer deployment gets its own Qdrant instance
+# - Collections are prefixed with customer ID
+# - No cross-customer data access possible
+# - Vector embeddings are customer-specific and isolated
+
+# Production monitoring
+telemetry:
+  disabled: false
+  
+# API configuration  
+api:
+  enable_ui: false  # Disable web UI in production
+  
+# Security (additional layer beyond Docker network isolation)
+cors:
+  allow_any_origin: false
+  allowed_origins: []

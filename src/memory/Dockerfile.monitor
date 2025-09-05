@@ -1,36 +1,87 @@
-# Memory Infrastructure Monitor
-# Monitors Mem0 infrastructure performance and SLA compliance
+# Memory Performance Monitor - Production Ready
+# Monitors per-customer memory system performance and SLA compliance
+# Supports Mem0 + Redis + PostgreSQL hybrid architecture with customer isolation
 
 FROM python:3.11-slim
 
+# Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies including database clients and build tools
 RUN apt-get update && apt-get install -y \
     curl \
     wget \
+    netcat-traditional \
+    postgresql-client \
+    redis-tools \
+    gcc \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better Docker layer caching
-COPY requirements-monitor.txt .
-RUN pip install --no-cache-dir -r requirements-monitor.txt
+# Install Python dependencies directly (no requirements.txt needed)
+# All required packages are installed below
 
-# Copy memory infrastructure code
-COPY . .
+# Install additional monitoring dependencies
+RUN pip install --no-cache-dir \
+    prometheus-client==0.19.0 \
+    asyncpg==0.29.0 \
+    redis==5.0.1 \
+    psutil==5.9.6 \
+    aiohttp==3.9.0 \
+    pydantic==2.5.0 \
+    neo4j==5.15.0
 
-# Create logs directory
-RUN mkdir -p /app/logs
+# Create non-root user for security
+RUN groupadd -r monitor && useradd -r -g monitor -m -d /home/monitor -s /sbin/nologin monitor
+
+# Copy application code
+COPY mem0_manager.py .
+COPY memory_performance_monitor.py .
+
+# Create directories and set permissions
+RUN mkdir -p /app/logs /app/config /app/data && \
+    chown -R monitor:monitor /app /home/monitor
+
+# Create health check script
+RUN echo '#!/usr/bin/env python3' > /app/health_check.py && \
+    echo 'import asyncio, sys, aiohttp' >> /app/health_check.py && \
+    echo 'async def check():' >> /app/health_check.py && \
+    echo '  try:' >> /app/health_check.py && \
+    echo '    async with aiohttp.ClientSession() as session:' >> /app/health_check.py && \
+    echo '      async with session.get("http://localhost:8080/health") as resp:' >> /app/health_check.py && \
+    echo '        if resp.status == 200: print("✅ Healthy"); sys.exit(0)' >> /app/health_check.py && \
+    echo '        else: print("❌ Unhealthy"); sys.exit(1)' >> /app/health_check.py && \
+    echo '  except: print("❌ Error"); sys.exit(1)' >> /app/health_check.py && \
+    echo 'asyncio.run(check())' >> /app/health_check.py && \
+    chmod +x /app/health_check.py
+
+# Create startup script with dependency waiting
+RUN echo '#!/bin/bash' > /app/start_monitor.sh && \
+    echo 'set -e' >> /app/start_monitor.sh && \
+    echo 'echo "🚀 Starting Memory Monitor for Customer: $CUSTOMER_ID"' >> /app/start_monitor.sh && \
+    echo 'echo "⏳ Waiting for dependencies..."' >> /app/start_monitor.sh && \
+    echo 'until pg_isready -h postgres-$CUSTOMER_ID -p 5432 -U customer_$CUSTOMER_ID 2>/dev/null; do sleep 2; done' >> /app/start_monitor.sh && \
+    echo 'until redis-cli -h redis-$CUSTOMER_ID -p 6379 ping 2>/dev/null | grep -q PONG; do sleep 2; done' >> /app/start_monitor.sh && \
+    echo 'until curl -f http://qdrant-$CUSTOMER_ID:6333/health >/dev/null 2>&1; do sleep 2; done' >> /app/start_monitor.sh && \
+    echo 'until nc -z neo4j-$CUSTOMER_ID 7687 2>/dev/null; do sleep 2; done' >> /app/start_monitor.sh && \
+    echo 'echo "✅ All dependencies ready"' >> /app/start_monitor.sh && \
+    echo 'exec python memory_performance_monitor.py' >> /app/start_monitor.sh && \
+    chmod +x /app/start_monitor.sh
+
+# Switch to non-root user
+USER monitor
 
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV LOG_LEVEL=INFO
+ENV PYTHONUNBUFFERED=1
 
-# Expose metrics and health endpoint
-EXPOSE 8080
+# Expose metrics and health endpoints
+EXPOSE 8080 9090
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-  CMD curl -f http://localhost:8080/health || exit 1
+# Health check with proper error handling
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD python /app/health_check.py
 
-# Run memory monitor service
-CMD ["python", "monitor_service.py"]
+# Start the monitor with dependency waiting
+CMD ["/app/start_monitor.sh"]
