@@ -191,7 +191,6 @@ class ExecutiveAssistantMemory:
                     "collection_name": f"customer_{customer_id}_memory",
                     "host": "localhost",
                     "port": 6333
-                    "port": 8000
                 }
             }
         }
