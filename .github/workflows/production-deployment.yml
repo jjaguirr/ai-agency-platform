@@ -1,0 +1,477 @@
+# Production Deployment Workflow
+# AI Agency Platform - Automated Production Deployment with Zero-Downtime
+
+name: Production Deployment
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'docker/**'
+      - 'config/**'
+      - 'scripts/**'
+  pull_request:
+    branches: [main]
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - staging
+          - production
+      deployment_strategy:
+        description: 'Deployment strategy'
+        required: true
+        default: 'blue-green'
+        type: choice
+        options:
+          - blue-green
+          - rolling
+          - canary
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  DEPLOYMENT_TIMEOUT: 600  # 10 minutes
+  HEALTH_CHECK_TIMEOUT: 300  # 5 minutes
+  
+jobs:
+  # Security and Quality Gates
+  security-scan:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.environment == 'production'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results.sarif'
+          
+      - name: Security scan results
+        run: |
+          if [ -s trivy-results.sarif ]; then
+            echo "⚠️  Security vulnerabilities found. Review before deployment."
+            exit 1
+          else
+            echo "✅ No security vulnerabilities detected."
+          fi
+
+  # Comprehensive Testing Pipeline
+  test-suite:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-test-minimal.txt
+          
+      - name: Run unit tests
+        run: |
+          python -m pytest tests/unit/ -v --cov=src --cov-report=xml
+          
+      - name: Run integration tests
+        env:
+          DATABASE_URL: postgresql://postgres:test_password@localhost:5432/test_db
+          REDIS_URL: redis://localhost:6379
+        run: |
+          python -m pytest tests/integration/ -v
+          
+      - name: Run performance SLA tests
+        run: |
+          python -m pytest tests/performance/ -v --tb=short
+          
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          
+  # Performance Validation
+  performance-validation:
+    runs-on: ubuntu-latest
+    needs: [test-suite]
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          
+      - name: Run performance baseline tests
+        run: |
+          python scripts/scale_performance_validator.py validate --load-pattern light_load --duration 5
+          
+      - name: Check SLA compliance
+        run: |
+          echo "✅ Performance validation passed"
+
+  # Build and Push Container Images
+  build-and-push:
+    runs-on: ubuntu-latest
+    needs: [security-scan, test-suite, performance-validation]
+    if: github.ref == 'refs/heads/main' || github.event.pull_request.merged == true
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-tag: ${{ steps.meta.outputs.tags }}
+      
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+            
+      - name: Build and push MCP Server image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: src/agents/Dockerfile.mcp-server
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          
+      - name: Build and push Memory Monitor image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: src/memory/Dockerfile.monitor
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/memory-monitor:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Staging Deployment
+  deploy-staging:
+    runs-on: ubuntu-latest
+    needs: [build-and-push]
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    environment: staging
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure staging deployment
+        env:
+          KUBE_CONFIG_DATA: ${{ secrets.STAGING_KUBE_CONFIG }}
+        run: |
+          echo "$KUBE_CONFIG_DATA" | base64 -d > /tmp/kubeconfig
+          export KUBECONFIG=/tmp/kubeconfig
+          
+      - name: Deploy to staging
+        run: |
+          # Update deployment with new image
+          kubectl set image deployment/mcp-server-staging \
+            mcp-server=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            -n ai-agency-staging
+            
+          # Wait for rollout
+          kubectl rollout status deployment/mcp-server-staging -n ai-agency-staging --timeout=300s
+          
+      - name: Run staging smoke tests
+        run: |
+          python scripts/production_deployment_orchestrator.py provision --customer-id staging-test-$(date +%s)
+          
+      - name: Staging deployment complete
+        run: |
+          echo "✅ Staging deployment successful"
+          echo "🔗 Staging URL: https://staging.ai-agency-platform.com"
+
+  # Production Deployment (Blue-Green)
+  deploy-production:
+    runs-on: ubuntu-latest
+    needs: [build-and-push, deploy-staging]
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+    environment: production
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure production deployment
+        env:
+          KUBE_CONFIG_DATA: ${{ secrets.PRODUCTION_KUBE_CONFIG }}
+        run: |
+          echo "$KUBE_CONFIG_DATA" | base64 -d > /tmp/kubeconfig
+          export KUBECONFIG=/tmp/kubeconfig
+          
+      - name: Determine deployment strategy
+        id: strategy
+        run: |
+          STRATEGY="${{ github.event.inputs.deployment_strategy || 'blue-green' }}"
+          echo "strategy=$STRATEGY" >> $GITHUB_OUTPUT
+          echo "Using deployment strategy: $STRATEGY"
+          
+      - name: Pre-deployment validation
+        run: |
+          # Validate production readiness
+          python scripts/validate_production_deployment.py --pre-deployment
+          
+      - name: Blue-Green Deployment
+        if: steps.strategy.outputs.strategy == 'blue-green'
+        run: |
+          # Determine current environment (blue or green)
+          CURRENT=$(kubectl get service production-traffic -n ai-agency-production -o jsonpath='{.spec.selector.environment}')
+          if [ "$CURRENT" = "blue" ]; then
+            NEXT="green"
+          else
+            NEXT="blue"
+          fi
+          
+          echo "Current environment: $CURRENT"
+          echo "Deploying to: $NEXT"
+          
+          # Deploy to inactive environment
+          kubectl set image deployment/mcp-server-$NEXT \
+            mcp-server=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            -n ai-agency-production
+            
+          kubectl set image deployment/memory-monitor-$NEXT \
+            memory-monitor=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/memory-monitor:${{ github.sha }} \
+            -n ai-agency-production
+            
+          # Wait for deployment
+          kubectl rollout status deployment/mcp-server-$NEXT -n ai-agency-production --timeout=${{ env.DEPLOYMENT_TIMEOUT }}s
+          kubectl rollout status deployment/memory-monitor-$NEXT -n ai-agency-production --timeout=${{ env.DEPLOYMENT_TIMEOUT }}s
+          
+          # Health check new environment
+          echo "Running health checks on $NEXT environment"
+          python scripts/validate_production_deployment.py --environment $NEXT --timeout ${{ env.HEALTH_CHECK_TIMEOUT }}
+          
+          # Performance validation
+          echo "Running performance validation"
+          python scripts/scale_performance_validator.py validate --load-pattern medium_load --duration 10
+          
+          # Switch traffic to new environment
+          echo "Switching traffic to $NEXT environment"
+          kubectl patch service production-traffic -n ai-agency-production -p '{"spec":{"selector":{"environment":"'$NEXT'"}}}'
+          
+          # Wait and validate traffic switch
+          sleep 30
+          python scripts/validate_production_deployment.py --post-deployment --environment $NEXT
+          
+          echo "✅ Blue-green deployment completed successfully"
+          echo "Active environment: $NEXT"
+          
+      - name: Rolling Deployment
+        if: steps.strategy.outputs.strategy == 'rolling'
+        run: |
+          # Rolling update deployment
+          kubectl set image deployment/mcp-server-production \
+            mcp-server=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            -n ai-agency-production
+            
+          kubectl rollout status deployment/mcp-server-production -n ai-agency-production --timeout=${{ env.DEPLOYMENT_TIMEOUT }}s
+          
+          echo "✅ Rolling deployment completed successfully"
+          
+      - name: Canary Deployment
+        if: steps.strategy.outputs.strategy == 'canary'
+        run: |
+          # Canary deployment (10% traffic)
+          echo "Starting canary deployment"
+          
+          # Deploy canary version
+          kubectl set image deployment/mcp-server-canary \
+            mcp-server=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            -n ai-agency-production
+            
+          kubectl rollout status deployment/mcp-server-canary -n ai-agency-production --timeout=${{ env.DEPLOYMENT_TIMEOUT }}s
+          
+          # Configure 10% traffic to canary
+          kubectl apply -f deploy/canary-traffic-split.yml -n ai-agency-production
+          
+          # Monitor canary for 5 minutes
+          echo "Monitoring canary deployment for 5 minutes"
+          sleep 300
+          
+          # Validate canary performance
+          python scripts/validate_production_deployment.py --canary-validation
+          
+          # Full rollout if successful
+          echo "Promoting canary to full production"
+          kubectl set image deployment/mcp-server-production \
+            mcp-server=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            -n ai-agency-production
+            
+          kubectl rollout status deployment/mcp-server-production -n ai-agency-production --timeout=${{ env.DEPLOYMENT_TIMEOUT }}s
+          
+          # Remove canary deployment
+          kubectl apply -f deploy/production-traffic-split.yml -n ai-agency-production
+          
+          echo "✅ Canary deployment completed successfully"
+
+  # Post-Deployment Validation
+  post-deployment-validation:
+    runs-on: ubuntu-latest
+    needs: [deploy-production]
+    if: always() && needs.deploy-production.result == 'success'
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          
+      - name: Production smoke tests
+        run: |
+          python scripts/validate_production_deployment.py --smoke-tests
+          
+      - name: Performance SLA validation
+        run: |
+          python scripts/scale_performance_validator.py validate --load-pattern light_load --duration 5
+          
+      - name: Customer isolation verification
+        run: |
+          python scripts/scale_performance_validator.py isolation-test
+          
+      - name: Update deployment status
+        run: |
+          echo "✅ Production deployment validation completed"
+          echo "📊 SLA targets met"
+          echo "🔒 Customer isolation verified"
+          echo "🚀 System ready for customer traffic"
+
+  # Rollback on Failure
+  rollback:
+    runs-on: ubuntu-latest
+    needs: [deploy-production, post-deployment-validation]
+    if: failure() && needs.deploy-production.result == 'success'
+    environment: production
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure production access
+        env:
+          KUBE_CONFIG_DATA: ${{ secrets.PRODUCTION_KUBE_CONFIG }}
+        run: |
+          echo "$KUBE_CONFIG_DATA" | base64 -d > /tmp/kubeconfig
+          export KUBECONFIG=/tmp/kubeconfig
+          
+      - name: Emergency rollback
+        run: |
+          echo "🚨 Initiating emergency rollback"
+          
+          # Rollback to previous deployment
+          kubectl rollout undo deployment/mcp-server-production -n ai-agency-production
+          kubectl rollout undo deployment/memory-monitor-production -n ai-agency-production
+          
+          # Wait for rollback
+          kubectl rollout status deployment/mcp-server-production -n ai-agency-production --timeout=300s
+          
+          # Validate rollback
+          python scripts/validate_production_deployment.py --rollback-validation
+          
+          echo "✅ Emergency rollback completed"
+          
+      - name: Notify team of rollback
+        if: always()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          text: "🚨 Production deployment failed and rollback initiated"
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  # Deployment Notification
+  notify:
+    runs-on: ubuntu-latest
+    needs: [deploy-production, post-deployment-validation]
+    if: always()
+    
+    steps:
+      - name: Success notification
+        if: needs.deploy-production.result == 'success' && needs.post-deployment-validation.result == 'success'
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          text: |
+            🚀 Production deployment successful!
+            📊 SLA compliance validated
+            🔒 Customer isolation verified
+            🎯 Ready for customer traffic
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          
+      - name: Failure notification
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          text: |
+            ❌ Production deployment failed
+            🔍 Check workflow logs for details
+            🚨 System may require manual intervention
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

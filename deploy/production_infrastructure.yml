@@ -1,0 +1,345 @@
+# Production Infrastructure as Code Configuration
+# AI Agency Platform - Customer Provisioning Infrastructure
+
+# This file defines the production infrastructure template for automated customer provisioning.
+# It supports rapid deployment, scaling, and management of per-customer isolated environments.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: production-infrastructure-config
+  namespace: ai-agency-platform
+data:
+  # Infrastructure deployment configuration
+  deployment_strategy: "blue-green"  # blue-green, rolling, canary
+  auto_scaling_enabled: true
+  monitoring_enabled: true
+  backup_enabled: true
+  security_scanning_enabled: true
+  
+  # Customer tier configurations
+  tier_configs: |
+    starter:
+      cpu_limit: "1.0"
+      memory_limit: "2Gi"
+      storage_limit: "10Gi"
+      rate_limit_rpm: 1000
+      concurrent_connections: 10
+      sla_target_ms: 1000
+      
+    professional:
+      cpu_limit: "2.0" 
+      memory_limit: "4Gi"
+      storage_limit: "50Gi"
+      rate_limit_rpm: 5000
+      concurrent_connections: 25
+      sla_target_ms: 500
+      
+    enterprise:
+      cpu_limit: "4.0"
+      memory_limit: "8Gi"
+      storage_limit: "200Gi"
+      rate_limit_rpm: 20000
+      concurrent_connections: 100
+      sla_target_ms: 200
+
+  # Port allocation strategy
+  port_allocation: |
+    base_port: 30000
+    port_ranges:
+      mcp_server: [30000, 30999]      # 1000 customers
+      postgres: [31000, 31999]
+      redis: [32000, 32999] 
+      qdrant: [33000, 33999]
+      neo4j: [34000, 34999]
+      neo4j_bolt: [35000, 35999]
+      memory_monitor: [36000, 36999]
+      security_service: [37000, 37999]
+    
+  # Security configuration
+  security_config: |
+    network_isolation: per_customer_vpc
+    data_encryption: aes_256
+    secrets_management: hashicorp_vault
+    compliance_standards: [gdpr, soc2, hipaa]
+    audit_logging: enabled
+    vulnerability_scanning: daily
+    
+  # Monitoring and observability
+  monitoring_config: |
+    prometheus_enabled: true
+    grafana_dashboards: true
+    alert_manager: true
+    log_aggregation: elasticsearch
+    distributed_tracing: jaeger
+    metrics_retention_days: 90
+    
+  # Backup and disaster recovery
+  backup_config: |
+    backup_frequency: hourly
+    retention_policy: 
+      daily: 30_days
+      weekly: 12_weeks  
+      monthly: 12_months
+    backup_encryption: true
+    cross_region_replication: true
+    rto_target_minutes: 15  # Recovery Time Objective
+    rpo_target_minutes: 60  # Recovery Point Objective
+
+---
+# Customer Provisioning Template
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: customer-provisioning-orchestrator
+  namespace: ai-agency-platform
+spec:
+  replicas: 3  # High availability
+  selector:
+    matchLabels:
+      app: customer-provisioning-orchestrator
+  template:
+    metadata:
+      labels:
+        app: customer-provisioning-orchestrator
+    spec:
+      containers:
+      - name: orchestrator
+        image: ai-agency-platform/provisioning-orchestrator:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PROVISIONING_MODE
+          value: "production"
+        - name: TARGET_PROVISIONING_TIME
+          value: "30"  # 30 second SLA
+        - name: MAX_CONCURRENT_PROVISIONING
+          value: "10"
+        - name: MONITORING_ENABLED
+          value: "true"
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: config
+          mountPath: /app/config
+        - name: customer-data
+          mountPath: /app/customer-data
+      volumes:
+      - name: config
+        configMap:
+          name: production-infrastructure-config
+      - name: customer-data
+        persistentVolumeClaim:
+          claimName: customer-data-pvc
+
+---
+# Performance Monitoring Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: performance-monitor
+  namespace: ai-agency-platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: performance-monitor
+  template:
+    metadata:
+      labels:
+        app: performance-monitor
+    spec:
+      containers:
+      - name: monitor
+        image: ai-agency-platform/performance-monitor:latest
+        ports:
+        - containerPort: 9090  # Metrics
+        - containerPort: 8080  # API
+        env:
+        - name: SLA_MEMORY_RECALL_MS
+          value: "500"
+        - name: SLA_CONVERSATION_PROCESSING_MS
+          value: "2000"
+        - name: ALERT_THRESHOLD_PERCENT
+          value: "80"
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+
+---
+# Load Balancer for Customer Access
+apiVersion: v1
+kind: Service
+metadata:
+  name: customer-load-balancer
+  namespace: ai-agency-platform
+spec:
+  type: LoadBalancer
+  selector:
+    app: customer-proxy
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+  - name: https
+    port: 443
+    targetPort: 8443
+
+---
+# Customer Proxy for Traffic Routing
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: customer-proxy
+  namespace: ai-agency-platform
+spec:
+  replicas: 5  # Handle high throughput
+  selector:
+    matchLabels:
+      app: customer-proxy
+  template:
+    metadata:
+      labels:
+        app: customer-proxy
+    spec:
+      containers:
+      - name: proxy
+        image: nginx:1.21-alpine
+        ports:
+        - containerPort: 8080
+        - containerPort: 8443
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+        - name: ssl-certs
+          mountPath: /etc/ssl/certs
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: nginx-proxy-config
+      - name: ssl-certs
+        secret:
+          secretName: ssl-certificates
+
+---
+# Persistent Volume for Customer Data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: customer-data-pvc
+  namespace: ai-agency-platform
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Ti  # 1TB for customer data
+  storageClassName: high-performance-ssd
+
+---
+# Horizontal Pod Autoscaler for Customer Services
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: customer-service-hpa
+  namespace: ai-agency-platform
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: customer-provisioning-orchestrator
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+---
+# Network Policy for Customer Isolation
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: customer-isolation-policy
+  namespace: ai-agency-platform
+spec:
+  podSelector:
+    matchLabels:
+      tier: customer-service
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: customer-proxy
+    ports:
+    - protocol: TCP
+      port: 3000
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: shared-services
+    ports:
+    - protocol: TCP
+      port: 5432  # PostgreSQL
+    - protocol: TCP
+      port: 6379  # Redis
+    - protocol: TCP
+      port: 6333  # Qdrant
+
+---
+# Service Monitor for Prometheus
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ai-agency-platform-monitor
+  namespace: ai-agency-platform
+spec:
+  selector:
+    matchLabels:
+      monitoring: enabled
+  endpoints:
+  - port: metrics
+    interval: 15s
+    path: /metrics
