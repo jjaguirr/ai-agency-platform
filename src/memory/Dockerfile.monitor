@@ -36,7 +36,7 @@ RUN groupadd -r monitor && useradd -r -g monitor -m -d /home/monitor -s /sbin/no
 
 # Copy application code
 COPY mem0_manager.py .
-COPY memory_performance_monitor.py .
+COPY performance_monitor.py .
 
 # Create directories and set permissions
 RUN mkdir -p /app/logs /app/config /app/data && \
@@ -65,7 +65,7 @@ RUN echo '#!/bin/bash' > /app/start_monitor.sh && \
     echo 'until curl -f http://qdrant-$CUSTOMER_ID:6333/health >/dev/null 2>&1; do sleep 2; done' >> /app/start_monitor.sh && \
     echo 'until nc -z neo4j-$CUSTOMER_ID 7687 2>/dev/null; do sleep 2; done' >> /app/start_monitor.sh && \
     echo 'echo "✅ All dependencies ready"' >> /app/start_monitor.sh && \
-    echo 'exec python memory_performance_monitor.py' >> /app/start_monitor.sh && \
+    echo 'exec python performance_monitor.py' >> /app/start_monitor.sh && \
     chmod +x /app/start_monitor.sh
 
 # Switch to non-root user

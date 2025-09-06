@@ -25,9 +25,9 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 import structlog
 
-from performance_monitor import GlobalPerformanceMonitor, global_monitor
-from isolation_validator import MemoryIsolationValidator
-from mem0_manager import EAMemoryManager
+from .performance_monitor import GlobalPerformanceMonitor, global_monitor
+from .isolation_validator import MemoryIsolationValidator
+from .mem0_manager import EAMemoryManager
 
 # Configure structured logging
 structlog.configure(
