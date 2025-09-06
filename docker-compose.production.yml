@@ -1,23 +1,28 @@
 # AI Agency Platform - Production Per-Customer Infrastructure Template
-# This template is used by the Customer Provisioning Orchestrator to deploy isolated customer environments
-# Each customer gets a dedicated stack: MCP server + PostgreSQL + Redis + Qdrant + Neo4j + Memory Monitor
+# This template is used by the Infrastructure Orchestrator with intelligent port allocation
+# Each customer gets a dedicated stack with complete isolation and dynamic port management
 #
 # Usage: 
 # export CUSTOMER_ID=customer_12345
 # export CUSTOMER_TIER=professional  
 # docker compose -f docker-compose.production.yml up -d
 #
-# Variables replaced by provisioning orchestrator:
+# Variables dynamically allocated by Infrastructure Orchestrator:
 # ${CUSTOMER_ID} - Unique customer identifier
-# ${MCP_PORT} - Dedicated MCP server port (30000-30999)
-# ${POSTGRES_PORT} - Dedicated PostgreSQL port (31000-31999)  
-# ${REDIS_PORT} - Dedicated Redis port (32000-32999)
-# ${QDRANT_PORT} - Dedicated Qdrant port (33000-33999)
-# ${NEO4J_PORT} - Dedicated Neo4j port (34000-34999)
-# ${MEMORY_MONITOR_PORT} - Dedicated Memory Monitor port (35000-35999)
+# ${MCP_PORT} - Auto-allocated MCP server port (30000-30999)
+# ${POSTGRES_PORT} - Auto-allocated PostgreSQL port (31000-31999)  
+# ${REDIS_PORT} - Auto-allocated Redis port (32000-32999)
+# ${QDRANT_PORT} - Auto-allocated Qdrant HTTP port (33000-33999)
+# ${QDRANT_GRPC_PORT} - Auto-allocated Qdrant gRPC port (34000-34999)
+# ${NEO4J_PORT} - Auto-allocated Neo4j HTTP port (35000-35999)
+# ${NEO4J_BOLT_PORT} - Auto-allocated Neo4j Bolt port (36000-36999)
+# ${MEMORY_MONITOR_PORT} - Auto-allocated Memory Monitor port (37000-37999)
+# ${SECURITY_API_PORT} - Auto-allocated Security API port (38000-38999)
 # ${TIER_MEMORY_LIMIT} - Memory limit based on customer tier
 # ${TIER_CPU_LIMIT} - CPU limit based on customer tier
-# ${SECURE_PASSWORD} - Generated secure password for databases
+# ${SECURE_PASSWORD} - Auto-generated secure password for databases
+# ${JWT_SECRET} - Auto-generated JWT secret
+# ${ENCRYPTION_KEY} - Auto-generated encryption key
 
 
 services:
