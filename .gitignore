@@ -160,3 +160,12 @@ docker-compose.phase1.yml
 # Docker volumes and database data - NEVER COMMIT THESE
 data/
 data/**/*
+
+# Go binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+customer-provisioner
+deploy/provisioning/customer-provisioner
