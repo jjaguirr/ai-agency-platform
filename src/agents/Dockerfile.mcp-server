@@ -1,0 +1,110 @@
+# AI Agency MCP Server - Production Ready
+# Per-customer MCP server with EA integration and complete isolation
+# Supports all MCP tools with customer-specific configurations
+
+FROM node:20-alpine
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apk add --no-cache \
+    curl \
+    bash \
+    python3 \
+    py3-pip \
+    postgresql-client \
+    redis \
+    && rm -rf /var/cache/apk/*
+
+# Create non-root user for security
+RUN addgroup -g 1001 -S mcp && \
+    adduser -S mcp -u 1001 -G mcp -h /app -s /bin/bash
+
+# Copy package.json first for better caching
+COPY package*.json ./
+RUN npm ci --only=production && npm cache clean --force
+
+# Install Python dependencies for Mem0 and memory integration
+COPY requirements.txt ./
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+COPY ../memory/mem0_manager.py ./memory/
+COPY ../infrastructure/ ./infrastructure/
+
+# Create necessary directories and set permissions
+RUN mkdir -p /app/data /app/workflows /app/config /app/logs /app/memory && \
+    chown -R mcp:mcp /app
+
+# Create health check script
+RUN echo '#!/bin/bash' > /app/health_check.sh && \
+    echo 'curl -f http://localhost:3000/health >/dev/null 2>&1' >> /app/health_check.sh && \
+    echo 'if [ $? -eq 0 ]; then' >> /app/health_check.sh && \
+    echo '  echo "✅ MCP Server is healthy"' >> /app/health_check.sh && \
+    echo '  exit 0' >> /app/health_check.sh && \
+    echo 'else' >> /app/health_check.sh && \
+    echo '  echo "❌ MCP Server is unhealthy"' >> /app/health_check.sh && \
+    echo '  exit 1' >> /app/health_check.sh && \
+    echo 'fi' >> /app/health_check.sh && \
+    chmod +x /app/health_check.sh
+
+# Create startup script with dependency waiting
+RUN echo '#!/bin/bash' > /app/start_mcp.sh && \
+    echo 'set -e' >> /app/start_mcp.sh && \
+    echo 'echo "🚀 Starting MCP Server for Customer: $CUSTOMER_ID ($CUSTOMER_TIER)"' >> /app/start_mcp.sh && \
+    echo 'echo "⏳ Waiting for dependencies..."' >> /app/start_mcp.sh && \
+    echo 'until pg_isready -h postgres-$CUSTOMER_ID -p 5432 -U customer_$CUSTOMER_ID 2>/dev/null; do' >> /app/start_mcp.sh && \
+    echo '  echo "  Waiting for PostgreSQL..."' >> /app/start_mcp.sh && \
+    echo '  sleep 2' >> /app/start_mcp.sh && \
+    echo 'done' >> /app/start_mcp.sh && \
+    echo 'until redis-cli -h redis-$CUSTOMER_ID -p 6379 ping 2>/dev/null | grep -q PONG; do' >> /app/start_mcp.sh && \
+    echo '  echo "  Waiting for Redis..."' >> /app/start_mcp.sh && \
+    echo '  sleep 2' >> /app/start_mcp.sh && \
+    echo 'done' >> /app/start_mcp.sh && \
+    echo 'until curl -f http://qdrant-$CUSTOMER_ID:6333/health >/dev/null 2>&1; do' >> /app/start_mcp.sh && \
+    echo '  echo "  Waiting for Qdrant..."' >> /app/start_mcp.sh && \
+    echo '  sleep 2' >> /app/start_mcp.sh && \
+    echo 'done' >> /app/start_mcp.sh && \
+    echo 'until nc -z neo4j-$CUSTOMER_ID 7687 2>/dev/null; do' >> /app/start_mcp.sh && \
+    echo '  echo "  Waiting for Neo4j..."' >> /app/start_mcp.sh && \
+    echo '  sleep 2' >> /app/start_mcp.sh && \
+    echo 'done' >> /app/start_mcp.sh && \
+    echo 'echo "✅ All dependencies ready"' >> /app/start_mcp.sh && \
+    echo '' >> /app/start_mcp.sh && \
+    echo '# Initialize customer Mem0 memory system' >> /app/start_mcp.sh && \
+    echo 'echo "🧠 Initializing Memory System..."' >> /app/start_mcp.sh && \
+    echo 'python3 -c "' >> /app/start_mcp.sh && \
+    echo 'import asyncio' >> /app/start_mcp.sh && \
+    echo 'from memory.mem0_manager import EAMemoryManager' >> /app/start_mcp.sh && \
+    echo 'async def init():' >> /app/start_mcp.sh && \
+    echo '  manager = EAMemoryManager(\"$CUSTOMER_ID\")' >> /app/start_mcp.sh && \
+    echo '  await manager.store_business_context({\"status\": \"initialized\"}, \"startup_$CUSTOMER_ID\")' >> /app/start_mcp.sh && \
+    echo '  await manager.close()' >> /app/start_mcp.sh && \
+    echo '  print(\"Memory system initialized\")' >> /app/start_mcp.sh && \
+    echo 'asyncio.run(init())' >> /app/start_mcp.sh && \
+    echo '"' >> /app/start_mcp.sh && \
+    echo '' >> /app/start_mcp.sh && \
+    echo '# Start MCP server with EA integration' >> /app/start_mcp.sh && \
+    echo 'echo "🎯 Starting MCP Server with EA Integration..."' >> /app/start_mcp.sh && \
+    echo 'exec node server.js' >> /app/start_mcp.sh && \
+    chmod +x /app/start_mcp.sh
+
+# Switch to non-root user
+USER mcp
+
+# Set environment variables
+ENV NODE_ENV=production
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+# Expose MCP server port and metrics port
+EXPOSE 3000 9091
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
+  CMD /app/health_check.sh
+
+# Start the MCP server with dependency waiting
+CMD ["/app/start_mcp.sh"]

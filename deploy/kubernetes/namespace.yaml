@@ -1,0 +1,109 @@
+# AI Agency Platform - Production Namespace
+# Per-customer isolation with enterprise resource management
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    environment: production
+    tier: enterprise
+  annotations:
+    kubernetes.io/managed-by: "ai-agency-platform"
+    description: "Production namespace for AI Agency Platform with per-customer isolation"
+    
+---
+# Resource Quotas for Production Environment
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ai-agency-resource-quota
+  namespace: ai-agency-production
+spec:
+  hard:
+    # CPU and Memory limits for 500+ customers
+    requests.cpu: "200"      # 200 vCPUs reserved
+    requests.memory: "400Gi"  # 400GB RAM reserved
+    limits.cpu: "500"        # 500 vCPUs max
+    limits.memory: "1000Gi"   # 1TB RAM max
+    
+    # Storage limits
+    requests.storage: "10Ti"  # 10TB persistent storage
+    
+    # Object limits
+    pods: "5000"              # Max 5,000 pods (10 per customer avg)
+    services: "1000"          # Max 1,000 services
+    secrets: "2000"           # Max 2,000 secrets
+    configmaps: "2000"        # Max 2,000 configmaps
+    persistentvolumeclaims: "1000"  # Max 1,000 PVCs
+    
+---
+# Network Policies for Customer Isolation
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: customer-isolation-policy
+  namespace: ai-agency-production
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    # Only allow traffic from same customer namespace
+    - podSelector:
+        matchLabels:
+          customer-id: "{{ .CustomerID }}"
+    # Allow traffic from system services
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    # Allow traffic from monitoring
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+  egress:
+  - {} # Allow all outbound traffic for now
+  
+---
+# RBAC for Customer Isolation
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: ai-agency-production
+  name: customer-pod-manager
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps", "secrets"]
+  verbs: ["get", "list", "create", "update", "patch", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "create", "update", "patch", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: customer-pod-manager-binding
+  namespace: ai-agency-production
+subjects:
+- kind: ServiceAccount
+  name: customer-provisioner
+  namespace: ai-agency-production
+roleRef:
+  kind: Role
+  name: customer-pod-manager
+  apiGroup: rbac.authorization.k8s.io
+  
+---
+# Service Account for Customer Provisioning
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: customer-provisioner
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: provisioner

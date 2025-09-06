@@ -1,0 +1,319 @@
+# Per-Customer MCP Server Deployment Template
+# Provides complete isolation with dedicated resources per customer
+# Target: <30 second provisioning time from purchase to working EA
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: customer-{{ .CustomerID }}-mcp-server
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: mcp-server
+    customer-id: "{{ .CustomerID }}"
+    tier: "{{ .CustomerTier }}"
+    version: "{{ .Version }}"
+  annotations:
+    deployment.kubernetes.io/revision: "1"
+    ai-agency.com/provisioned-at: "{{ .ProvisionedAt }}"
+    ai-agency.com/customer-email: "{{ .CustomerEmail }}"
+spec:
+  replicas: {{ if eq .CustomerTier "enterprise" }}3{{ else }}1{{ end }}
+  selector:
+    matchLabels:
+      app: ai-agency-platform
+      component: mcp-server
+      customer-id: "{{ .CustomerID }}"
+  template:
+    metadata:
+      labels:
+        app: ai-agency-platform
+        component: mcp-server
+        customer-id: "{{ .CustomerID }}"
+        tier: "{{ .CustomerTier }}"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: customer-provisioner
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+      - name: mcp-server
+        image: ai-agency-platform/mcp-server:{{ .Version }}
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 9090
+          name: metrics
+        env:
+        - name: CUSTOMER_ID
+          value: "{{ .CustomerID }}"
+        - name: CUSTOMER_TIER
+          value: "{{ .CustomerTier }}"
+        - name: NODE_ENV
+          value: "production"
+        - name: LOG_LEVEL
+          value: "info"
+        
+        # Database Configuration - Customer Isolated
+        - name: POSTGRES_URL
+          valueFrom:
+            secretKeyRef:
+              name: customer-{{ .CustomerID }}-postgres-config
+              key: connection_url
+        - name: POSTGRES_DATABASE
+          value: "customer_{{ .CustomerID }}_db"
+        
+        # Redis Configuration - Customer DB Isolation
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: customer-{{ .CustomerID }}-redis-config
+              key: connection_url
+        - name: REDIS_DB
+          value: "{{ .RedisDB }}"
+        
+        # Qdrant Vector Store - Customer Collection
+        - name: QDRANT_URL
+          valueFrom:
+            secretKeyRef:
+              name: customer-{{ .CustomerID }}-qdrant-config
+              key: connection_url
+        - name: QDRANT_COLLECTION
+          value: "customer_{{ .CustomerID }}_memories"
+        
+        # Neo4j Graph Store - Customer Database
+        - name: NEO4J_URL
+          valueFrom:
+            secretKeyRef:
+              name: customer-{{ .CustomerID }}-neo4j-config
+              key: connection_url
+        - name: NEO4J_DATABASE
+          value: "customer_{{ .CustomerID }}_graph"
+        
+        # Mem0 Configuration
+        - name: MEM0_USER_ID
+          value: "customer_{{ .CustomerID }}"
+        - name: MEM0_AGENT_ID
+          value: "ea_{{ .CustomerID }}"
+        
+        # OpenAI API Configuration
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-provider-secrets
+              key: openai_api_key
+        
+        # Security and Monitoring
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: customer-{{ .CustomerID }}-secrets
+              key: jwt_secret
+        - name: LLAMAGUARD_ENABLED
+          value: "true"
+        - name: MONITORING_ENABLED
+          value: "true"
+        
+        resources:
+          requests:
+            cpu: {{ if eq .CustomerTier "enterprise" }}"1000m"{{ else }}"500m"{{ end }}
+            memory: {{ if eq .CustomerTier "enterprise" }}"2Gi"{{ else }}"1Gi"{{ end }}
+          limits:
+            cpu: {{ if eq .CustomerTier "enterprise" }}"2000m"{{ else }}"1000m"{{ end }}
+            memory: {{ if eq .CustomerTier "enterprise" }}"4Gi"{{ else }}"2Gi"{{ end }}
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+        
+        # Startup probe for faster initial deployment
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 2
+          timeoutSeconds: 1
+          failureThreshold: 15  # Allow 30 seconds for startup
+        
+        volumeMounts:
+        - name: customer-data
+          mountPath: /app/data
+        - name: logs
+          mountPath: /app/logs
+        - name: config
+          mountPath: /app/config
+          readOnly: true
+      
+      # Customer Data Storage
+      volumes:
+      - name: customer-data
+        persistentVolumeClaim:
+          claimName: customer-{{ .CustomerID }}-data
+      - name: logs
+        emptyDir: {}
+      - name: config
+        configMap:
+          name: customer-{{ .CustomerID }}-config
+      
+      # Pod Scheduling and Affinity
+      affinity:
+        # Prefer different nodes for enterprise customers
+        {{ if eq .CustomerTier "enterprise" }}
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: customer-id
+                  operator: In
+                  values:
+                  - "{{ .CustomerID }}"
+              topologyKey: kubernetes.io/hostname
+        {{ end }}
+        
+        # Node affinity for customer tiers
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: node-tier
+                operator: In
+                values:
+                - "{{ .CustomerTier }}"
+      
+      tolerations:
+      - key: "customer-workload"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      
+      # Termination and cleanup
+      terminationGracePeriodSeconds: 30
+      restartPolicy: Always
+      
+      # DNS and networking
+      dnsPolicy: ClusterFirst
+      
+---
+# Customer Service for Load Balancing
+apiVersion: v1
+kind: Service
+metadata:
+  name: customer-{{ .CustomerID }}-mcp-service
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: mcp-server
+    customer-id: "{{ .CustomerID }}"
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+    service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  - port: 9090
+    targetPort: 9090
+    protocol: TCP
+    name: metrics
+  selector:
+    app: ai-agency-platform
+    component: mcp-server
+    customer-id: "{{ .CustomerID }}"
+    
+---
+# Customer Persistent Volume Claim
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: customer-{{ .CustomerID }}-data
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    customer-id: "{{ .CustomerID }}"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ if eq .CustomerTier "enterprise" }}"50Gi"{{ else }}"10Gi"{{ end }}
+  storageClassName: {{ if eq .CustomerTier "enterprise" }}"gp3-encrypted"{{ else }}"gp3"{{ end }}
+  
+---
+# Customer ConfigMap for Environment Specific Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: customer-{{ .CustomerID }}-config
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    customer-id: "{{ .CustomerID }}"
+data:
+  customer.json: |
+    {
+      "customer_id": "{{ .CustomerID }}",
+      "tier": "{{ .CustomerTier }}",
+      "provisioned_at": "{{ .ProvisionedAt }}",
+      "features": {{ .Features | toJson }},
+      "agent_config": {
+        "max_agents": {{ if eq .CustomerTier "enterprise" }}50{{ else }}10{{ end }},
+        "memory_limit_mb": {{ if eq .CustomerTier "enterprise" }}4096{{ else }}1024{{ end }},
+        "ai_model_access": {{ .AIModelAccess | toJson }}
+      },
+      "sla_config": {
+        "response_time_ms": {{ if eq .CustomerTier "enterprise" }}200{{ else }}500{{ end }},
+        "uptime_target": {{ if eq .CustomerTier "enterprise" }}"99.95"{{ else }}"99.9"{{ end }}
+      }
+    }
+    
+  performance.yaml: |
+    performance:
+      redis_timeout: 0.002  # 2ms
+      mem0_timeout: 0.5     # 500ms SLA
+      postgres_timeout: 0.1 # 100ms
+      max_concurrent_requests: {{ if eq .CustomerTier "enterprise" }}100{{ else }}50{{ end }}
+    
+    scaling:
+      min_replicas: 1
+      max_replicas: {{ if eq .CustomerTier "enterprise" }}5{{ else }}3{{ end }}
+      target_cpu_utilization: 70
+      target_memory_utilization: 80
+  
+  logging.yaml: |
+    logging:
+      level: {{ if eq .CustomerTier "enterprise" }}"debug"{{ else }}"info"{{ end }}
+      format: "json"
+      audit_enabled: true
+      retention_days: {{ if eq .CustomerTier "enterprise" }}365{{ else }}90{{ end }}
+    
+    metrics:
+      enabled: true
+      prometheus_port: 9090
+      custom_metrics: {{ .CustomMetrics | toJson }}

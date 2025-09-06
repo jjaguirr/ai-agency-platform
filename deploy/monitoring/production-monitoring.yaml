@@ -1,0 +1,669 @@
+# Production Monitoring Stack for AI Agency Platform
+# Comprehensive monitoring for 500+ customers with per-customer metrics
+
+---
+# Prometheus Server for Metrics Collection
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus-server
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: prometheus
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ai-agency-platform
+      component: prometheus
+  template:
+    metadata:
+      labels:
+        app: ai-agency-platform
+        component: prometheus
+    spec:
+      serviceAccountName: prometheus-server
+      containers:
+      - name: prometheus
+        image: prom/prometheus:v2.45.0
+        args:
+          - '--config.file=/etc/prometheus/prometheus.yml'
+          - '--storage.tsdb.path=/prometheus/'
+          - '--web.console.libraries=/etc/prometheus/console_libraries'
+          - '--web.console.templates=/etc/prometheus/consoles'
+          - '--storage.tsdb.retention.time=30d'
+          - '--storage.tsdb.retention.size=50GB'
+          - '--web.enable-lifecycle'
+          - '--web.enable-admin-api'
+          - '--query.max-concurrency=100'
+          - '--query.max-samples=50000000'
+        ports:
+        - containerPort: 9090
+          name: web
+        resources:
+          requests:
+            cpu: "2000m"
+            memory: "8Gi"
+          limits:
+            cpu: "4000m"
+            memory: "16Gi"
+        volumeMounts:
+        - name: prometheus-config
+          mountPath: /etc/prometheus
+        - name: prometheus-data
+          mountPath: /prometheus
+        livenessProbe:
+          httpGet:
+            path: /-/healthy
+            port: 9090
+          initialDelaySeconds: 30
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: 9090
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: prometheus-config
+        configMap:
+          name: prometheus-config
+      - name: prometheus-data
+        persistentVolumeClaim:
+          claimName: prometheus-data
+
+---
+# Grafana for Metrics Visualization
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: grafana
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ai-agency-platform
+      component: grafana
+  template:
+    metadata:
+      labels:
+        app: ai-agency-platform
+        component: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:10.0.0
+        env:
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: grafana-secrets
+              key: admin_password
+        - name: GF_DATABASE_TYPE
+          value: "postgres"
+        - name: GF_DATABASE_HOST
+          value: "postgres-primary.ai-agency-production.svc.cluster.local:5432"
+        - name: GF_DATABASE_NAME
+          value: "grafana"
+        - name: GF_DATABASE_USER
+          valueFrom:
+            secretKeyRef:
+              name: grafana-secrets
+              key: db_user
+        - name: GF_DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: grafana-secrets
+              key: db_password
+        - name: GF_INSTALL_PLUGINS
+          value: "grafana-piechart-panel,grafana-worldmap-panel,grafana-clock-panel"
+        - name: GF_FEATURE_TOGGLES_ENABLE
+          value: "publicDashboards"
+        ports:
+        - containerPort: 3000
+          name: grafana
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+        volumeMounts:
+        - name: grafana-data
+          mountPath: /var/lib/grafana
+        - name: grafana-provisioning
+          mountPath: /etc/grafana/provisioning
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 60
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 5
+      volumes:
+      - name: grafana-data
+        persistentVolumeClaim:
+          claimName: grafana-data
+      - name: grafana-provisioning
+        configMap:
+          name: grafana-provisioning
+
+---
+# AlertManager for Alert Management
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: alertmanager
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ai-agency-platform
+      component: alertmanager
+  template:
+    metadata:
+      labels:
+        app: ai-agency-platform
+        component: alertmanager
+    spec:
+      containers:
+      - name: alertmanager
+        image: prom/alertmanager:v0.25.0
+        args:
+          - '--config.file=/etc/alertmanager/alertmanager.yml'
+          - '--storage.path=/alertmanager'
+          - '--data.retention=120h'
+          - '--cluster.listen-address=0.0.0.0:9094'
+          - '--cluster.peer=alertmanager-0.alertmanager.ai-agency-production.svc.cluster.local:9094'
+          - '--cluster.peer=alertmanager-1.alertmanager.ai-agency-production.svc.cluster.local:9094'
+          - '--cluster.peer=alertmanager-2.alertmanager.ai-agency-production.svc.cluster.local:9094'
+        ports:
+        - containerPort: 9093
+          name: web
+        - containerPort: 9094
+          name: cluster
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        volumeMounts:
+        - name: alertmanager-config
+          mountPath: /etc/alertmanager
+        - name: alertmanager-data
+          mountPath: /alertmanager
+        livenessProbe:
+          httpGet:
+            path: /-/healthy
+            port: 9093
+          initialDelaySeconds: 30
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: 9093
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: alertmanager-config
+        configMap:
+          name: alertmanager-config
+      - name: alertmanager-data
+        persistentVolumeClaim:
+          claimName: alertmanager-data
+
+---
+# Cost Tracking and Analytics Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cost-analytics
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: cost-analytics
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ai-agency-platform
+      component: cost-analytics
+  template:
+    metadata:
+      labels:
+        app: ai-agency-platform
+        component: cost-analytics
+    spec:
+      containers:
+      - name: cost-analytics
+        image: ai-agency-platform/cost-analytics:v1.0.0
+        env:
+        - name: POSTGRES_URL
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secrets
+              key: connection_url
+        - name: PROMETHEUS_URL
+          value: "http://prometheus-server.ai-agency-production.svc.cluster.local:9090"
+        - name: REDIS_URL
+          value: "redis://redis-cluster.ai-agency-production.svc.cluster.local:6379"
+        - name: COST_TRACKING_INTERVAL
+          value: "300" # 5 minutes
+        - name: AI_PROVIDER_APIS
+          valueFrom:
+            secretKeyRef:
+              name: ai-provider-secrets
+              key: api_endpoints
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 9090
+          name: metrics
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+        volumeMounts:
+        - name: cost-data
+          mountPath: /app/data
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: cost-data
+        persistentVolumeClaim:
+          claimName: cost-analytics-data
+
+---
+# Services for Monitoring Components
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-server
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: prometheus
+spec:
+  ports:
+  - port: 9090
+    targetPort: 9090
+    name: web
+  selector:
+    app: ai-agency-platform
+    component: prometheus
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: grafana
+spec:
+  ports:
+  - port: 3000
+    targetPort: 3000
+    name: grafana
+  selector:
+    app: ai-agency-platform
+    component: grafana
+  type: LoadBalancer
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: alertmanager
+spec:
+  ports:
+  - port: 9093
+    targetPort: 9093
+    name: web
+  - port: 9094
+    targetPort: 9094
+    name: cluster
+  selector:
+    app: ai-agency-platform
+    component: alertmanager
+  type: ClusterIP
+  clusterIP: None  # Headless service for clustering
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cost-analytics
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: cost-analytics
+spec:
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: http
+  - port: 9090
+    targetPort: 9090
+    name: metrics
+  selector:
+    app: ai-agency-platform
+    component: cost-analytics
+  type: ClusterIP
+
+---
+# Persistent Volume Claims
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data
+  namespace: ai-agency-production
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: gp3-encrypted
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-data
+  namespace: ai-agency-production
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: gp3
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: alertmanager-data
+  namespace: ai-agency-production
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: gp3
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cost-analytics-data
+  namespace: ai-agency-production
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: gp3
+
+---
+# ConfigMap for Prometheus Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: ai-agency-production
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'ai-agency-production'
+
+    rule_files:
+      - "/etc/prometheus/rules/*.yml"
+
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+              - alertmanager.ai-agency-production.svc.cluster.local:9093
+
+    scrape_configs:
+      # Kubernetes API Server
+      - job_name: 'kubernetes-apiservers'
+        kubernetes_sd_configs:
+        - role: endpoints
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+          action: keep
+          regex: default;kubernetes;https
+
+      # Kubernetes Nodes
+      - job_name: 'kubernetes-nodes'
+        kubernetes_sd_configs:
+        - role: node
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+        - action: labelmap
+          regex: __meta_kubernetes_node_label_(.+)
+
+      # Customer MCP Servers
+      - job_name: 'customer-mcp-servers'
+        kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            names:
+            - ai-agency-production
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_service_label_component]
+          action: keep
+          regex: mcp-server
+        - source_labels: [__meta_kubernetes_service_label_customer_id]
+          target_label: customer_id
+        - source_labels: [__meta_kubernetes_service_label_tier]
+          target_label: tier
+
+      # Shared Infrastructure Components
+      - job_name: 'shared-infrastructure'
+        static_configs:
+        - targets:
+          - 'postgres-primary.ai-agency-production.svc.cluster.local:9187'
+          - 'redis-cluster.ai-agency-production.svc.cluster.local:9121'
+          - 'qdrant-cluster.ai-agency-production.svc.cluster.local:6333'
+          - 'neo4j-cluster.ai-agency-production.svc.cluster.local:2004'
+          labels:
+            component: 'shared-infrastructure'
+
+      # Cost Analytics Service
+      - job_name: 'cost-analytics'
+        static_configs:
+        - targets:
+          - 'cost-analytics.ai-agency-production.svc.cluster.local:9090'
+
+  rules.yml: |
+    groups:
+    - name: customer-sla
+      rules:
+      # Memory recall SLA (< 500ms)
+      - alert: MemoryRecallSLAViolation
+        expr: histogram_quantile(0.95, sum(rate(mem0_recall_duration_seconds_bucket[5m])) by (le, customer_id)) > 0.5
+        for: 2m
+        labels:
+          severity: critical
+          sla: memory-recall
+        annotations:
+          summary: "Memory recall SLA violation for customer {{ $labels.customer_id }}"
+          description: "95th percentile memory recall time is {{ $value }}s, exceeding 500ms SLA"
+
+      # Customer isolation breach
+      - alert: CustomerIsolationBreach
+        expr: sum(rate(customer_isolation_violations_total[5m])) by (customer_id) > 0
+        for: 0m
+        labels:
+          severity: critical
+          security: isolation
+        annotations:
+          summary: "Customer isolation breach detected for {{ $labels.customer_id }}"
+          description: "Customer data isolation has been violated"
+
+      # High resource usage per customer
+      - alert: CustomerResourceExhaustion
+        expr: sum(container_memory_usage_bytes{customer_id!=""}) by (customer_id) / sum(container_spec_memory_limit_bytes{customer_id!=""}) by (customer_id) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          resource: memory
+        annotations:
+          summary: "Customer {{ $labels.customer_id }} approaching memory limits"
+          description: "Memory usage is {{ $value | humanizePercentage }} of allocated resources"
+
+    - name: infrastructure-health
+      rules:
+      # PostgreSQL connection issues
+      - alert: PostgreSQLDown
+        expr: up{job="shared-infrastructure",instance=~".*postgres.*"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: postgresql
+        annotations:
+          summary: "PostgreSQL instance down"
+          description: "PostgreSQL instance {{ $labels.instance }} is down"
+
+      # Redis cluster issues
+      - alert: RedisClusterDown
+        expr: up{job="shared-infrastructure",instance=~".*redis.*"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: redis
+        annotations:
+          summary: "Redis cluster node down"
+          description: "Redis cluster node {{ $labels.instance }} is down"
+
+      # Qdrant vector database issues
+      - alert: QdrantDown
+        expr: up{job="shared-infrastructure",instance=~".*qdrant.*"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: qdrant
+        annotations:
+          summary: "Qdrant vector database down"
+          description: "Qdrant instance {{ $labels.instance }} is down"
+
+    - name: cost-optimization
+      rules:
+      # High AI model costs per customer
+      - alert: HighAICosts
+        expr: sum(increase(ai_model_cost_usd_total[1h])) by (customer_id) > 10
+        for: 0m
+        labels:
+          severity: warning
+          cost: ai-models
+        annotations:
+          summary: "High AI model costs for customer {{ $labels.customer_id }}"
+          description: "Customer has spent ${{ $value }} on AI models in the last hour"
+
+      # Inefficient resource allocation
+      - alert: ResourceWaste
+        expr: avg_over_time(container_cpu_usage_rate[1h]) < 0.1 and container_spec_cpu_quota > 0
+        for: 30m
+        labels:
+          severity: info
+          optimization: cpu
+        annotations:
+          summary: "Low CPU utilization detected"
+          description: "Container {{ $labels.container }} has low CPU utilization: {{ $value | humanizePercentage }}"
+
+---
+# ServiceAccount for Prometheus
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus-server
+  namespace: ai-agency-production
+
+---
+# ClusterRole for Prometheus
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus-server
+rules:
+- apiGroups: [""]
+  resources:
+  - nodes
+  - nodes/proxy
+  - services
+  - endpoints
+  - pods
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["extensions"]
+  resources:
+  - ingresses
+  verbs: ["get", "list", "watch"]
+- nonResourceURLs: ["/metrics"]
+  verbs: ["get"]
+
+---
+# ClusterRoleBinding for Prometheus
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus-server
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus-server
+subjects:
+- kind: ServiceAccount
+  name: prometheus-server
+  namespace: ai-agency-production

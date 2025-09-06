@@ -1,0 +1,484 @@
+# Shared Infrastructure Components for AI Agency Platform Production
+# High-performance shared services with customer isolation at the application layer
+
+---
+# PostgreSQL Primary Database with Per-Customer Schema Isolation
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-primary
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: postgres-primary
+spec:
+  serviceName: postgres-primary
+  replicas: 3  # Master + 2 replicas
+  selector:
+    matchLabels:
+      app: ai-agency-platform
+      component: postgres-primary
+  template:
+    metadata:
+      labels:
+        app: ai-agency-platform
+        component: postgres-primary
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        env:
+        - name: POSTGRES_DB
+          value: "ai_agency_platform"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secrets
+              key: username
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secrets
+              key: password
+        - name: POSTGRES_REPLICATION_USER
+          value: "replicator"
+        - name: POSTGRES_REPLICATION_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secrets
+              key: replication_password
+        ports:
+        - containerPort: 5432
+          name: postgres
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        - name: postgres-config
+          mountPath: /etc/postgresql/postgresql.conf
+          subPath: postgresql.conf
+        - name: init-scripts
+          mountPath: /docker-entrypoint-initdb.d
+        resources:
+          requests:
+            cpu: "2000m"
+            memory: "8Gi"
+          limits:
+            cpu: "4000m"
+            memory: "16Gi"
+        livenessProbe:
+          exec:
+            command:
+              - /bin/sh
+              - -c
+              - pg_isready -U $POSTGRES_USER -d $POSTGRES_DB
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+              - /bin/sh
+              - -c
+              - pg_isready -U $POSTGRES_USER -d $POSTGRES_DB
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: postgres-config
+        configMap:
+          name: postgres-config
+      - name: init-scripts
+        configMap:
+          name: postgres-init-scripts
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "gp3-encrypted"
+      resources:
+        requests:
+          storage: "500Gi"
+
+---
+# Redis Cluster for High-Performance Caching with Customer DB Isolation
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-cluster
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: redis-cluster
+spec:
+  serviceName: redis-cluster
+  replicas: 6  # 3 masters + 3 replicas
+  selector:
+    matchLabels:
+      app: ai-agency-platform
+      component: redis-cluster
+  template:
+    metadata:
+      labels:
+        app: ai-agency-platform
+        component: redis-cluster
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        command:
+          - redis-server
+        args:
+          - /etc/redis/redis.conf
+          - --cluster-enabled
+          - "yes"
+          - --cluster-config-file
+          - /var/lib/redis/nodes.conf
+          - --cluster-node-timeout
+          - "5000"
+          - --appendonly
+          - "yes"
+          - --maxmemory
+          - "4gb"
+          - --maxmemory-policy
+          - "allkeys-lru"
+          - --databases
+          - "16"  # Support 16 databases for customer isolation
+        ports:
+        - containerPort: 6379
+          name: redis
+        - containerPort: 16379
+          name: cluster-bus
+        volumeMounts:
+        - name: redis-data
+          mountPath: /var/lib/redis
+        - name: redis-config
+          mountPath: /etc/redis
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "4Gi"
+          limits:
+            cpu: "1000m"
+            memory: "8Gi"
+        livenessProbe:
+          exec:
+            command:
+              - redis-cli
+              - ping
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+              - redis-cli
+              - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: redis-config
+        configMap:
+          name: redis-config
+  volumeClaimTemplates:
+  - metadata:
+      name: redis-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "gp3"
+      resources:
+        requests:
+          storage: "50Gi"
+
+---
+# Qdrant Vector Database Cluster for Mem0 Semantic Memory
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: qdrant-cluster
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: qdrant-cluster
+spec:
+  serviceName: qdrant-cluster
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ai-agency-platform
+      component: qdrant-cluster
+  template:
+    metadata:
+      labels:
+        app: ai-agency-platform
+        component: qdrant-cluster
+    spec:
+      containers:
+      - name: qdrant
+        image: qdrant/qdrant:v1.11.0
+        env:
+        - name: QDRANT__SERVICE__HTTP_PORT
+          value: "6333"
+        - name: QDRANT__SERVICE__GRPC_PORT
+          value: "6334"
+        - name: QDRANT__LOG_LEVEL
+          value: "INFO"
+        - name: QDRANT__STORAGE__PERFORMANCE__MAX_SEARCH_THREADS
+          value: "4"
+        - name: QDRANT__CLUSTER__ENABLED
+          value: "true"
+        - name: QDRANT__CLUSTER__P2P__PORT
+          value: "6335"
+        ports:
+        - containerPort: 6333
+          name: http
+        - containerPort: 6334
+          name: grpc
+        - containerPort: 6335
+          name: p2p
+        volumeMounts:
+        - name: qdrant-data
+          mountPath: /qdrant/storage
+        resources:
+          requests:
+            cpu: "1000m"
+            memory: "4Gi"
+          limits:
+            cpu: "2000m"
+            memory: "8Gi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 6333
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /readiness
+            port: 6333
+          initialDelaySeconds: 10
+          periodSeconds: 5
+  volumeClaimTemplates:
+  - metadata:
+      name: qdrant-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "gp3-encrypted"
+      resources:
+        requests:
+          storage: "200Gi"
+
+---
+# Neo4j Cluster for Graph-based Business Intelligence
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: neo4j-cluster
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: neo4j-cluster
+spec:
+  serviceName: neo4j-cluster
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ai-agency-platform
+      component: neo4j-cluster
+  template:
+    metadata:
+      labels:
+        app: ai-agency-platform
+        component: neo4j-cluster
+    spec:
+      containers:
+      - name: neo4j
+        image: neo4j:5.15-enterprise
+        env:
+        - name: NEO4J_AUTH
+          valueFrom:
+            secretKeyRef:
+              name: neo4j-secrets
+              key: auth
+        - name: NEO4J_ACCEPT_LICENSE_AGREEMENT
+          value: "yes"
+        - name: NEO4J_PLUGINS
+          value: '["apoc", "graph-data-science"]'
+        - name: NEO4J_dbms_security_procedures_unrestricted
+          value: "apoc.*,gds.*"
+        - name: NEO4J_dbms_memory_heap_initial__size
+          value: "2g"
+        - name: NEO4J_dbms_memory_heap_max__size
+          value: "4g"
+        - name: NEO4J_dbms_memory_pagecache_size
+          value: "2g"
+        # Cluster configuration
+        - name: NEO4J_causal__clustering_minimum__core__cluster__size__at__formation
+          value: "3"
+        - name: NEO4J_causal__clustering_minimum__core__cluster__size__at__runtime
+          value: "2"
+        - name: NEO4J_causal__clustering_initial__discovery__members
+          value: "neo4j-cluster-0.neo4j-cluster.ai-agency-production.svc.cluster.local:5000,neo4j-cluster-1.neo4j-cluster.ai-agency-production.svc.cluster.local:5000,neo4j-cluster-2.neo4j-cluster.ai-agency-production.svc.cluster.local:5000"
+        ports:
+        - containerPort: 7474
+          name: http
+        - containerPort: 7687
+          name: bolt
+        - containerPort: 5000
+          name: discovery
+        - containerPort: 6000
+          name: raft
+        - containerPort: 7000
+          name: transaction
+        volumeMounts:
+        - name: neo4j-data
+          mountPath: /data
+        - name: neo4j-logs
+          mountPath: /logs
+        resources:
+          requests:
+            cpu: "1000m"
+            memory: "6Gi"
+          limits:
+            cpu: "2000m"
+            memory: "8Gi"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 7474
+          initialDelaySeconds: 60
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 7474
+          initialDelaySeconds: 30
+          periodSeconds: 5
+  volumeClaimTemplates:
+  - metadata:
+      name: neo4j-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "gp3-encrypted"
+      resources:
+        requests:
+          storage: "100Gi"
+  - metadata:
+      name: neo4j-logs
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "gp3"
+      resources:
+        requests:
+          storage: "10Gi"
+
+---
+# Services for Shared Infrastructure
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-primary
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: postgres-primary
+spec:
+  ports:
+  - port: 5432
+    targetPort: 5432
+    name: postgres
+  selector:
+    app: ai-agency-platform
+    component: postgres-primary
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cluster
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: redis-cluster
+spec:
+  ports:
+  - port: 6379
+    targetPort: 6379
+    name: redis
+  - port: 16379
+    targetPort: 16379
+    name: cluster-bus
+  selector:
+    app: ai-agency-platform
+    component: redis-cluster
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant-cluster
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: qdrant-cluster
+spec:
+  ports:
+  - port: 6333
+    targetPort: 6333
+    name: http
+  - port: 6334
+    targetPort: 6334
+    name: grpc
+  selector:
+    app: ai-agency-platform
+    component: qdrant-cluster
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: neo4j-cluster
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: neo4j-cluster
+spec:
+  ports:
+  - port: 7474
+    targetPort: 7474
+    name: http
+  - port: 7687
+    targetPort: 7687
+    name: bolt
+  selector:
+    app: ai-agency-platform
+    component: neo4j-cluster
+  type: ClusterIP
+
+---
+# Horizontal Pod Autoscalers for Shared Services
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: qdrant-cluster-hpa
+  namespace: ai-agency-production
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: qdrant-cluster
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80

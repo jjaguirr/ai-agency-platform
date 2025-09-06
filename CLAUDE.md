@@ -403,13 +403,6 @@ Task {
   prompt: "Run comprehensive 7-phase design review using Playwright automation for [COMPONENT/PAGE]. Focus on LAUNCH bot onboarding, agent dashboard, and business intelligence interfaces. Generate evidence-based report with screenshots, accessibility audit, and performance metrics."
 }
 
-# Cross-agent coordination
-Task {
-  subagent_type: "qa-engineer", 
-  description: "Validate design review findings",
-  prompt: "Review design review findings and ensure test coverage for identified issues. Update regression test suite based on UX findings."
-}
-
 # Security validation
 Task {
   subagent_type: "security-engineer",
