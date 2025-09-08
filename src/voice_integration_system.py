@@ -31,6 +31,19 @@ from .monitoring.voice_performance_monitor import (
     get_voice_performance_dashboard
 )
 
+# Analytics imports
+from .analytics import (
+    VoiceAnalyticsPipeline,
+    VoiceBusinessIntelligence, 
+    VoiceCostTracker,
+    VoiceQualityAnalyzer,
+    create_analytics_dashboard_api
+)
+from .analytics.voice_analytics_pipeline import voice_analytics_pipeline
+from .analytics.business_intelligence import voice_business_intelligence
+from .analytics.cost_tracker import voice_cost_tracker
+from .analytics.quality_analyzer import voice_quality_analyzer
+
 # Configuration
 from .config.voice_config import VoiceIntegrationConfig
 
@@ -45,6 +58,9 @@ class VoiceIntegrationSystem:
     - Whisper speech-to-text recognition
     - WebRTC browser-based voice input
     - EA memory integration with per-customer isolation
+    - Comprehensive analytics and business intelligence
+    - Real-time cost tracking and optimization
+    - Voice quality analysis and monitoring
     - Performance monitoring and metrics
     - Production-ready deployment
     """
@@ -63,6 +79,12 @@ class VoiceIntegrationSystem:
         # System components
         self.performance_monitor = voice_performance_monitor
         self.session_manager = voice_manager
+        
+        # Analytics components
+        self.analytics_pipeline = voice_analytics_pipeline
+        self.business_intelligence = voice_business_intelligence
+        self.cost_tracker = voice_cost_tracker
+        self.quality_analyzer = voice_quality_analyzer
         
         logger.info("Voice integration system initialized")
     
@@ -157,6 +179,10 @@ class VoiceIntegrationSystem:
         voice_api = create_voice_api()
         app.mount("/voice", voice_api)
         
+        # Mount analytics API
+        analytics_api = create_analytics_dashboard_api()
+        app.mount("/analytics", analytics_api)
+        
         # Static files for frontend
         if Path(self.config.frontend_path).exists():
             app.mount("/static", StaticFiles(directory=self.config.frontend_path), name="static")
@@ -183,6 +209,7 @@ class VoiceIntegrationSystem:
                     "endpoints": {
                         "voice_interface": "/",
                         "voice_api": "/voice",
+                        "analytics_api": "/analytics",
                         "health": "/health",
                         "metrics": "/metrics",
                         "performance": "/performance"
@@ -200,7 +227,11 @@ class VoiceIntegrationSystem:
                     "components": {
                         "voice_integration": True,
                         "performance_monitor": True,
-                        "session_manager": True
+                        "session_manager": True,
+                        "analytics_pipeline": True,
+                        "business_intelligence": True,
+                        "cost_tracker": True,
+                        "quality_analyzer": True
                     }
                 }
                 
@@ -324,6 +355,10 @@ class VoiceIntegrationSystem:
             # Initialize session manager
             logger.info("Initializing session manager...")
             
+            # Initialize analytics components
+            logger.info("Initializing analytics components...")
+            await self._initialize_analytics_components()
+            
             # Pre-warm common voice configurations
             await self._prewarm_voice_system()
             
@@ -331,6 +366,35 @@ class VoiceIntegrationSystem:
             
         except Exception as e:
             logger.error(f"Component initialization error: {e}")
+            raise
+    
+    async def _initialize_analytics_components(self):
+        """Initialize analytics system components"""
+        try:
+            # Start analytics pipeline background processing
+            if hasattr(self.analytics_pipeline, 'start_background_processing'):
+                await self.analytics_pipeline.start_background_processing()
+                logger.info("Analytics pipeline background processing started")
+            
+            # Initialize business intelligence (if needed)
+            if hasattr(self.business_intelligence, 'initialize'):
+                await self.business_intelligence.initialize()
+                logger.info("Business intelligence initialized")
+            
+            # Initialize cost tracker (if needed)
+            if hasattr(self.cost_tracker, 'initialize'):
+                await self.cost_tracker.initialize()
+                logger.info("Cost tracker initialized")
+            
+            # Initialize quality analyzer (if needed)
+            if hasattr(self.quality_analyzer, 'initialize'):
+                await self.quality_analyzer.initialize()
+                logger.info("Quality analyzer initialized")
+            
+            logger.info("Analytics components initialization completed")
+            
+        except Exception as e:
+            logger.error(f"Analytics components initialization error: {e}")
             raise
     
     async def _prewarm_voice_system(self):
@@ -436,7 +500,7 @@ class VoiceIntegrationSystem:
                 )
             
             # Record performance metrics
-            await record_voice_interaction(
+            performance_metrics = await record_voice_interaction(
                 customer_id=customer_id,
                 conversation_id=result["conversation_id"],
                 interaction_id=interaction_id,
@@ -447,6 +511,14 @@ class VoiceIntegrationSystem:
                 response_language=detected_language,
                 success=result["success"],
                 error_type=result.get("error") if not result["success"] else None
+            )
+            
+            # Comprehensive analytics processing
+            await self._process_comprehensive_analytics(
+                performance_metrics,
+                message,
+                result,
+                context or {}
             )
             
             logger.info(f"Voice interaction processed: {interaction_id} in {result['response_time_seconds']:.2f}s")
@@ -483,6 +555,78 @@ class VoiceIntegrationSystem:
                 "response_time_seconds": (datetime.now() - start_time).total_seconds()
             }
     
+    async def _process_comprehensive_analytics(
+        self,
+        performance_metrics: Any,  # VoiceInteractionMetrics
+        message_text: str,
+        ea_result: Dict[str, Any],
+        context: Dict[str, Any]
+    ):
+        """Process comprehensive analytics for voice interaction"""
+        
+        try:
+            # Prepare conversation context for analytics
+            conversation_context = {
+                "message_text": message_text,
+                "response_text": ea_result.get("text_response", ""),
+                "interaction_success": ea_result.get("success", False),
+                "conversation_id": ea_result.get("conversation_id", ""),
+                **context
+            }
+            
+            # Business context preparation
+            business_context = {
+                "high_value_customer": context.get("high_value_customer", False),
+                "strategic_conversation": context.get("strategic_conversation", False),
+                "value_created": ea_result.get("success", False) and len(ea_result.get("text_response", "")) > 20,
+                "conversation_text": f"{message_text} {ea_result.get('text_response', '')}"
+            }
+            
+            # Run analytics in parallel for performance
+            analytics_tasks = []
+            
+            # Analytics pipeline processing
+            analytics_tasks.append(
+                self.analytics_pipeline.process_interaction(
+                    performance_metrics,
+                    conversation_context,
+                    business_context
+                )
+            )
+            
+            # Cost tracking
+            analytics_tasks.append(
+                self.cost_tracker.track_interaction_cost(
+                    performance_metrics,
+                    {"business_value_score": 50}  # Default value, would be calculated
+                )
+            )
+            
+            # Quality analysis
+            analytics_tasks.append(
+                self.quality_analyzer.analyze_interaction_quality(
+                    performance_metrics,
+                    conversation_context,
+                    None  # audio_data not available in this context
+                )
+            )
+            
+            # Execute analytics tasks in parallel
+            analytics_results = await asyncio.gather(*analytics_tasks, return_exceptions=True)
+            
+            # Process business intelligence (depends on analytics results)
+            if analytics_results[0] and not isinstance(analytics_results[0], Exception):
+                await self.business_intelligence.analyze_customer_analytics(analytics_results[0])
+            
+            logger.debug("Comprehensive analytics processing completed",
+                        interaction_id=performance_metrics.interaction_id,
+                        analytics_success=len([r for r in analytics_results if not isinstance(r, Exception)]))
+                        
+        except Exception as e:
+            logger.error("Error in comprehensive analytics processing",
+                        interaction_id=getattr(performance_metrics, 'interaction_id', 'unknown'),
+                        error=str(e))
+    
     def _setup_signal_handlers(self):
         """Setup graceful shutdown signal handlers"""
         def signal_handler(signum, frame):
@@ -496,6 +640,9 @@ class VoiceIntegrationSystem:
         """Cleanup system components"""
         try:
             logger.info("Cleaning up system components...")
+            
+            # Cleanup analytics components
+            await self._cleanup_analytics_components()
             
             # Cleanup active voice sessions
             await self.session_manager.cleanup_inactive_sessions()
@@ -520,6 +667,36 @@ class VoiceIntegrationSystem:
             
         except Exception as e:
             logger.error(f"Error during component cleanup: {e}")
+    
+    async def _cleanup_analytics_components(self):
+        """Cleanup analytics system components"""
+        try:
+            logger.info("Cleaning up analytics components...")
+            
+            # Stop analytics pipeline background processing
+            if hasattr(self.analytics_pipeline, 'stop_background_processing'):
+                await self.analytics_pipeline.stop_background_processing()
+                logger.info("Analytics pipeline background processing stopped")
+            
+            # Cleanup business intelligence
+            if hasattr(self.business_intelligence, 'cleanup'):
+                await self.business_intelligence.cleanup()
+                logger.info("Business intelligence cleanup completed")
+            
+            # Cleanup cost tracker
+            if hasattr(self.cost_tracker, 'cleanup'):
+                await self.cost_tracker.cleanup()
+                logger.info("Cost tracker cleanup completed")
+            
+            # Cleanup quality analyzer
+            if hasattr(self.quality_analyzer, 'cleanup'):
+                await self.quality_analyzer.cleanup()
+                logger.info("Quality analyzer cleanup completed")
+            
+            logger.info("Analytics components cleanup completed")
+            
+        except Exception as e:
+            logger.error(f"Analytics components cleanup error: {e}")
     
     async def run_server(
         self,
