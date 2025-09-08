@@ -308,37 +308,62 @@ class WhatsAppChannel(BaseCommunicationChannel):
             response: Message content sent back to user
         """
         try:
+            start_time = datetime.now()
+            
             # Parse the incoming message
             message = await self.handle_incoming_message(request_data)
             
-            # Handle media messages
+            # Handle media messages with enhanced Phase 2 processing
             if message.num_media > 0:
-                media_response = await self._handle_media_message(message)
+                media_response = await self._handle_enhanced_media_message(message)
                 if media_response:
-                    return media_response
+                    # Apply premium-casual tone to media response
+                    casual_response = await self._apply_premium_casual_tone(media_response)
+                    await self.send_message(message.from_number, casual_response)
+                    return casual_response
             
-            # Process through Executive Assistant
+            # Get premium-casual personality configuration
+            personality_config = await self._get_personality_config()
+            
+            # Process through Executive Assistant with WhatsApp context
             if not self.ea:
                 await self.initialize()
             
+            # Enhanced EA interaction with context preservation
             response = await self.ea.handle_customer_interaction(
                 message.content,
                 ConversationChannel.WHATSAPP,
-                conversation_id=message.conversation_id
+                conversation_id=message.conversation_id,
+                channel_context={
+                    'platform': 'whatsapp',
+                    'personality': 'premium-casual',
+                    'mobile_optimized': True,
+                    'emoji_friendly': True,
+                    'profile_name': message.profile_name
+                }
             )
             
+            # Apply premium-casual tone adaptation
+            casual_response = await self._apply_premium_casual_tone(response)
+            
             # Send response back to WhatsApp
-            await self.send_message(message.from_number, response)
+            await self.send_message(message.from_number, casual_response)
             
-            # Store conversation context
-            await self._store_conversation_context(message, response)
+            # Store enhanced conversation context
+            await self._store_enhanced_conversation_context(message, casual_response, start_time)
             
-            logger.info(f"Processed WhatsApp message for customer {self.customer_id}")
-            return response
+            # Update performance metrics
+            processing_time = (datetime.now() - start_time).total_seconds()
+            await self._track_response_time(processing_time)
+            
+            logger.info(f"Processed premium-casual WhatsApp message for customer {self.customer_id} in {processing_time:.2f}s")
+            return casual_response
             
         except Exception as e:
             logger.error(f"Error handling WhatsApp webhook: {e}")
-            error_response = "I apologize, but I encountered an issue processing your message. Let me get back to you in just a moment."
+            
+            # Premium-casual error response
+            error_response = "Hey! 😅 I hit a small snag processing your message. Give me just a moment to sort this out - I'll be right back with you!"
             
             # Try to send error response
             try:
@@ -541,3 +566,238 @@ class WhatsAppChannel(BaseCommunicationChannel):
                 base_status["error"] = str(e)
         
         return base_status
+    
+    async def _handle_enhanced_media_message(self, message: WhatsAppMessage) -> Optional[str]:
+        \"\"\"Enhanced media message handling for Phase 2 premium-casual interactions\"\"\"
+        try:
+            if message.media_content_type and message.media_url:
+                # Import media processing from manager
+                from .whatsapp_manager import whatsapp_manager
+                
+                # Process media with advanced capabilities
+                media_result = await whatsapp_manager.process_media_message(
+                    message.media_url,
+                    message.media_content_type,
+                    self.customer_id
+                )
+                
+                if media_result.success:
+                    return media_result.processed_content
+                else:
+                    return f\"I received your media but ran into a small issue processing it. {media_result.error_message} Could you try sending it again? 📱\"
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f\"Error handling enhanced media message: {e}\")
+            return \"I can see you sent me something but I'm having trouble viewing it right now. Could you try again or tell me what it is? 🤔\"
+    
+    async def _apply_premium_casual_tone(self, content: str) -> str:
+        \"\"\"Apply premium-casual tone adaptation for WhatsApp\"\"\"
+        try:
+            # Get personality configuration
+            config = await self._get_personality_config()
+            
+            # Simple tone adaptations for WhatsApp
+            adaptations = {
+                # Make greetings more casual
+                'Hello': 'Hey',
+                'Good morning': 'Morning',
+                'Good afternoon': 'Hey there',
+                'Good evening': 'Evening',
+                
+                # Add casual connectors
+                'I will': \"I'll\",
+                'I am': \"I'm\",
+                'You are': \"You're\",
+                'We will': \"We'll\",
+                'That is': \"That's\",
+                'It is': \"It's\",
+                'Cannot': \"Can't\",
+                
+                # Professional but approachable
+                'I apologize': 'Sorry about that',
+                'Thank you very much': 'Thanks so much',
+                'I understand': 'Got it',
+                'Please let me know': 'Let me know',
+                'I would be happy to': \"I'd love to\",
+                'I recommend': \"I'd suggest\"
+            }
+            
+            # Apply adaptations
+            adapted_content = content
+            for formal, casual in adaptations.items():
+                adapted_content = adapted_content.replace(formal, casual)
+            
+            # Ensure mobile-friendly formatting
+            if len(adapted_content) > 200:
+                # Break into shorter paragraphs for mobile
+                sentences = adapted_content.split('. ')
+                if len(sentences) > 2:
+                    mid_point = len(sentences) // 2
+                    adapted_content = '. '.join(sentences[:mid_point]) + '.\\n\\n' + '. '.join(sentences[mid_point:])
+            
+            return adapted_content
+            
+        except Exception as e:
+            logger.error(f\"Error applying premium-casual tone: {e}\")
+            return content  # Return original if adaptation fails
+    
+    async def _get_personality_config(self) -> Dict[str, Any]:
+        \"\"\"Get premium-casual personality configuration\"\"\"
+        try:
+            from .whatsapp_manager import whatsapp_manager
+            return await whatsapp_manager.get_premium_casual_personality_config(self.customer_id)
+        except Exception as e:
+            logger.error(f\"Error getting personality config: {e}\")
+            return {
+                'tone': 'premium-casual',
+                'whatsapp_adaptations': {
+                    'use_emojis': True,
+                    'mobile_formatting': True,
+                    'casual_language': True
+                }
+            }
+    
+    async def _store_enhanced_conversation_context(self, message: WhatsAppMessage, response: str, start_time: datetime):
+        \"\"\"Store enhanced conversation context with performance metrics\"\"\"
+        try:
+            processing_time = (datetime.now() - start_time).total_seconds()
+            
+            context_key = f\"whatsapp_conv:{message.conversation_id}\"
+            enhanced_context = {
+                \"last_message\": message.content,
+                \"last_response\": response,
+                \"from_number\": message.from_number,
+                \"profile_name\": message.profile_name,
+                \"timestamp\": message.timestamp.isoformat(),
+                \"customer_id\": self.customer_id,
+                \"processing_time_seconds\": processing_time,
+                \"media_attached\": message.num_media > 0,
+                \"personality_applied\": \"premium-casual\",
+                \"channel_context\": {
+                    \"platform\": \"whatsapp\",
+                    \"mobile_optimized\": True,
+                    \"emoji_friendly\": True
+                }
+            }
+            
+            # Store with 48-hour TTL for enhanced context
+            self.redis_client.setex(context_key, 86400 * 2, json.dumps(enhanced_context))
+            
+            # Store cross-channel context for handoffs
+            await self._store_cross_channel_context(message, response)
+            
+        except Exception as e:
+            logger.error(f\"Failed to store enhanced conversation context: {e}\")
+    
+    async def _store_cross_channel_context(self, message: WhatsAppMessage, response: str):
+        \"\"\"Store context for cross-channel handoffs\"\"\"
+        try:
+            cross_channel_key = f\"cross_channel:{self.customer_id}\"
+            context_data = {
+                \"last_channel\": \"whatsapp\",
+                \"last_interaction\": {
+                    \"message\": message.content,
+                    \"response\": response,
+                    \"timestamp\": message.timestamp.isoformat(),
+                    \"profile_name\": message.profile_name
+                },
+                \"conversation_id\": message.conversation_id,
+                \"personality_state\": \"premium-casual\",
+                \"context_metadata\": {
+                    \"platform_preferences\": \"mobile-friendly\",
+                    \"communication_style\": \"informal-professional\",
+                    \"emoji_usage\": True
+                }
+            }
+            
+            # Store for cross-channel access (24 hour TTL)
+            self.redis_client.setex(cross_channel_key, 86400, json.dumps(context_data))
+            
+        except Exception as e:
+            logger.error(f\"Failed to store cross-channel context: {e}\")
+    
+    async def _track_response_time(self, processing_time: float):
+        \"\"\"Track response times for performance monitoring\"\"\"
+        try:
+            # Store individual response time
+            response_time_key = f\"response_times:{self.customer_id}\"
+            self.redis_client.lpush(response_time_key, processing_time)
+            
+            # Keep only last 100 response times
+            self.redis_client.ltrim(response_time_key, 0, 99)
+            
+            # Set TTL on the list
+            self.redis_client.expire(response_time_key, 86400)  # 24 hours
+            
+            # Update global performance metrics if available
+            try:
+                from .whatsapp_manager import whatsapp_manager
+                whatsapp_manager.performance_metrics['response_times'].append(processing_time)
+                whatsapp_manager.performance_metrics['total_messages'] += 1
+                
+                # Keep only last 1000 response times for memory management
+                if len(whatsapp_manager.performance_metrics['response_times']) > 1000:
+                    whatsapp_manager.performance_metrics['response_times'] = whatsapp_manager.performance_metrics['response_times'][-1000:]
+            except:
+                pass  # Don't fail if manager not available
+            
+        except Exception as e:
+            logger.error(f\"Error tracking response time: {e}\")
+    
+    async def enable_cross_channel_handoff(self, target_channel: str, context: Dict[str, Any]) -> Dict[str, Any]:
+        \"\"\"Enable handoff to other communication channels\"\"\"
+        try:
+            from .whatsapp_manager import whatsapp_manager
+            
+            handoff_result = await whatsapp_manager.handle_cross_channel_handoff(
+                self.customer_id,
+                'whatsapp',
+                target_channel,
+                context
+            )
+            
+            return handoff_result
+            
+        except Exception as e:
+            logger.error(f\"Error enabling cross-channel handoff: {e}\")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    async def get_performance_metrics(self) -> Dict[str, Any]:
+        \"\"\"Get channel performance metrics\"\"\"
+        try:
+            # Get response times from Redis
+            response_time_key = f\"response_times:{self.customer_id}\"
+            response_times = [float(rt) for rt in self.redis_client.lrange(response_time_key, 0, -1)]
+            
+            metrics = {
+                'customer_id': self.customer_id,
+                'channel': 'whatsapp',
+                'response_times': {
+                    'count': len(response_times),
+                    'average': sum(response_times) / len(response_times) if response_times else 0,
+                    'min': min(response_times) if response_times else 0,
+                    'max': max(response_times) if response_times else 0
+                },
+                'sla_compliance': {
+                    'target_response_time': 3.0,  # 3 seconds
+                    'within_sla': len([rt for rt in response_times if rt <= 3.0]),
+                    'sla_percentage': (len([rt for rt in response_times if rt <= 3.0]) / len(response_times) * 100) if response_times else 100
+                },
+                'features_enabled': {
+                    'premium_casual_personality': True,
+                    'media_processing': True,
+                    'cross_channel_handoff': True,
+                    'context_preservation': True
+                }
+            }
+            
+            return metrics
+            
+        except Exception as e:
+            logger.error(f\"Error getting performance metrics: {e}\")
+            return {'error': str(e)}
