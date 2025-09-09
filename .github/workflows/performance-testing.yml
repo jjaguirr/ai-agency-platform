@@ -1,0 +1,393 @@
+name: Performance Testing Pipeline
+
+on:
+  push:
+    branches: [ main, phase-2-development ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run performance tests daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      test_suite:
+        description: 'Test suite to run'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - sla-validation
+          - load-testing
+          - regression-detection
+          - monitoring
+      enterprise_scale:
+        description: 'Include enterprise scale tests'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  performance-tests:
+    name: Performance Testing Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: ai_agency_test
+          POSTGRES_USER: mcphub
+          POSTGRES_PASSWORD: test_password
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+      
+      qdrant:
+        image: qdrant/qdrant:latest
+        ports:
+          - 6333:6333
+        options: >-
+          --health-cmd "curl -f http://localhost:6333/health || exit 1"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 5
+    
+    strategy:
+      matrix:
+        python-version: ['3.11']
+        test-suite: 
+          - ${{ github.event.inputs.test_suite || 'all' }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 2  # Needed for performance regression comparison
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y postgresql-client redis-tools curl
+    
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-performance.txt
+        pip install -r requirements-dev.txt
+    
+    - name: Set up environment variables
+      run: |
+        cp .env.production.template .env
+        echo "DATABASE_URL=postgresql://mcphub:test_password@localhost:5432/ai_agency_test" >> .env
+        echo "REDIS_URL=redis://localhost:6379" >> .env
+        echo "QDRANT_URL=http://localhost:6333" >> .env
+        echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> .env
+    
+    - name: Initialize database
+      run: |
+        python -c "
+        import asyncio
+        from src.database.connection import DatabaseManager
+        async def init_db():
+            db = DatabaseManager()
+            await db.initialize()
+            await db.execute_schema('src/database/schema.sql')
+            await db.close()
+        asyncio.run(init_db())
+        "
+    
+    - name: Verify services health
+      run: |
+        # Check PostgreSQL
+        pg_isready -h localhost -p 5432 -U mcphub
+        
+        # Check Redis
+        redis-cli -h localhost -p 6379 ping
+        
+        # Check Qdrant
+        curl -f http://localhost:6333/health
+        
+        echo "✅ All services are healthy"
+    
+    - name: Run performance tests
+      id: performance_tests
+      run: |
+        # Determine test suite
+        TEST_SUITE="${{ matrix.test-suite }}"
+        ENTERPRISE_FLAG=""
+        
+        if [[ "${{ github.event.inputs.enterprise_scale }}" == "true" ]]; then
+          ENTERPRISE_FLAG="--enterprise-scale"
+        fi
+        
+        # Run performance tests with timeout
+        timeout 3600 python run_performance_tests.py \
+          --suite "$TEST_SUITE" \
+          --output-dir "./performance_results" \
+          --monitoring-duration 120 \
+          $ENTERPRISE_FLAG \
+          2>&1 | tee performance_test_output.log
+        
+        # Capture exit code
+        TEST_EXIT_CODE=${PIPESTATUS[0]}
+        echo "test_exit_code=$TEST_EXIT_CODE" >> $GITHUB_OUTPUT
+        
+        # Check if results exist
+        if [[ -d "./performance_results" ]]; then
+          echo "results_generated=true" >> $GITHUB_OUTPUT
+        else
+          echo "results_generated=false" >> $GITHUB_OUTPUT
+        fi
+        
+        exit $TEST_EXIT_CODE
+      continue-on-error: true
+    
+    - name: Process performance results
+      if: steps.performance_tests.outputs.results_generated == 'true'
+      run: |
+        # Find the latest results file
+        RESULTS_FILE=$(find ./performance_results -name "*_detailed_report.json" | head -1)
+        SUMMARY_FILE=$(find ./performance_results -name "*_executive_summary.md" | head -1)
+        
+        if [[ -f "$RESULTS_FILE" ]]; then
+          echo "📊 Performance test results found: $RESULTS_FILE"
+          
+          # Extract key metrics
+          SLA_COMPLIANCE=$(jq -r '.sla_compliance_rate // 0' "$RESULTS_FILE")
+          ENTERPRISE_READY=$(jq -r '.enterprise_readiness // false' "$RESULTS_FILE")
+          OVERALL_STATUS=$(jq -r '.overall_status // "UNKNOWN"' "$RESULTS_FILE")
+          CRITICAL_ISSUES=$(jq -r '.critical_issues | length' "$RESULTS_FILE")
+          
+          echo "🎯 Performance Results Summary:"
+          echo "   Overall Status: $OVERALL_STATUS"
+          echo "   SLA Compliance: $SLA_COMPLIANCE%"
+          echo "   Enterprise Ready: $ENTERPRISE_READY"
+          echo "   Critical Issues: $CRITICAL_ISSUES"
+          
+          # Set outputs for other jobs
+          echo "sla_compliance=$SLA_COMPLIANCE" >> $GITHUB_OUTPUT
+          echo "enterprise_ready=$ENTERPRISE_READY" >> $GITHUB_OUTPUT
+          echo "overall_status=$OVERALL_STATUS" >> $GITHUB_OUTPUT
+          echo "critical_issues=$CRITICAL_ISSUES" >> $GITHUB_OUTPUT
+          
+          # Create performance summary for PR comments
+          if [[ -f "$SUMMARY_FILE" ]]; then
+            echo "PERFORMANCE_SUMMARY<<EOF" >> $GITHUB_ENV
+            cat "$SUMMARY_FILE" >> $GITHUB_ENV
+            echo "EOF" >> $GITHUB_ENV
+          fi
+        fi
+    
+    - name: Upload performance test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: performance-test-results-${{ matrix.test-suite }}-${{ github.sha }}
+        path: |
+          ./performance_results/
+          ./performance_test_output.log
+        retention-days: 30
+    
+    - name: Performance regression check
+      if: github.event_name == 'pull_request' && steps.performance_tests.outputs.results_generated == 'true'
+      run: |
+        # This would integrate with the regression detection system
+        echo "🔍 Checking for performance regressions..."
+        
+        # For now, fail if critical issues exist
+        CRITICAL_ISSUES="${{ steps.performance_tests.outputs.critical_issues }}"
+        if [[ "$CRITICAL_ISSUES" -gt 0 ]]; then
+          echo "❌ Performance regression detected: $CRITICAL_ISSUES critical issues"
+          exit 1
+        else
+          echo "✅ No performance regressions detected"
+        fi
+    
+    - name: Comment on PR with performance results
+      if: github.event_name == 'pull_request' && steps.performance_tests.outputs.results_generated == 'true'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          const slaCompliance = '${{ steps.performance_tests.outputs.sla_compliance }}';
+          const enterpriseReady = '${{ steps.performance_tests.outputs.enterprise_ready }}';
+          const overallStatus = '${{ steps.performance_tests.outputs.overall_status }}';
+          const criticalIssues = '${{ steps.performance_tests.outputs.critical_issues }}';
+          
+          const statusEmoji = overallStatus === 'PASS' ? '✅' : '❌';
+          const enterpriseEmoji = enterpriseReady === 'true' ? '✅' : '❌';
+          
+          const comment = `## ${statusEmoji} Performance Test Results
+          
+          | Metric | Value | Status |
+          |--------|-------|---------|
+          | Overall Status | ${overallStatus} | ${statusEmoji} |
+          | SLA Compliance | ${slaCompliance}% | ${parseFloat(slaCompliance) >= 80 ? '✅' : '❌'} |
+          | Enterprise Ready | ${enterpriseReady} | ${enterpriseEmoji} |
+          | Critical Issues | ${criticalIssues} | ${criticalIssues === '0' ? '✅' : '❌'} |
+          
+          ### 🚀 Deployment Recommendation
+          ${overallStatus === 'PASS' && parseFloat(slaCompliance) >= 80 && criticalIssues === '0' 
+            ? '**✅ APPROVED FOR DEPLOYMENT** - All performance targets met'
+            : '**⚠️ DEPLOYMENT REQUIRES REVIEW** - Performance issues detected'
+          }
+          
+          <details>
+          <summary>📋 Detailed Performance Summary</summary>
+          
+          \`\`\`
+          ${process.env.PERFORMANCE_SUMMARY || 'Summary not available'}
+          \`\`\`
+          </details>
+          
+          *Performance tests run on: ${new Date().toISOString()}*`;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+    
+    - name: Set deployment gate status
+      if: github.event_name == 'pull_request'
+      run: |
+        # Determine if deployment should be blocked
+        OVERALL_STATUS="${{ steps.performance_tests.outputs.overall_status }}"
+        SLA_COMPLIANCE="${{ steps.performance_tests.outputs.sla_compliance }}"
+        CRITICAL_ISSUES="${{ steps.performance_tests.outputs.critical_issues }}"
+        
+        if [[ "$OVERALL_STATUS" == "PASS" ]] && \
+           [[ $(echo "$SLA_COMPLIANCE >= 80" | bc -l) -eq 1 ]] && \
+           [[ "$CRITICAL_ISSUES" == "0" ]]; then
+          echo "✅ Performance gate: PASSED"
+          echo "PERFORMANCE_GATE=passed" >> $GITHUB_ENV
+          exit 0
+        else
+          echo "❌ Performance gate: FAILED"
+          echo "PERFORMANCE_GATE=failed" >> $GITHUB_ENV
+          echo "Performance requirements not met - blocking deployment"
+          exit 1
+        fi
+    
+    - name: Notify on performance degradation
+      if: failure() && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/phase-2-development')
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const issue = await github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: `🚨 Performance Degradation Detected - ${context.sha.slice(0, 7)}`,
+            body: `## Performance Test Failure
+            
+            **Commit:** ${context.sha}
+            **Branch:** ${context.ref}
+            **Workflow:** ${context.workflow}
+            **Run:** ${context.runNumber}
+            
+            Performance tests have failed on the main branch. Immediate investigation required.
+            
+            ### Action Items:
+            - [ ] Review performance test results
+            - [ ] Identify performance regression cause  
+            - [ ] Implement performance fixes
+            - [ ] Re-run performance validation
+            
+            ### Test Results
+            View detailed results in the [workflow run](${context.payload.repository.html_url}/actions/runs/${context.runId}).
+            `,
+            labels: ['performance', 'critical', 'regression']
+          });
+          
+          console.log(`Created issue #${issue.data.number}`);
+
+  baseline-update:
+    name: Update Performance Baseline
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: performance-tests
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Download performance results
+      uses: actions/download-artifact@v4
+      with:
+        name: performance-test-results-all-${{ github.sha }}
+        path: ./performance_results/
+    
+    - name: Update performance baseline
+      run: |
+        echo "📈 Updating performance baseline for main branch..."
+        
+        # This would integrate with the regression detection system
+        # to automatically update baselines when tests pass on main
+        
+        RESULTS_FILE=$(find ./performance_results -name "*_detailed_report.json" | head -1)
+        
+        if [[ -f "$RESULTS_FILE" ]]; then
+          OVERALL_STATUS=$(jq -r '.overall_status' "$RESULTS_FILE")
+          
+          if [[ "$OVERALL_STATUS" == "PASS" ]]; then
+            echo "✅ Performance tests passed - baseline update approved"
+            
+            # Store baseline for future comparisons
+            mkdir -p ./performance_baselines
+            cp "$RESULTS_FILE" "./performance_baselines/baseline_$(date +%Y%m%d_%H%M%S).json"
+            
+            echo "Baseline updated successfully"
+          else
+            echo "⚠️ Performance tests failed - baseline not updated"
+          fi
+        fi
+    
+    - name: Commit baseline update
+      if: success()
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        if [[ -n $(git status --porcelain) ]]; then
+          git add performance_baselines/
+          git commit -m "chore: update performance baseline [skip ci]"
+          git push
+        else
+          echo "No baseline changes to commit"
+        fi
