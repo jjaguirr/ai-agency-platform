@@ -34,6 +34,7 @@ from pydub import AudioSegment
 from .whatsapp_channel import WhatsAppChannel, WhatsAppMessage
 from ..agents.executive_assistant import ExecutiveAssistant
 from ..memory.mem0_manager import CustomerMemoryManager
+from ..security.customer_data_security import SecureCustomerRedis, WebhookSecurity, SecurityValidator
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,11 @@ class WhatsAppBusinessManager:
         self.media_storage_path = Path(os.getenv('MEDIA_STORAGE_PATH', '/tmp/whatsapp_media'))
         self.media_storage_path.mkdir(parents=True, exist_ok=True)
         
+        # Security components
+        self.webhook_security = WebhookSecurity()
+        self.security_validator = SecurityValidator()
+        self.customer_redis_clients: Dict[str, SecureCustomerRedis] = {}
+        
         # Business verification cache
         self.business_verification_cache: Dict[str, BusinessVerificationStatus] = {}
         
@@ -92,28 +98,46 @@ class WhatsAppBusinessManager:
         }
     
     def _initialize_connections(self):
-        """Initialize database and Redis connections"""
+        """Initialize database connections - Redis now per-customer for security"""
         try:
             # Database connection
             self.db_connection = psycopg2.connect(
-                host="localhost",
-                database="mcphub", 
-                user="mcphub",
-                password="mcphub_password"
+                host=os.getenv("POSTGRES_HOST", "localhost"),
+                database=os.getenv("POSTGRES_DB", "mcphub"), 
+                user=os.getenv("POSTGRES_USER", "mcphub"),
+                password=os.getenv("POSTGRES_PASSWORD", "mcphub_password")
             )
             
-            # Redis connection
-            self.redis_client = redis.Redis(
-                host='localhost',
-                port=6379,
-                db=0,  # Use DB 0 for manager
-                decode_responses=True
-            )
+            # SECURITY FIX: Remove shared Redis connection
+            # Each customer now gets isolated Redis database via SecureCustomerRedis
+            self.redis_client = None  # Deprecated - use get_customer_redis() instead
             
-            logger.info("WhatsApp Business Manager initialized")
+            logger.info("WhatsApp Business Manager initialized with secure customer isolation")
             
         except Exception as e:
             logger.error(f"Failed to initialize connections: {e}")
+    
+    def get_customer_redis(self, customer_id: str) -> SecureCustomerRedis:
+        """Get secure Redis client for specific customer with isolation"""
+        if customer_id not in self.customer_redis_clients:
+            self.customer_redis_clients[customer_id] = SecureCustomerRedis(customer_id)
+        return self.customer_redis_clients[customer_id]
+    
+    async def validate_customer_security(self, customer_id: str) -> bool:
+        """Validate customer data isolation and security"""
+        try:
+            audit_result = await self.security_validator.validate_customer_isolation(customer_id)
+            
+            if not audit_result.passed:
+                logger.error(f"Security validation FAILED for customer {customer_id}: {audit_result.findings}")
+                return False
+            
+            logger.info(f"Security validation PASSED for customer {customer_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Security validation error for customer {customer_id}: {e}")
+            return False
     
     async def setup_customer_whatsapp(self, customer_id: str, config: Dict[str, Any] = None) -> Dict[str, Any]:
         """
@@ -282,13 +306,23 @@ Let's start! Tell me about your business and what you do day-to-day. I'll create
                     """, (customer_id, clean_number, datetime.now()))
                     self.db_connection.commit()
             
-            # Store in Redis for fast lookup
-            if self.redis_client:
-                self.redis_client.setex(
+            # Store in secure Redis for fast lookup using system-level Redis
+            # Phone routing is system-level, not customer-specific data
+            try:
+                system_redis = redis.Redis(
+                    host=os.getenv('REDIS_HOST', 'localhost'),
+                    port=int(os.getenv('REDIS_PORT', 6379)),
+                    db=15,  # Use DB 15 for system routing (isolated from customer data)
+                    password=os.getenv('REDIS_PASSWORD'),
+                    decode_responses=True
+                )
+                system_redis.setex(
                     f"phone_routing:{clean_number}", 
                     86400 * 30,  # 30 days TTL
                     customer_id
                 )
+            except Exception as e:
+                logger.warning(f"Failed to cache phone routing in Redis: {e}")
             
             logger.info(f"Phone routing configured: {phone_number} -> {customer_id}")
             
@@ -300,11 +334,20 @@ Let's start! Tell me about your business and what you do day-to-day. I'll create
         try:
             clean_number = phone_number.replace('whatsapp:', '').replace('+', '').replace(' ', '').replace('-', '')
             
-            # Check Redis first (fast lookup)
-            if self.redis_client:
-                customer_id = self.redis_client.get(f"phone_routing:{clean_number}")
+            # Check system Redis first (fast lookup)
+            try:
+                system_redis = redis.Redis(
+                    host=os.getenv('REDIS_HOST', 'localhost'),
+                    port=int(os.getenv('REDIS_PORT', 6379)),
+                    db=15,  # Use DB 15 for system routing
+                    password=os.getenv('REDIS_PASSWORD'),
+                    decode_responses=True
+                )
+                customer_id = system_redis.get(f"phone_routing:{clean_number}")
                 if customer_id:
                     return customer_id
+            except Exception as e:
+                logger.warning(f"Failed to check Redis phone routing: {e}")
             
             # Check database
             if self.db_connection:
@@ -317,13 +360,22 @@ Let's start! Tell me about your business and what you do day-to-day. I'll create
                     if result:
                         customer_id = result[0]
                         
-                        # Cache in Redis
-                        if self.redis_client:
-                            self.redis_client.setex(
+                        # Cache in system Redis
+                        try:
+                            system_redis = redis.Redis(
+                                host=os.getenv('REDIS_HOST', 'localhost'),
+                                port=int(os.getenv('REDIS_PORT', 6379)),
+                                db=15,  # Use DB 15 for system routing
+                                password=os.getenv('REDIS_PASSWORD'),
+                                decode_responses=True
+                            )
+                            system_redis.setex(
                                 f"phone_routing:{clean_number}",
                                 86400 * 30,  # 30 days TTL
                                 customer_id
                             )
+                        except Exception as e:
+                            logger.warning(f"Failed to cache phone routing: {e}")
                         
                         return customer_id
             
@@ -572,4 +624,373 @@ Let's start! Tell me about your business and what you do day-to-day. I'll create
         try:
             with Image.open(file_path) as img:
                 # Basic image analysis
-                result.analysis = {\n                    'dimensions': img.size,\n                    'format': img.format,\n                    'mode': img.mode\n                }\n                \n                # Premium-casual response for images\n                result.processed_content = f\"I can see your image! It's a {img.format.lower()} file ({img.size[0]}x{img.size[1]} pixels). Let me know how I can help you with it! 📸\"\n            \n            return result\n            \n        except Exception as e:\n            result.success = False\n            result.error_message = f\"Image processing error: {e}\"\n            return result\n    \n    async def _process_audio(self, file_path: Path, result: MediaProcessingResult) -> MediaProcessingResult:\n        \"\"\"Process voice messages with speech recognition\"\"\"\n        try:\n            # Convert to WAV if needed\n            audio = AudioSegment.from_file(file_path)\n            wav_path = file_path.with_suffix('.wav')\n            audio.export(wav_path, format='wav')\n            \n            # Speech recognition\n            recognizer = sr.Recognizer()\n            with sr.AudioFile(str(wav_path)) as source:\n                audio_data = recognizer.record(source)\n                transcript = recognizer.recognize_google(audio_data)\n                \n                result.transcript = transcript\n                result.processed_content = f\"Got your voice message! You said: \\\"{transcript}\\\". How can I help with that? 🎙️\"\n            \n            # Clean up WAV file\n            wav_path.unlink(missing_ok=True)\n            \n            return result\n            \n        except Exception as e:\n            result.success = False\n            result.error_message = f\"Audio processing error: {e}\"\n            return result\n    \n    async def _process_document(self, file_path: Path, result: MediaProcessingResult) -> MediaProcessingResult:\n        \"\"\"Process document files\"\"\"\n        try:\n            file_size = file_path.stat().st_size\n            result.analysis = {\n                'file_size': file_size,\n                'file_extension': file_path.suffix\n            }\n            \n            # Premium-casual response for documents\n            result.processed_content = f\"Thanks for the document! I've received your {file_path.suffix.upper()} file ({file_size // 1024}KB). I'll review it and incorporate the information into our business discussion. 📄\"\n            \n            return result\n            \n        except Exception as e:\n            result.success = False\n            result.error_message = f\"Document processing error: {e}\"\n            return result\n    \n    async def setup_business_verification(self, customer_id: str, business_config: Dict[str, Any]) -> BusinessVerificationStatus:\n        \"\"\"Setup WhatsApp Business verification for customer\"\"\"\n        try:\n            verification_status = BusinessVerificationStatus(\n                is_verified=business_config.get('is_verified', False),\n                business_name=business_config.get('business_name', f\"Customer {customer_id} Business\"),\n                verification_date=datetime.now(),\n                phone_number_id=business_config.get('phone_number_id'),\n                display_name=business_config.get('display_name'),\n                category=business_config.get('category', 'Business')\n            )\n            \n            # Cache verification status\n            self.business_verification_cache[customer_id] = verification_status\n            \n            # Store in database\n            await self._store_business_verification(customer_id, verification_status)\n            \n            logger.info(f\"Business verification setup for customer {customer_id}: {verification_status.business_name}\")\n            return verification_status\n            \n        except Exception as e:\n            logger.error(f\"Error setting up business verification: {e}\")\n            return BusinessVerificationStatus(\n                is_verified=False,\n                business_name=f\"Customer {customer_id}\",\n                verification_date=datetime.now()\n            )\n    \n    async def handle_cross_channel_handoff(self, customer_id: str, from_channel: str, to_channel: str, context: Dict[str, Any]) -> Dict[str, Any]:\n        \"\"\"Handle conversation handoff between WhatsApp and other channels\"\"\"\n        try:\n            # Store handoff context in customer memory\n            handoff_context = {\n                'from_channel': from_channel,\n                'to_channel': to_channel,\n                'context': context,\n                'timestamp': datetime.now().isoformat(),\n                'customer_id': customer_id\n            }\n            \n            # Use memory manager to preserve context\n            await self.memory_manager.store_cross_channel_context(\n                customer_id,\n                handoff_context\n            )\n            \n            self.performance_metrics['channel_switches'] += 1\n            \n            return {\n                'success': True,\n                'handoff_id': str(uuid.uuid4()),\n                'from_channel': from_channel,\n                'to_channel': to_channel,\n                'context_preserved': True\n            }\n            \n        except Exception as e:\n            logger.error(f\"Error handling cross-channel handoff: {e}\")\n            return {\n                'success': False,\n                'error': str(e)\n            }\n    \n    async def get_premium_casual_personality_config(self, customer_id: str) -> Dict[str, Any]:\n        \"\"\"Get premium-casual personality configuration for WhatsApp\"\"\"\n        return {\n            'tone': 'premium-casual',\n            'style_guidelines': {\n                'greeting': 'Hey! 👋',\n                'enthusiasm': 'moderate',\n                'emoji_usage': 'contextual',\n                'message_length': 'mobile-optimized',\n                'formality': 'approachable-professional'\n            },\n            'whatsapp_adaptations': {\n                'use_emojis': True,\n                'mobile_formatting': True,\n                'quick_responses': True,\n                'casual_language': True,\n                'maintain_intelligence': True\n            },\n            'context_awareness': {\n                'remember_preferences': True,\n                'adapt_to_communication_style': True,\n                'learn_from_interactions': True\n            }\n        }\n    \n    async def optimize_for_concurrent_users(self) -> Dict[str, Any]:\n        \"\"\"Optimize manager for 500+ concurrent users\"\"\"\n        try:\n            # Connection pool optimization\n            if self.db_connection:\n                with self.db_connection.cursor() as cursor:\n                    cursor.execute(\"SELECT count(*) FROM pg_stat_activity WHERE state = 'active';\")\n                    active_connections = cursor.fetchone()[0]\n            else:\n                active_connections = 0\n            \n            # Redis connection optimization\n            redis_info = self.redis_client.info() if self.redis_client else {}\n            \n            # Calculate concurrent user capacity\n            current_channels = len(self.active_channels)\n            estimated_capacity = min(500, max(0, 500 - current_channels))\n            \n            optimization_result = {\n                'current_channels': current_channels,\n                'estimated_capacity': estimated_capacity,\n                'active_db_connections': active_connections,\n                'redis_connected_clients': redis_info.get('connected_clients', 0),\n                'performance_metrics': self.performance_metrics,\n                'optimization_status': 'optimal' if current_channels < 400 else 'approaching_limit'\n            }\n            \n            logger.info(f\"Concurrent user optimization: {optimization_result['optimization_status']}\")\n            return optimization_result\n            \n        except Exception as e:\n            logger.error(f\"Error optimizing for concurrent users: {e}\")\n            return {'error': str(e)}\n    \n    async def _store_media_metrics(self, customer_id: str, media_type: str, processing_time: float, success: bool):\n        \"\"\"Store media processing metrics\"\"\"\n        try:\n            if self.db_connection:\n                with self.db_connection.cursor() as cursor:\n                    cursor.execute(\"\"\"\n                        INSERT INTO whatsapp_media_metrics \n                        (customer_id, media_type, processing_time_seconds, success, created_at)\n                        VALUES (%s, %s, %s, %s, %s)\n                    \"\"\", (\n                        customer_id,\n                        media_type,\n                        processing_time,\n                        success,\n                        datetime.now()\n                    ))\n                    self.db_connection.commit()\n        except Exception as e:\n            logger.error(f\"Error storing media metrics: {e}\")\n    \n    async def _store_business_verification(self, customer_id: str, verification: BusinessVerificationStatus):\n        \"\"\"Store business verification status\"\"\"\n        try:\n            if self.db_connection:\n                with self.db_connection.cursor() as cursor:\n                    cursor.execute(\"\"\"\n                        INSERT INTO whatsapp_business_verification \n                        (customer_id, is_verified, business_name, verification_date, \n                         phone_number_id, display_name, category, created_at)\n                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)\n                        ON CONFLICT (customer_id) DO UPDATE SET\n                            is_verified = EXCLUDED.is_verified,\n                            business_name = EXCLUDED.business_name,\n                            verification_date = EXCLUDED.verification_date,\n                            updated_at = EXCLUDED.created_at\n                    \"\"\", (\n                        customer_id,\n                        verification.is_verified,\n                        verification.business_name,\n                        verification.verification_date,\n                        verification.phone_number_id,\n                        verification.display_name,\n                        verification.category,\n                        datetime.now()\n                    ))\n                    self.db_connection.commit()\n        except Exception as e:\n            logger.error(f\"Error storing business verification: {e}\")\n\n    async def health_check(self) -> Dict[str, Any]:\n        \"\"\"Enhanced system health check for Phase 2\"\"\"\n        health = {\n            \"service\": \"whatsapp_business_manager\",\n            \"timestamp\": datetime.now().isoformat(),\n            \"active_channels\": len(self.active_channels),\n            \"database_status\": \"disconnected\",\n            \"redis_status\": \"disconnected\",\n            \"phase_2_features\": {\n                \"media_processing\": True,\n                \"business_verification\": True,\n                \"cross_channel_handoff\": True,\n                \"premium_casual_personality\": True,\n                \"concurrent_user_optimization\": True\n            }\n        }\n        \n        # Check database\n        if self.db_connection:\n            try:\n                with self.db_connection.cursor() as cursor:\n                    cursor.execute(\"SELECT 1\")\n                    health[\"database_status\"] = \"connected\"\n            except:\n                health[\"database_status\"] = \"error\"\n        \n        # Check Redis\n        if self.redis_client:\n            try:\n                self.redis_client.ping()\n                health[\"redis_status\"] = \"connected\"\n            except:\n                health[\"redis_status\"] = \"error\"\n        \n        # Add performance metrics\n        health[\"performance_metrics\"] = self.performance_metrics\n        health[\"media_storage_path\"] = str(self.media_storage_path)\n        health[\"business_verifications\"] = len(self.business_verification_cache)\n        \n        return health\n\n    async def create_database_tables(self):\n        \"\"\"Create enhanced database tables for Phase 2 features\"\"\"\n        if not self.db_connection:\n            return\n            \n        try:\n            with self.db_connection.cursor() as cursor:\n                # Enhanced customer WhatsApp configuration table\n                cursor.execute(\"\"\"\n                    CREATE TABLE IF NOT EXISTS customer_whatsapp_config (\n                        id SERIAL PRIMARY KEY,\n                        customer_id VARCHAR(255) UNIQUE NOT NULL,\n                        whatsapp_config JSONB NOT NULL,\n                        premium_casual_config JSONB DEFAULT '{}',\n                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n                    );\n                \"\"\")\n                \n                # Phone number routing table\n                cursor.execute(\"\"\"\n                    CREATE TABLE IF NOT EXISTS customer_phone_routing (\n                        id SERIAL PRIMARY KEY,\n                        customer_id VARCHAR(255) NOT NULL,\n                        phone_number VARCHAR(50) UNIQUE NOT NULL,\n                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n                    );\n                \"\"\")\n                \n                # Enhanced provisioning metrics table\n                cursor.execute(\"\"\"\n                    CREATE TABLE IF NOT EXISTS customer_provisioning_metrics (\n                        id SERIAL PRIMARY KEY,\n                        customer_id VARCHAR(255) NOT NULL,\n                        provisioning_type VARCHAR(50) NOT NULL,\n                        metrics JSONB NOT NULL,\n                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n                    );\n                \"\"\")\n                \n                # Media processing metrics table (NEW)\n                cursor.execute(\"\"\"\n                    CREATE TABLE IF NOT EXISTS whatsapp_media_metrics (\n                        id SERIAL PRIMARY KEY,\n                        customer_id VARCHAR(255) NOT NULL,\n                        media_type VARCHAR(100) NOT NULL,\n                        processing_time_seconds DECIMAL(10,3) NOT NULL,\n                        success BOOLEAN NOT NULL,\n                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n                    );\n                    \n                    CREATE INDEX IF NOT EXISTS idx_media_metrics_customer_id ON whatsapp_media_metrics(customer_id);\n                    CREATE INDEX IF NOT EXISTS idx_media_metrics_created_at ON whatsapp_media_metrics(created_at);\n                \"\"\")\n                \n                # Business verification table (NEW)\n                cursor.execute(\"\"\"\n                    CREATE TABLE IF NOT EXISTS whatsapp_business_verification (\n                        id SERIAL PRIMARY KEY,\n                        customer_id VARCHAR(255) UNIQUE NOT NULL,\n                        is_verified BOOLEAN NOT NULL,\n                        business_name VARCHAR(255) NOT NULL,\n                        verification_date TIMESTAMP,\n                        phone_number_id VARCHAR(255),\n                        display_name VARCHAR(255),\n                        category VARCHAR(100),\n                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n                    );\n                \"\"\")\n                \n                # Cross-channel context table (NEW)\n                cursor.execute(\"\"\"\n                    CREATE TABLE IF NOT EXISTS cross_channel_context (\n                        id SERIAL PRIMARY KEY,\n                        customer_id VARCHAR(255) NOT NULL,\n                        handoff_id VARCHAR(255) NOT NULL,\n                        from_channel VARCHAR(50) NOT NULL,\n                        to_channel VARCHAR(50) NOT NULL,\n                        context_data JSONB NOT NULL,\n                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n                    );\n                    \n                    CREATE INDEX IF NOT EXISTS idx_cross_channel_customer_id ON cross_channel_context(customer_id);\n                    CREATE INDEX IF NOT EXISTS idx_cross_channel_handoff_id ON cross_channel_context(handoff_id);\n                \"\"\")\n                \n                self.db_connection.commit()\n                logger.info(\"Enhanced Phase 2 database tables created successfully\")\n                \n        except Exception as e:\n            logger.error(f\"Failed to create enhanced database tables: {e}\")\n\n# Global manager instance\nwhatsapp_manager = WhatsAppBusinessManager()
+                result.analysis = {
+                    'dimensions': img.size,
+                    'format': img.format,
+                    'mode': img.mode
+                }
+                
+                # Premium-casual response for images
+                result.processed_content = f"I can see your image! It's a {img.format.lower()} file ({img.size[0]}x{img.size[1]} pixels). Let me know how I can help you with it! 📸"
+            
+            return result
+            
+        except Exception as e:
+            result.success = False
+            result.error_message = f"Image processing error: {e}"
+            return result
+    
+    async def _process_audio(self, file_path: Path, result: MediaProcessingResult) -> MediaProcessingResult:
+        """Process voice messages with speech recognition"""
+        try:
+            # Convert to WAV if needed
+            audio = AudioSegment.from_file(file_path)
+            wav_path = file_path.with_suffix('.wav')
+            audio.export(wav_path, format='wav')
+            
+            # Speech recognition
+            recognizer = sr.Recognizer()
+            with sr.AudioFile(str(wav_path)) as source:
+                audio_data = recognizer.record(source)
+                transcript = recognizer.recognize_google(audio_data)
+                
+                result.transcript = transcript
+                result.processed_content = f"Got your voice message! You said: \"{transcript}\". How can I help with that? 🎙️"
+            
+            # Clean up WAV file
+            wav_path.unlink(missing_ok=True)
+            
+            return result
+            
+        except Exception as e:
+            result.success = False
+            result.error_message = f"Audio processing error: {e}"
+            return result
+    
+    async def _process_document(self, file_path: Path, result: MediaProcessingResult) -> MediaProcessingResult:
+        """Process document files"""
+        try:
+            file_size = file_path.stat().st_size
+            result.analysis = {
+                'file_size': file_size,
+                'file_extension': file_path.suffix
+            }
+            
+            # Premium-casual response for documents
+            result.processed_content = f"Thanks for the document! I've received your {file_path.suffix.upper()} file ({file_size // 1024}KB). I'll review it and incorporate the information into our business discussion. 📄"
+            
+            return result
+            
+        except Exception as e:
+            result.success = False
+            result.error_message = f"Document processing error: {e}"
+            return result
+    
+    async def setup_business_verification(self, customer_id: str, business_config: Dict[str, Any]) -> BusinessVerificationStatus:
+        """Setup WhatsApp Business verification for customer"""
+        try:
+            verification_status = BusinessVerificationStatus(
+                is_verified=business_config.get('is_verified', False),
+                business_name=business_config.get('business_name', f"Customer {customer_id} Business"),
+                verification_date=datetime.now(),
+                phone_number_id=business_config.get('phone_number_id'),
+                display_name=business_config.get('display_name'),
+                category=business_config.get('category', 'Business')
+            )
+            
+            # Cache verification status
+            self.business_verification_cache[customer_id] = verification_status
+            
+            # Store in database
+            await self._store_business_verification(customer_id, verification_status)
+            
+            logger.info(f"Business verification setup for customer {customer_id}: {verification_status.business_name}")
+            return verification_status
+            
+        except Exception as e:
+            logger.error(f"Error setting up business verification: {e}")
+            return BusinessVerificationStatus(
+                is_verified=False,
+                business_name=f"Customer {customer_id}",
+                verification_date=datetime.now()
+            )
+    
+    async def handle_cross_channel_handoff(self, customer_id: str, from_channel: str, to_channel: str, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle conversation handoff between WhatsApp and other channels"""
+        try:
+            # Store handoff context in customer memory
+            handoff_context = {
+                'from_channel': from_channel,
+                'to_channel': to_channel,
+                'context': context,
+                'timestamp': datetime.now().isoformat(),
+                'customer_id': customer_id
+            }
+            
+            # Use memory manager to preserve context
+            await self.memory_manager.store_cross_channel_context(
+                customer_id,
+                handoff_context
+            )
+            
+            self.performance_metrics['channel_switches'] += 1
+            
+            return {
+                'success': True,
+                'handoff_id': str(uuid.uuid4()),
+                'from_channel': from_channel,
+                'to_channel': to_channel,
+                'context_preserved': True
+            }
+            
+        except Exception as e:
+            logger.error(f"Error handling cross-channel handoff: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    async def get_premium_casual_personality_config(self, customer_id: str) -> Dict[str, Any]:
+        """Get premium-casual personality configuration for WhatsApp"""
+        return {
+            'tone': 'premium-casual',
+            'style_guidelines': {
+                'greeting': 'Hey! 👋',
+                'enthusiasm': 'moderate',
+                'emoji_usage': 'contextual',
+                'message_length': 'mobile-optimized',
+                'formality': 'approachable-professional'
+            },
+            'whatsapp_adaptations': {
+                'use_emojis': True,
+                'mobile_formatting': True,
+                'quick_responses': True,
+                'casual_language': True,
+                'maintain_intelligence': True
+            },
+            'context_awareness': {
+                'remember_preferences': True,
+                'adapt_to_communication_style': True,
+                'learn_from_interactions': True
+            }
+        }
+    
+    async def optimize_for_concurrent_users(self) -> Dict[str, Any]:
+        """Optimize manager for 500+ concurrent users"""
+        try:
+            # Connection pool optimization
+            if self.db_connection:
+                with self.db_connection.cursor() as cursor:
+                    cursor.execute("SELECT count(*) FROM pg_stat_activity WHERE state = 'active';")
+                    active_connections = cursor.fetchone()[0]
+            else:
+                active_connections = 0
+            
+            # Redis connection optimization
+            redis_info = self.redis_client.info() if self.redis_client else {}
+            
+            # Calculate concurrent user capacity
+            current_channels = len(self.active_channels)
+            estimated_capacity = min(500, max(0, 500 - current_channels))
+            
+            optimization_result = {
+                'current_channels': current_channels,
+                'estimated_capacity': estimated_capacity,
+                'active_db_connections': active_connections,
+                'redis_connected_clients': redis_info.get('connected_clients', 0),
+                'performance_metrics': self.performance_metrics,
+                'optimization_status': 'optimal' if current_channels < 400 else 'approaching_limit'
+            }
+            
+            logger.info(f"Concurrent user optimization: {optimization_result['optimization_status']}")
+            return optimization_result
+            
+        except Exception as e:
+            logger.error(f"Error optimizing for concurrent users: {e}")
+            return {'error': str(e)}
+    
+    async def _store_media_metrics(self, customer_id: str, media_type: str, processing_time: float, success: bool):
+        """Store media processing metrics"""
+        try:
+            if self.db_connection:
+                with self.db_connection.cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO whatsapp_media_metrics 
+                        (customer_id, media_type, processing_time_seconds, success, created_at)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, (
+                        customer_id,
+                        media_type,
+                        processing_time,
+                        success,
+                        datetime.now()
+                    ))
+                    self.db_connection.commit()
+        except Exception as e:
+            logger.error(f"Error storing media metrics: {e}")
+    
+    async def _store_business_verification(self, customer_id: str, verification: BusinessVerificationStatus):
+        """Store business verification status"""
+        try:
+            if self.db_connection:
+                with self.db_connection.cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO whatsapp_business_verification 
+                        (customer_id, is_verified, business_name, verification_date, 
+                         phone_number_id, display_name, category, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (customer_id) DO UPDATE SET
+                            is_verified = EXCLUDED.is_verified,
+                            business_name = EXCLUDED.business_name,
+                            verification_date = EXCLUDED.verification_date,
+                            updated_at = EXCLUDED.created_at
+                    """, (
+                        customer_id,
+                        verification.is_verified,
+                        verification.business_name,
+                        verification.verification_date,
+                        verification.phone_number_id,
+                        verification.display_name,
+                        verification.category,
+                        datetime.now()
+                    ))
+                    self.db_connection.commit()
+        except Exception as e:
+            logger.error(f"Error storing business verification: {e}")
+
+    async def health_check(self) -> Dict[str, Any]:
+        """Enhanced system health check for Phase 2"""
+        health = {
+            "service": "whatsapp_business_manager",
+            "timestamp": datetime.now().isoformat(),
+            "active_channels": len(self.active_channels),
+            "database_status": "disconnected",
+            "redis_status": "disconnected",
+            "phase_2_features": {
+                "media_processing": True,
+                "business_verification": True,
+                "cross_channel_handoff": True,
+                "premium_casual_personality": True,
+                "concurrent_user_optimization": True
+            }
+        }
+        
+        # Check database
+        if self.db_connection:
+            try:
+                with self.db_connection.cursor() as cursor:
+                    cursor.execute("SELECT 1")
+                    health["database_status"] = "connected"
+            except:
+                health["database_status"] = "error"
+        
+        # Check Redis
+        if self.redis_client:
+            try:
+                self.redis_client.ping()
+                health["redis_status"] = "connected"
+            except:
+                health["redis_status"] = "error"
+        
+        # Add performance metrics
+        health["performance_metrics"] = self.performance_metrics
+        health["media_storage_path"] = str(self.media_storage_path)
+        health["business_verifications"] = len(self.business_verification_cache)
+        
+        return health
+
+    async def create_database_tables(self):
+        """Create enhanced database tables for Phase 2 features"""
+        if not self.db_connection:
+            return
+            
+        try:
+            with self.db_connection.cursor() as cursor:
+                # Enhanced customer WhatsApp configuration table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS customer_whatsapp_config (
+                        id SERIAL PRIMARY KEY,
+                        customer_id VARCHAR(255) UNIQUE NOT NULL,
+                        whatsapp_config JSONB NOT NULL,
+                        premium_casual_config JSONB DEFAULT '{}',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                
+                # Phone number routing table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS customer_phone_routing (
+                        id SERIAL PRIMARY KEY,
+                        customer_id VARCHAR(255) NOT NULL,
+                        phone_number VARCHAR(50) UNIQUE NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                
+                # Enhanced provisioning metrics table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS customer_provisioning_metrics (
+                        id SERIAL PRIMARY KEY,
+                        customer_id VARCHAR(255) NOT NULL,
+                        provisioning_type VARCHAR(50) NOT NULL,
+                        metrics JSONB NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                
+                # Media processing metrics table (NEW)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS whatsapp_media_metrics (
+                        id SERIAL PRIMARY KEY,
+                        customer_id VARCHAR(255) NOT NULL,
+                        media_type VARCHAR(100) NOT NULL,
+                        processing_time_seconds DECIMAL(10,3) NOT NULL,
+                        success BOOLEAN NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                    
+                    CREATE INDEX IF NOT EXISTS idx_media_metrics_customer_id ON whatsapp_media_metrics(customer_id);
+                    CREATE INDEX IF NOT EXISTS idx_media_metrics_created_at ON whatsapp_media_metrics(created_at);
+                """)
+                
+                # Business verification table (NEW)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS whatsapp_business_verification (
+                        id SERIAL PRIMARY KEY,
+                        customer_id VARCHAR(255) UNIQUE NOT NULL,
+                        is_verified BOOLEAN NOT NULL,
+                        business_name VARCHAR(255) NOT NULL,
+                        verification_date TIMESTAMP,
+                        phone_number_id VARCHAR(255),
+                        display_name VARCHAR(255),
+                        category VARCHAR(100),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                
+                # Cross-channel context table (NEW)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS cross_channel_context (
+                        id SERIAL PRIMARY KEY,
+                        customer_id VARCHAR(255) NOT NULL,
+                        handoff_id VARCHAR(255) NOT NULL,
+                        from_channel VARCHAR(50) NOT NULL,
+                        to_channel VARCHAR(50) NOT NULL,
+                        context_data JSONB NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                    
+                    CREATE INDEX IF NOT EXISTS idx_cross_channel_customer_id ON cross_channel_context(customer_id);
+                    CREATE INDEX IF NOT EXISTS idx_cross_channel_handoff_id ON cross_channel_context(handoff_id);
+                """)
+                
+                self.db_connection.commit()
+                logger.info("Enhanced Phase 2 database tables created successfully")
+                
+        except Exception as e:
+            logger.error(f"Failed to create enhanced database tables: {e}")
+
+# Global manager instance
+whatsapp_manager = WhatsAppBusinessManager()

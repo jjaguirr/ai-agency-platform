@@ -230,4 +230,305 @@ class WhatsAppPerformanceMonitor:
             avg_response_time = sum(float(rt) for rt in response_times) / max(len(response_times), 1) if response_times else 0.0
             
             # Calculate SLA compliance
-            sla_compliance = await self.calculate_sla_compliance(1)\n            \n            # Get media processing success rate\n            media_metrics_key = f\"media_metrics:{datetime.now().strftime('%Y-%m-%d:%H')}\"\n            media_data = await asyncio.to_thread(self.redis_client.hgetall, media_metrics_key)\n            \n            total_media = sum(int(media_data.get(f'{media_type}_total', 0)) for media_type in ['image', 'audio', 'document', 'video'])\n            success_media = sum(int(media_data.get(f'{media_type}_success', 0)) for media_type in ['image', 'audio', 'document', 'video'])\n            media_success_rate = (success_media / max(total_media, 1)) * 100 if total_media > 0 else 100.0\n            \n            # Get handoff count\n            handoff_key = f\"handoffs:{datetime.now().strftime('%Y-%m-%d:%H')}\"\n            handoff_data = await asyncio.to_thread(self.redis_client.lrange, handoff_key, 0, -1)\n            handoff_count = len(handoff_data)\n            \n            metrics = PerformanceMetrics(\n                timestamp=datetime.now(),\n                active_channels=0,  # Will be updated by channel manager\n                concurrent_users=0,  # Will be updated by channel manager\n                message_throughput=message_throughput,\n                avg_response_time=avg_response_time,\n                sla_compliance_rate=sla_compliance,\n                media_processing_success_rate=media_success_rate,\n                cross_channel_handoffs=handoff_count,\n                personality_adaptation_accuracy=95.0,  # Placeholder - would be calculated from actual data\n                error_rate=error_rate\n            )\n            \n            return metrics\n            \n        except Exception as e:\n            logger.error(f\"Error getting performance metrics: {e}\")\n            return PerformanceMetrics(\n                timestamp=datetime.now(),\n                active_channels=0,\n                concurrent_users=0,\n                message_throughput=0.0,\n                avg_response_time=0.0,\n                sla_compliance_rate=0.0,\n                media_processing_success_rate=0.0,\n                cross_channel_handoffs=0,\n                personality_adaptation_accuracy=0.0,\n                error_rate=100.0\n            )\n    \n    async def generate_sla_report(self, hours: int = 24) -> SLAReport:\n        \"\"\"Generate comprehensive SLA compliance report\"\"\"\n        try:\n            end_time = datetime.now()\n            start_time = end_time - timedelta(hours=hours)\n            \n            # Get response times for the period\n            response_times = await asyncio.to_thread(self.redis_client.lrange, 'response_times_global', 0, -1)\n            response_times = [float(rt) for rt in response_times]\n            \n            target_response_time = 3.0\n            within_sla = sum(1 for rt in response_times if rt <= target_response_time)\n            total_messages = len(response_times)\n            \n            compliance_percentage = (within_sla / max(total_messages, 1)) * 100\n            avg_response_time = sum(response_times) / max(total_messages, 1) if response_times else 0.0\n            \n            # Get peak concurrent users\n            peak_key = f\"peak_users:{datetime.now().strftime('%Y-%m-%d')}\"\n            peak_users = int(await asyncio.to_thread(self.redis_client.get, peak_key) or 0)\n            \n            # Calculate uptime (simplified - assumes 100% if no critical errors)\n            uptime_percentage = 100.0  # Would be calculated from actual downtime data\n            \n            report = SLAReport(\n                period_start=start_time,\n                period_end=end_time,\n                target_response_time=target_response_time,\n                actual_avg_response_time=avg_response_time,\n                compliance_percentage=compliance_percentage,\n                total_messages=total_messages,\n                within_sla_messages=within_sla,\n                peak_concurrent_users=peak_users,\n                uptime_percentage=uptime_percentage\n            )\n            \n            logger.info(f\"Generated SLA report: {compliance_percentage:.1f}% compliance over {hours}h\")\n            return report\n            \n        except Exception as e:\n            logger.error(f\"Error generating SLA report: {e}\")\n            return SLAReport(\n                period_start=datetime.now() - timedelta(hours=hours),\n                period_end=datetime.now(),\n                target_response_time=3.0,\n                actual_avg_response_time=0.0,\n                compliance_percentage=0.0,\n                total_messages=0,\n                within_sla_messages=0,\n                peak_concurrent_users=0,\n                uptime_percentage=0.0\n            )\n    \n    async def store_performance_snapshot(self):\n        \"\"\"Store current performance metrics snapshot to database\"\"\"\n        if not self.db_connection:\n            return\n            \n        try:\n            metrics = await self.get_current_performance_metrics()\n            \n            with self.db_connection.cursor() as cursor:\n                cursor.execute(\"\"\"\n                    INSERT INTO whatsapp_performance_snapshots \n                    (timestamp, active_channels, concurrent_users, message_throughput,\n                     avg_response_time, sla_compliance_rate, media_processing_success_rate,\n                     cross_channel_handoffs, personality_adaptation_accuracy, error_rate)\n                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)\n                \"\"\", (\n                    metrics.timestamp,\n                    metrics.active_channels,\n                    metrics.concurrent_users,\n                    metrics.message_throughput,\n                    metrics.avg_response_time,\n                    metrics.sla_compliance_rate,\n                    metrics.media_processing_success_rate,\n                    metrics.cross_channel_handoffs,\n                    metrics.personality_adaptation_accuracy,\n                    metrics.error_rate\n                ))\n                \n                self.db_connection.commit()\n                logger.debug(\"Performance snapshot stored to database\")\n                \n        except Exception as e:\n            logger.error(f\"Error storing performance snapshot: {e}\")\n    \n    async def create_monitoring_tables(self):\n        \"\"\"Create monitoring database tables\"\"\"\n        if not self.db_connection:\n            return\n            \n        try:\n            with self.db_connection.cursor() as cursor:\n                # Performance snapshots table\n                cursor.execute(\"\"\"\n                    CREATE TABLE IF NOT EXISTS whatsapp_performance_snapshots (\n                        id SERIAL PRIMARY KEY,\n                        timestamp TIMESTAMP NOT NULL,\n                        active_channels INTEGER NOT NULL,\n                        concurrent_users INTEGER NOT NULL,\n                        message_throughput DECIMAL(10,3) NOT NULL,\n                        avg_response_time DECIMAL(10,3) NOT NULL,\n                        sla_compliance_rate DECIMAL(5,2) NOT NULL,\n                        media_processing_success_rate DECIMAL(5,2) NOT NULL,\n                        cross_channel_handoffs INTEGER NOT NULL,\n                        personality_adaptation_accuracy DECIMAL(5,2) NOT NULL,\n                        error_rate DECIMAL(5,2) NOT NULL,\n                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n                    );\n                    \n                    CREATE INDEX IF NOT EXISTS idx_performance_timestamp ON whatsapp_performance_snapshots(timestamp);\n                    CREATE INDEX IF NOT EXISTS idx_performance_sla ON whatsapp_performance_snapshots(sla_compliance_rate);\n                \"\"\")\n                \n                # SLA reports table\n                cursor.execute(\"\"\"\n                    CREATE TABLE IF NOT EXISTS whatsapp_sla_reports (\n                        id SERIAL PRIMARY KEY,\n                        period_start TIMESTAMP NOT NULL,\n                        period_end TIMESTAMP NOT NULL,\n                        target_response_time DECIMAL(5,2) NOT NULL,\n                        actual_avg_response_time DECIMAL(10,3) NOT NULL,\n                        compliance_percentage DECIMAL(5,2) NOT NULL,\n                        total_messages INTEGER NOT NULL,\n                        within_sla_messages INTEGER NOT NULL,\n                        peak_concurrent_users INTEGER NOT NULL,\n                        uptime_percentage DECIMAL(5,2) NOT NULL,\n                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n                    );\n                    \n                    CREATE INDEX IF NOT EXISTS idx_sla_period ON whatsapp_sla_reports(period_start, period_end);\n                \"\"\")\n                \n                self.db_connection.commit()\n                logger.info(\"Monitoring database tables created\")\n                \n        except Exception as e:\n            logger.error(f\"Error creating monitoring tables: {e}\")\n    \n    async def start_monitoring_loop(self, interval_seconds: int = 60):\n        \"\"\"Start continuous performance monitoring loop\"\"\"\n        logger.info(f\"Starting WhatsApp performance monitoring (interval: {interval_seconds}s)\")\n        \n        # Create tables if needed\n        await self.create_monitoring_tables()\n        \n        while True:\n            try:\n                # Store performance snapshot\n                await self.store_performance_snapshot()\n                \n                # Update SLA compliance\n                await self.calculate_sla_compliance()\n                \n                # Log current metrics\n                metrics = await self.get_current_performance_metrics()\n                logger.info(\n                    f\"Performance snapshot: \"\n                    f\"throughput={metrics.message_throughput:.2f}msg/s, \"\n                    f\"avg_response={metrics.avg_response_time:.2f}s, \"\n                    f\"sla_compliance={metrics.sla_compliance_rate:.1f}%, \"\n                    f\"error_rate={metrics.error_rate:.1f}%\"\n                )\n                \n                await asyncio.sleep(interval_seconds)\n                \n            except Exception as e:\n                logger.error(f\"Error in monitoring loop: {e}\")\n                await asyncio.sleep(interval_seconds)\n    \n    def start_prometheus_server(self, port: int = 9090):\n        \"\"\"Start Prometheus metrics server\"\"\"\n        try:\n            start_http_server(port)\n            logger.info(f\"Prometheus metrics server started on port {port}\")\n        except Exception as e:\n            logger.error(f\"Error starting Prometheus server: {e}\")\n    \n    async def get_health_check(self) -> Dict[str, Any]:\n        \"\"\"Get monitoring system health check\"\"\"\n        try:\n            redis_status = \"connected\"\n            try:\n                await asyncio.to_thread(self.redis_client.ping)\n            except:\n                redis_status = \"disconnected\"\n            \n            db_status = \"connected\" if self.db_connection else \"disconnected\"\n            if self.db_connection:\n                try:\n                    with self.db_connection.cursor() as cursor:\n                        cursor.execute(\"SELECT 1\")\n                except:\n                    db_status = \"error\"\n            \n            current_metrics = await self.get_current_performance_metrics()\n            \n            return {\n                \"service\": \"whatsapp_performance_monitor\",\n                \"status\": \"healthy\",\n                \"timestamp\": datetime.now().isoformat(),\n                \"connections\": {\n                    \"redis\": redis_status,\n                    \"database\": db_status\n                },\n                \"current_metrics\": asdict(current_metrics),\n                \"monitoring\": {\n                    \"prometheus_enabled\": True,\n                    \"sla_target\": \"3.0s response time\",\n                    \"concurrent_user_target\": \"500+ users\",\n                    \"phase2_features_monitored\": [\n                        \"media_processing\",\n                        \"cross_channel_handoffs\",\n                        \"personality_adaptation\",\n                        \"premium_casual_tone\"\n                    ]\n                }\n            }\n            \n        except Exception as e:\n            logger.error(f\"Error in health check: {e}\")\n            return {\n                \"service\": \"whatsapp_performance_monitor\",\n                \"status\": \"error\",\n                \"error\": str(e),\n                \"timestamp\": datetime.now().isoformat()\n            }\n\n# Global monitor instance\nperformance_monitor = WhatsAppPerformanceMonitor()\n\n\nif __name__ == \"__main__\":\n    \"\"\"Run monitoring system standalone\"\"\"\n    import argparse\n    \n    parser = argparse.ArgumentParser(description='WhatsApp Performance Monitor')\n    parser.add_argument('--prometheus-port', type=int, default=9090, help='Prometheus metrics port')\n    parser.add_argument('--interval', type=int, default=60, help='Monitoring interval in seconds')\n    \n    args = parser.parse_args()\n    \n    # Configure logging\n    logging.basicConfig(\n        level=logging.INFO,\n        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'\n    )\n    \n    async def main():\n        # Start Prometheus server\n        performance_monitor.start_prometheus_server(args.prometheus_port)\n        \n        # Start monitoring loop\n        await performance_monitor.start_monitoring_loop(args.interval)\n    \n    asyncio.run(main())
+            sla_compliance = await self.calculate_sla_compliance(1)
+            
+            # Get media processing success rate
+            media_metrics_key = f"media_metrics:{datetime.now().strftime('%Y-%m-%d:%H')}"
+            media_data = await asyncio.to_thread(self.redis_client.hgetall, media_metrics_key)
+            
+            total_media = sum(int(media_data.get(f'{media_type}_total', 0)) for media_type in ['image', 'audio', 'document', 'video'])
+            success_media = sum(int(media_data.get(f'{media_type}_success', 0)) for media_type in ['image', 'audio', 'document', 'video'])
+            media_success_rate = (success_media / max(total_media, 1)) * 100 if total_media > 0 else 100.0
+            
+            # Get handoff count
+            handoff_key = f"handoffs:{datetime.now().strftime('%Y-%m-%d:%H')}"
+            handoff_data = await asyncio.to_thread(self.redis_client.lrange, handoff_key, 0, -1)
+            handoff_count = len(handoff_data)
+            
+            metrics = PerformanceMetrics(
+                timestamp=datetime.now(),
+                active_channels=0,  # Will be updated by channel manager
+                concurrent_users=0,  # Will be updated by channel manager
+                message_throughput=message_throughput,
+                avg_response_time=avg_response_time,
+                sla_compliance_rate=sla_compliance,
+                media_processing_success_rate=media_success_rate,
+                cross_channel_handoffs=handoff_count,
+                personality_adaptation_accuracy=95.0,  # Placeholder - would be calculated from actual data
+                error_rate=error_rate
+            )
+            
+            return metrics
+            
+        except Exception as e:
+            logger.error(f"Error getting performance metrics: {e}")
+            return PerformanceMetrics(
+                timestamp=datetime.now(),
+                active_channels=0,
+                concurrent_users=0,
+                message_throughput=0.0,
+                avg_response_time=0.0,
+                sla_compliance_rate=0.0,
+                media_processing_success_rate=0.0,
+                cross_channel_handoffs=0,
+                personality_adaptation_accuracy=0.0,
+                error_rate=100.0
+            )
+    
+    async def generate_sla_report(self, hours: int = 24) -> SLAReport:
+        """Generate comprehensive SLA compliance report"""
+        try:
+            end_time = datetime.now()
+            start_time = end_time - timedelta(hours=hours)
+            
+            # Get response times for the period
+            response_times = await asyncio.to_thread(self.redis_client.lrange, 'response_times_global', 0, -1)
+            response_times = [float(rt) for rt in response_times]
+            
+            target_response_time = 3.0
+            within_sla = sum(1 for rt in response_times if rt <= target_response_time)
+            total_messages = len(response_times)
+            
+            compliance_percentage = (within_sla / max(total_messages, 1)) * 100
+            avg_response_time = sum(response_times) / max(total_messages, 1) if response_times else 0.0
+            
+            # Get peak concurrent users
+            peak_key = f"peak_users:{datetime.now().strftime('%Y-%m-%d')}"
+            peak_users = int(await asyncio.to_thread(self.redis_client.get, peak_key) or 0)
+            
+            # Calculate uptime (simplified - assumes 100% if no critical errors)
+            uptime_percentage = 100.0  # Would be calculated from actual downtime data
+            
+            report = SLAReport(
+                period_start=start_time,
+                period_end=end_time,
+                target_response_time=target_response_time,
+                actual_avg_response_time=avg_response_time,
+                compliance_percentage=compliance_percentage,
+                total_messages=total_messages,
+                within_sla_messages=within_sla,
+                peak_concurrent_users=peak_users,
+                uptime_percentage=uptime_percentage
+            )
+            
+            logger.info(f"Generated SLA report: {compliance_percentage:.1f}% compliance over {hours}h")
+            return report
+            
+        except Exception as e:
+            logger.error(f"Error generating SLA report: {e}")
+            return SLAReport(
+                period_start=datetime.now() - timedelta(hours=hours),
+                period_end=datetime.now(),
+                target_response_time=3.0,
+                actual_avg_response_time=0.0,
+                compliance_percentage=0.0,
+                total_messages=0,
+                within_sla_messages=0,
+                peak_concurrent_users=0,
+                uptime_percentage=0.0
+            )
+    
+    async def store_performance_snapshot(self):
+        """Store current performance metrics snapshot to database"""
+        if not self.db_connection:
+            return
+            
+        try:
+            metrics = await self.get_current_performance_metrics()
+            
+            with self.db_connection.cursor() as cursor:
+                cursor.execute("""
+                    INSERT INTO whatsapp_performance_snapshots 
+                    (timestamp, active_channels, concurrent_users, message_throughput,
+                     avg_response_time, sla_compliance_rate, media_processing_success_rate,
+                     cross_channel_handoffs, personality_adaptation_accuracy, error_rate)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    metrics.timestamp,
+                    metrics.active_channels,
+                    metrics.concurrent_users,
+                    metrics.message_throughput,
+                    metrics.avg_response_time,
+                    metrics.sla_compliance_rate,
+                    metrics.media_processing_success_rate,
+                    metrics.cross_channel_handoffs,
+                    metrics.personality_adaptation_accuracy,
+                    metrics.error_rate
+                ))
+                
+                self.db_connection.commit()
+                logger.debug("Performance snapshot stored to database")
+                
+        except Exception as e:
+            logger.error(f"Error storing performance snapshot: {e}")
+    
+    async def create_monitoring_tables(self):
+        """Create monitoring database tables"""
+        if not self.db_connection:
+            return
+            
+        try:
+            with self.db_connection.cursor() as cursor:
+                # Performance snapshots table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS whatsapp_performance_snapshots (
+                        id SERIAL PRIMARY KEY,
+                        timestamp TIMESTAMP NOT NULL,
+                        active_channels INTEGER NOT NULL,
+                        concurrent_users INTEGER NOT NULL,
+                        message_throughput DECIMAL(10,3) NOT NULL,
+                        avg_response_time DECIMAL(10,3) NOT NULL,
+                        sla_compliance_rate DECIMAL(5,2) NOT NULL,
+                        media_processing_success_rate DECIMAL(5,2) NOT NULL,
+                        cross_channel_handoffs INTEGER NOT NULL,
+                        personality_adaptation_accuracy DECIMAL(5,2) NOT NULL,
+                        error_rate DECIMAL(5,2) NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                    
+                    CREATE INDEX IF NOT EXISTS idx_performance_timestamp ON whatsapp_performance_snapshots(timestamp);
+                    CREATE INDEX IF NOT EXISTS idx_performance_sla ON whatsapp_performance_snapshots(sla_compliance_rate);
+                """)
+                
+                # SLA reports table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS whatsapp_sla_reports (
+                        id SERIAL PRIMARY KEY,
+                        period_start TIMESTAMP NOT NULL,
+                        period_end TIMESTAMP NOT NULL,
+                        target_response_time DECIMAL(5,2) NOT NULL,
+                        actual_avg_response_time DECIMAL(10,3) NOT NULL,
+                        compliance_percentage DECIMAL(5,2) NOT NULL,
+                        total_messages INTEGER NOT NULL,
+                        within_sla_messages INTEGER NOT NULL,
+                        peak_concurrent_users INTEGER NOT NULL,
+                        uptime_percentage DECIMAL(5,2) NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                    
+                    CREATE INDEX IF NOT EXISTS idx_sla_period ON whatsapp_sla_reports(period_start, period_end);
+                """)
+                
+                self.db_connection.commit()
+                logger.info("Monitoring database tables created")
+                
+        except Exception as e:
+            logger.error(f"Error creating monitoring tables: {e}")
+    
+    async def start_monitoring_loop(self, interval_seconds: int = 60):
+        """Start continuous performance monitoring loop"""
+        logger.info(f"Starting WhatsApp performance monitoring (interval: {interval_seconds}s)")
+        
+        # Create tables if needed
+        await self.create_monitoring_tables()
+        
+        while True:
+            try:
+                # Store performance snapshot
+                await self.store_performance_snapshot()
+                
+                # Update SLA compliance
+                await self.calculate_sla_compliance()
+                
+                # Log current metrics
+                metrics = await self.get_current_performance_metrics()
+                logger.info(
+                    f"Performance snapshot: "
+                    f"throughput={metrics.message_throughput:.2f}msg/s, "
+                    f"avg_response={metrics.avg_response_time:.2f}s, "
+                    f"sla_compliance={metrics.sla_compliance_rate:.1f}%, "
+                    f"error_rate={metrics.error_rate:.1f}%"
+                )
+                
+                await asyncio.sleep(interval_seconds)
+                
+            except Exception as e:
+                logger.error(f"Error in monitoring loop: {e}")
+                await asyncio.sleep(interval_seconds)
+    
+    def start_prometheus_server(self, port: int = 9090):
+        """Start Prometheus metrics server"""
+        try:
+            start_http_server(port)
+            logger.info(f"Prometheus metrics server started on port {port}")
+        except Exception as e:
+            logger.error(f"Error starting Prometheus server: {e}")
+    
+    async def get_health_check(self) -> Dict[str, Any]:
+        """Get monitoring system health check"""
+        try:
+            redis_status = "connected"
+            try:
+                await asyncio.to_thread(self.redis_client.ping)
+            except:
+                redis_status = "disconnected"
+            
+            db_status = "connected" if self.db_connection else "disconnected"
+            if self.db_connection:
+                try:
+                    with self.db_connection.cursor() as cursor:
+                        cursor.execute("SELECT 1")
+                except:
+                    db_status = "error"
+            
+            current_metrics = await self.get_current_performance_metrics()
+            
+            return {
+                "service": "whatsapp_performance_monitor",
+                "status": "healthy",
+                "timestamp": datetime.now().isoformat(),
+                "connections": {
+                    "redis": redis_status,
+                    "database": db_status
+                },
+                "current_metrics": asdict(current_metrics),
+                "monitoring": {
+                    "prometheus_enabled": True,
+                    "sla_target": "3.0s response time",
+                    "concurrent_user_target": "500+ users",
+                    "phase2_features_monitored": [
+                        "media_processing",
+                        "cross_channel_handoffs",
+                        "personality_adaptation",
+                        "premium_casual_tone"
+                    ]
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in health check: {e}")
+            return {
+                "service": "whatsapp_performance_monitor",
+                "status": "error",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
+            }
+
+# Global monitor instance
+performance_monitor = WhatsAppPerformanceMonitor()
+
+
+if __name__ == "__main__":
+    """Run monitoring system standalone"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='WhatsApp Performance Monitor')
+    parser.add_argument('--prometheus-port', type=int, default=9090, help='Prometheus metrics port')
+    parser.add_argument('--interval', type=int, default=60, help='Monitoring interval in seconds')
+    
+    args = parser.parse_args()
+    
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    async def main():
+        # Start Prometheus server
+        performance_monitor.start_prometheus_server(args.prometheus_port)
+        
+        # Start monitoring loop
+        await performance_monitor.start_monitoring_loop(args.interval)
+    
+    asyncio.run(main())
