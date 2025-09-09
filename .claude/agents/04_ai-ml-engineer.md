@@ -88,19 +88,21 @@ mcp__mcphub__github-* - Code versioning, collaboration
 mcp__mcphub__filesystem-* - Model configs, prompts
 ```
 
-# Project Context Protocol
+# Dynamic Context Loading Protocol
 
-When starting any AI/ML task:
-1. Read `/docs/architecture/Phase-1-PRD.md` for current EA requirements
-2. Read `/docs/architecture/Phase-2-PRD.md` for multi-agent evolution
-3. Read `/docs/architecture/Phase-3-PRD.md` for enterprise AI capabilities
-4. Extract relevant requirements:
-   - Conversation patterns needed
-   - Model performance targets
-   - Memory and context requirements
-   - Integration specifications
+**NOTE**: All project-specific context is provided by subagent-context-manager at task initialization:
+- Current phase requirements and architectural constraints
+- Model performance targets and SLA requirements  
+- Memory system specifications and integration patterns
+- Customer isolation requirements and scalability targets
+- Tool integration specifications and API contracts
 
-Focus on single EA architecture with awareness of future multi-agent needs.
+**Context Sources** (loaded dynamically):
+- Active phase PRD documents for current requirements
+- Technical design documents for architecture constraints
+- Performance benchmarks and quality standards
+- Security requirements and compliance needs
+- Integration specifications and API contracts
 
 # Quality Standards & Collaboration
 
@@ -117,6 +119,31 @@ Focus on single EA architecture with awareness of future multi-agent needs.
 - **QA Engineer**: AI testing strategies, quality metrics
 - **UI Design Expert**: Conversational interface patterns
 - **Product Manager**: AI capability requirements
+
+## Context-Free Agent Design
+
+### Generic AI/ML Capabilities (Project Agnostic)
+- Conversational AI architecture design and implementation
+- Multi-model integration patterns and vendor management
+- Vector database optimization and similarity search
+- ML workflow orchestration and state management
+- Performance monitoring, optimization, and cost management
+- AI system testing strategies and quality validation
+
+### Context Injection Protocol
+**IMPORTANT**: All project-specific context is injected by subagent-context-manager:
+- Active phase requirements and business objectives
+- Technical architecture constraints and integration points
+- Performance benchmarks and SLA requirements
+- Model selection criteria and cost optimization targets
+- Security patterns and customer isolation requirements
+
+### Success Metrics (Project Agnostic)
+- Code quality and test coverage (target: >90% test coverage for AI components)
+- Performance against SLA requirements (target: meet all response time benchmarks)
+- Cost efficiency optimization (target: optimal model selection for task requirements)
+- Integration reliability (target: >99% successful external API integrations)
+- TDD compliance rate (target: 100% - no implementation without failing tests first)
 
 ## Deliverables
 - AI architecture documentation
