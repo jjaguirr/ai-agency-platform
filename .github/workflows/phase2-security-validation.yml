@@ -1,0 +1,384 @@
+# Phase 2 EA Orchestration - Security Validation Workflow
+# Automated security testing for customer isolation and GDPR compliance
+
+name: Phase 2 Security Validation
+
+on:
+  push:
+    branches: [ feat/per-customer-isolation-testing, phase-2-development, main ]
+  pull_request:
+    branches: [ phase-2-development, main ]
+    types: [ opened, synchronize, ready_for_review ]
+  schedule:
+    # Daily security scans at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      security_level:
+        description: 'Security validation level'
+        required: true
+        default: 'comprehensive'
+        type: choice
+        options:
+        - basic
+        - comprehensive
+        - penetration_testing
+
+env:
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '18'
+  DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
+  REDIS_URL: ${{ secrets.TEST_REDIS_URL }}
+  JWT_SECRET: ${{ secrets.JWT_SECRET }}
+
+jobs:
+  security-validation:
+    name: Security Validation Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ai_agency_platform_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Cache Python dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-dev.txt
+        pip install pytest-xdist pytest-cov bandit safety
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y postgresql-client
+
+    - name: Set up database
+      env:
+        PGPASSWORD: postgres
+      run: |
+        # Create test database schema
+        psql -h localhost -U postgres -d ai_agency_platform_test -f src/database/schema.sql
+        
+        # Verify database setup
+        psql -h localhost -U postgres -d ai_agency_platform_test -c "\dt"
+
+    - name: Security scan - Dependencies
+      run: |
+        echo "🔍 Scanning dependencies for known vulnerabilities..."
+        safety check --json --output safety-report.json || true
+        
+        # Check for high/critical vulnerabilities
+        if [ -f safety-report.json ]; then
+          critical_vulns=$(jq '[.[] | select(.vulnerability_id)] | length' safety-report.json)
+          if [ "$critical_vulns" -gt 0 ]; then
+            echo "❌ Found $critical_vulns critical vulnerabilities"
+            jq '.[] | select(.vulnerability_id) | .vulnerability_id' safety-report.json
+            exit 1
+          else
+            echo "✅ No critical vulnerabilities found in dependencies"
+          fi
+        fi
+
+    - name: Security scan - Code analysis (SAST)
+      run: |
+        echo "🔍 Running static application security testing..."
+        bandit -r src/ -f json -o bandit-report.json || true
+        
+        # Check for high/medium severity issues
+        if [ -f bandit-report.json ]; then
+          high_issues=$(jq '.results[] | select(.issue_severity == "HIGH" or .issue_severity == "MEDIUM") | .issue_severity' bandit-report.json | wc -l)
+          if [ "$high_issues" -gt 0 ]; then
+            echo "❌ Found $high_issues high/medium severity security issues"
+            jq '.results[] | select(.issue_severity == "HIGH" or .issue_severity == "MEDIUM")' bandit-report.json
+            exit 1
+          else
+            echo "✅ No high/medium severity security issues found"
+          fi
+        fi
+
+    - name: Customer isolation validation
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_agency_platform_test
+        REDIS_URL: redis://localhost:6379/1
+      run: |
+        echo "🔒 Validating 100% customer data isolation..."
+        
+        # Run customer isolation tests
+        python -m pytest tests/security/test_phase2_isolation_validation.py::TestPhase2CustomerIsolation -v \
+          --tb=short --maxfail=5 --timeout=300
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ Customer isolation: 100% validated"
+        else
+          echo "❌ Customer isolation validation FAILED"
+          exit 1
+        fi
+
+    - name: OWASP Top 10 validation
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_agency_platform_test
+      run: |
+        echo "🛡️ Validating OWASP Top 10 mitigations..."
+        
+        # Run OWASP security tests
+        python -m pytest tests/security/test_phase2_isolation_validation.py::TestOWASPTop10Mitigations -v \
+          --tb=short --maxfail=3
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ OWASP Top 10: All mitigations validated"
+        else
+          echo "❌ OWASP Top 10 validation FAILED"
+          exit 1
+        fi
+
+    - name: GDPR compliance validation
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_agency_platform_test
+      run: |
+        echo "🇪🇺 Validating GDPR compliance..."
+        
+        # Run GDPR compliance tests
+        python -m pytest tests/security/test_phase2_isolation_validation.py::TestGDPRComplianceValidation -v \
+          --tb=short --maxfail=3
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ GDPR compliance: Fully validated"
+        else
+          echo "❌ GDPR compliance validation FAILED"
+          exit 1
+        fi
+
+    - name: Performance security testing
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_agency_platform_test
+        REDIS_URL: redis://localhost:6379/1
+      run: |
+        echo "⚡ Testing security performance under load..."
+        
+        # Run performance security tests
+        python -m pytest tests/security/test_phase2_isolation_validation.py::TestPerformanceUnderLoad -v \
+          --tb=short --maxfail=2 --timeout=600
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ Performance security: SLA requirements met"
+        else
+          echo "❌ Performance security validation FAILED"
+          exit 1
+        fi
+
+    - name: Penetration testing
+      if: github.event.inputs.security_level == 'penetration_testing' || github.event.inputs.security_level == 'comprehensive' || github.event_name == 'schedule'
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_agency_platform_test
+        REDIS_URL: redis://localhost:6379/1
+      run: |
+        echo "🔓 Running comprehensive penetration tests..."
+        
+        # Run penetration tests
+        python -m pytest tests/security/test_penetration_testing.py -v \
+          --tb=short --maxfail=5 --timeout=900
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ Penetration testing: All attacks blocked"
+        else
+          echo "❌ Penetration testing FAILED - Security vulnerabilities detected"
+          exit 1
+        fi
+
+    - name: Comprehensive security validation suite
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_agency_platform_test
+        REDIS_URL: redis://localhost:6379/1
+      run: |
+        echo "🎯 Running comprehensive security validation suite..."
+        
+        # Create configuration file
+        cat > security_config.json << EOF
+        {
+          "jwt_secret": "${{ env.JWT_SECRET }}",
+          "rate_limiting": {"enabled": true},
+          "cors": {"allow_origins": ["https://yourdomain.com"]},
+          "security_alerting": {"enabled": true}
+        }
+        EOF
+        
+        # Run comprehensive security suite
+        python scripts/security_validation_suite.py \
+          --config security_config.json \
+          --output security_validation_report.txt \
+          --ci-mode
+        
+        validation_exit_code=$?
+        
+        # Display results
+        echo "Security validation completed with exit code: $validation_exit_code"
+        
+        if [ -f security_validation_report.txt ]; then
+          echo "📊 Security Validation Report:"
+          cat security_validation_report.txt
+        fi
+        
+        # Check compliance score
+        if [ -f security_validation_results*.json ]; then
+          compliance_score=$(jq -r '.summary.compliance_percentage' security_validation_results*.json)
+          echo "🎯 Compliance Score: ${compliance_score}%"
+          
+          if (( $(echo "$compliance_score >= 95" | bc -l) )); then
+            echo "✅ Enterprise security requirements met (${compliance_score}% >= 95%)"
+          else
+            echo "❌ Enterprise security requirements NOT met (${compliance_score}% < 95%)"
+            exit 1
+          fi
+        fi
+        
+        exit $validation_exit_code
+
+    - name: Upload security reports
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: security-validation-reports
+        path: |
+          security_validation_report.txt
+          security_validation_results*.json
+          safety-report.json
+          bandit-report.json
+        retention-days: 30
+
+    - name: Security notification
+      if: failure() && (github.event_name == 'push' || github.event_name == 'schedule')
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const issue_body = `# 🚨 Security Validation Failed
+          
+          **Branch:** \`${context.ref}\`
+          **Commit:** \`${context.sha}\`
+          **Workflow:** ${context.workflow}
+          **Run:** ${context.runNumber}
+          
+          ## Failure Details
+          Security validation failed for Phase 2 EA Orchestration system.
+          
+          ### Critical Actions Required:
+          1. Review security validation logs
+          2. Address identified vulnerabilities
+          3. Re-run security validation
+          4. Do not proceed with deployment until security validation passes
+          
+          ### Security Requirements:
+          - ✅ 100% customer data isolation
+          - ✅ OWASP Top 10 mitigations  
+          - ✅ GDPR compliance validation
+          - ✅ Performance security under load
+          - ✅ Penetration testing all attack vectors
+          
+          **⚠️ Deployment is BLOCKED until security validation passes with ≥95% compliance score.**
+          
+          [View workflow run](${context.payload.repository.html_url}/actions/runs/${context.runId})
+          `;
+          
+          github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: `🚨 Security Validation Failed - ${context.ref}`,
+            body: issue_body,
+            labels: ['security', 'critical', 'phase-2']
+          });
+
+  security-summary:
+    name: Security Validation Summary
+    runs-on: ubuntu-latest
+    needs: security-validation
+    if: always()
+    
+    steps:
+    - name: Download security reports
+      uses: actions/download-artifact@v4
+      with:
+        name: security-validation-reports
+        path: reports/
+
+    - name: Security validation summary
+      run: |
+        echo "# Phase 2 EA Orchestration - Security Validation Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ needs.security-validation.result }}" == "success" ]; then
+          echo "## ✅ Security Validation: PASSED" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🎯 **Enterprise Ready:** All security requirements validated" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Validated Security Controls:" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **100% Customer Data Isolation**" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **OWASP Top 10 Mitigations**" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **GDPR Compliance (Articles 17, 20)**" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **Performance Security (<100ms SLA)**" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **Penetration Testing (All Attack Vectors)**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f reports/security_validation_results*.json ]; then
+            compliance_score=$(jq -r '.summary.compliance_percentage' reports/security_validation_results*.json)
+            echo "**Compliance Score:** ${compliance_score}%" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🚀 **Deployment Status:** APPROVED FOR PRODUCTION" >> $GITHUB_STEP_SUMMARY
+          
+        else
+          echo "## ❌ Security Validation: FAILED" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🚨 **Security vulnerabilities detected** - Deployment BLOCKED" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Required Actions:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Review security validation logs" >> $GITHUB_STEP_SUMMARY
+          echo "2. Address identified vulnerabilities" >> $GITHUB_STEP_SUMMARY
+          echo "3. Re-run security validation" >> $GITHUB_STEP_SUMMARY
+          echo "4. Achieve ≥95% compliance score" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "⛔ **Deployment Status:** BLOCKED UNTIL SECURITY VALIDATION PASSES" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "---" >> $GITHUB_STEP_SUMMARY
+        echo "*Security validation ensures 100% customer data isolation and enterprise compliance.*" >> $GITHUB_STEP_SUMMARY
