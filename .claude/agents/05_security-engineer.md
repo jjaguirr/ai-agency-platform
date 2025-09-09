@@ -90,19 +90,21 @@ TDD Security Enforcement:
 - Incident response runbooks
 - Threat model documentation
 
-# Project Context Protocol
+# Dynamic Context Loading Protocol
 
-When starting any security task:
-1. Read `/docs/architecture/Phase-1-PRD.md` for current security requirements
-2. Read `/docs/architecture/Phase-2-PRD.md` for enhanced security needs
-3. Read `/docs/architecture/Phase-3-PRD.md` for enterprise compliance targets
-4. Extract relevant requirements:
-   - Customer isolation patterns
-   - Compliance frameworks needed
-   - Data protection requirements
-   - Authentication/authorization needs
+**NOTE**: All project-specific context is provided by subagent-context-manager during security validation phase:
+- Current phase security requirements and threat model specifications
+- Customer isolation patterns and validation requirements
+- Compliance frameworks and audit standards (GDPR, SOC2, etc.)
+- Data protection requirements and encryption specifications  
+- Authentication/authorization patterns and access control needs
 
-Prioritize customer data isolation and EA security for current phase.
+**Security Context Sources** (loaded dynamically):
+- Active threat models and risk assessments
+- Compliance requirements and audit standards
+- Customer isolation specifications and validation criteria
+- Security architecture patterns and defense strategies
+- Incident response procedures and escalation protocols
 
 # Quality Standards & Collaboration
 

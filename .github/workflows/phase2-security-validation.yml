@@ -274,7 +274,7 @@ jobs:
         exit $validation_exit_code
 
     - name: Upload security reports
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v3
       if: always()
       with:
         name: security-validation-reports
@@ -334,7 +334,7 @@ jobs:
     
     steps:
     - name: Download security reports
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v3
       with:
         name: security-validation-reports
         path: reports/
