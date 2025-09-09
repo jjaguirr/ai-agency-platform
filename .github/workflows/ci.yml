@@ -41,7 +41,13 @@ jobs:
           echo "Checking Qdrant..."
           timeout 90 bash -c 'until wget --spider --quiet http://localhost:6333/health 2>/dev/null; do sleep 5; done'
           
-          echo "✅ All services are healthy!"
+          echo "Checking Voice CI Test Runner..."
+          timeout 60 bash -c 'until wget --spider --quiet http://localhost:8084/health 2>/dev/null; do sleep 5; done'
+          
+          echo "Checking Voice API Mock..."
+          timeout 60 bash -c 'until wget --spider --quiet http://localhost:8085/health 2>/dev/null; do sleep 5; done'
+          
+          echo "✅ All services including voice integration are healthy!"
           
       - name: Verify service connectivity
         id: health
@@ -58,7 +64,16 @@ jobs:
           echo "Testing Qdrant API..."
           curl -s http://localhost:6333/health | grep -q "ok" 
           
-          echo "✅ All services are connected and responding!"
+          echo "Testing Voice CI Test Runner..."
+          curl -s http://localhost:8084/health | grep -q "memory-monitor"
+          
+          echo "Testing Voice API Mock..."
+          curl -s http://localhost:8085/health | grep -q "voice-api"
+          
+          echo "Testing Voice Status Endpoint..."
+          curl -s http://localhost:8085/voice/status | grep -q "voice_ready"
+          
+          echo "✅ All services including voice integration are connected and responding!"
       
       - name: Test EA Basic Conversation
         run: |
@@ -123,6 +138,8 @@ jobs:
           echo "- PostgreSQL: Checked" >> $GITHUB_STEP_SUMMARY
           echo "- Redis: Checked" >> $GITHUB_STEP_SUMMARY
           echo "- Qdrant: Checked" >> $GITHUB_STEP_SUMMARY
+          echo "- Voice CI Test Runner: Checked" >> $GITHUB_STEP_SUMMARY
+          echo "- Voice API Mock: Checked" >> $GITHUB_STEP_SUMMARY
       
       - name: Cleanup
         if: always()
