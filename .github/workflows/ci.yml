@@ -35,11 +35,10 @@ jobs:
               POSTGRES_HEALTH=$(docker inspect --format="{{.State.Health.Status}}" ai-agency-postgres-ci 2>/dev/null || echo "starting")
               REDIS_HEALTH=$(docker inspect --format="{{.State.Health.Status}}" ai-agency-redis-ci 2>/dev/null || echo "starting")
               QDRANT_HEALTH=$(docker inspect --format="{{.State.Health.Status}}" ai-agency-qdrant-ci 2>/dev/null || echo "starting")
-              CI_RUNNER_HEALTH=$(docker inspect --format="{{.State.Health.Status}}" ai-agency-ci-test-runner 2>/dev/null || echo "starting")
               
-              echo "Health Status - Postgres: $POSTGRES_HEALTH, Redis: $REDIS_HEALTH, Qdrant: $QDRANT_HEALTH, CI-Runner: $CI_RUNNER_HEALTH"
+              echo "Health Status - Postgres: $POSTGRES_HEALTH, Redis: $REDIS_HEALTH, Qdrant: $QDRANT_HEALTH"
               
-              if [[ "$POSTGRES_HEALTH" == "healthy" && "$REDIS_HEALTH" == "healthy" && "$QDRANT_HEALTH" == "healthy" && "$CI_RUNNER_HEALTH" == "healthy" ]]; then
+              if [[ "$POSTGRES_HEALTH" == "healthy" && "$REDIS_HEALTH" == "healthy" && "$QDRANT_HEALTH" == "healthy" ]]; then
                 echo "✅ All services are healthy!"
                 break
               fi
