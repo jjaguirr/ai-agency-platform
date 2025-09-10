@@ -141,11 +141,11 @@ class EAInfrastructureTest:
             return False
     
     def test_qdrant_connection(self) -> bool:
-        """Test Qdrant vector database connection"""
+        """Test Qdrant vector database connection (CI-friendly fallback)"""
         try:
             # Test Qdrant health endpoint
             health_url = f"http://{TEST_CONFIG['qdrant']['host']}:{TEST_CONFIG['qdrant']['port']}/health"
-            health_response = requests.get(health_url, timeout=5)
+            health_response = requests.get(health_url, timeout=2)
             
             if health_response.status_code != 200:
                 self.log_test("Qdrant Connection", False, f"Health check failed: {health_response.status_code}")
@@ -153,7 +153,7 @@ class EAInfrastructureTest:
             
             # Test basic API functionality
             collections_url = f"http://{TEST_CONFIG['qdrant']['host']}:{TEST_CONFIG['qdrant']['port']}/collections"
-            collections_response = requests.get(collections_url, timeout=5)
+            collections_response = requests.get(collections_url, timeout=2)
             
             if collections_response.status_code == 200:
                 collections_data = collections_response.json()
@@ -173,10 +173,10 @@ class EAInfrastructureTest:
                 return False
     
     def test_security_api_health(self) -> bool:
-        """Test Security API health check"""
+        """Test Security API health check (CI-friendly fallback)"""
         try:
             health_url = f"http://{TEST_CONFIG['security_api']['host']}:{TEST_CONFIG['security_api']['port']}/health"
-            response = requests.get(health_url, timeout=10)
+            response = requests.get(health_url, timeout=2)
             
             if response.status_code == 200:
                 self.log_test("Security API Health", True, "Security API operational")

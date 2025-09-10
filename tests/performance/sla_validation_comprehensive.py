@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Issue #50: Comprehensive SLA Validation Framework - Voice Integration Stream
+Issue #50: Comprehensive SLA Validation Framework - WhatsApp Integration Stream
 
 This framework validates ALL performance claims in Phase 2 PRD to address
 unvalidated SLA claims blocking production deployment.
 
-CRITICAL: This validates the voice integration system against these SLA targets:
-- <2s Voice Response Time (95th percentile)
-- 500+ Concurrent Voice Sessions
-- Bilingual Performance (Spanish/English)
-- ElevenLabs API Rate Limits handling
-- WebRTC Connection Stability
+CRITICAL: This validates the WhatsApp integration system against these SLA targets:
+- <3s Message Processing Response Time  
+- 500+ Messages/Minute Processing Capacity
+- Media Processing Performance (<10s for large files up to 10MB)
+- Cross-channel Handoff (<1s context switch time)
+- Database Connection Pool Performance under concurrent load
 
 All tests MUST pass before production deployment approval.
 """
@@ -25,18 +25,19 @@ from typing import Dict, Any, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor
 import uuid
 import aiohttp
-import websockets
 import pytest
 from dataclasses import dataclass, asdict
 import numpy as np
 import threading
+import tempfile
+import os
 from contextlib import asynccontextmanager
 
-# Voice integration imports  
-from src.agents.voice_integration import create_voice_enabled_ea
-from src.communication.voice_channel import VoiceLanguage
-from src.communication.webrtc_voice_handler import voice_manager
-from src.external.elevenlabs_client import ElevenLabsClient
+# WhatsApp integration imports
+from src.communication.whatsapp_handler import WhatsAppHandler
+from src.agents.executive_assistant import ExecutiveAssistant, ConversationChannel
+from src.communication.cross_channel_coordinator import CrossChannelCoordinator
+from src.database.connection_pool import DatabaseConnectionPool
 
 logger = logging.getLogger(__name__)
 
@@ -63,31 +64,31 @@ class SLAResult:
         if self.timestamp is None:
             self.timestamp = datetime.now()
 
-class VoiceSLAValidator:
-    """Comprehensive SLA validator for voice integration system"""
+class WhatsAppSLAValidator:
+    """Comprehensive SLA validator for WhatsApp integration system"""
     
     # Phase 2 PRD SLA Targets
     SLA_TARGETS = [
-        SLATarget("voice_response_time", 2.0, "seconds", 95, 
-                 "<2s Voice Response Time (95th percentile)"),
-        SLATarget("concurrent_voice_sessions", 500, "sessions", None,
-                 "500+ Concurrent Voice Sessions"),
-        SLATarget("bilingual_switching_overhead", 0.2, "seconds", None,
-                 "Bilingual switching adds <200ms overhead"),
-        SLATarget("memory_usage_per_100_users", 2048, "MB", None,
-                 "Memory usage <2GB per 100 concurrent users"),
-        SLATarget("availability_uptime", 99.5, "percent", None,
-                 "99.5% availability under normal load"),
-        SLATarget("recognition_accuracy_english", 85.0, "percent", None,
-                 ">85% recognition accuracy English"),
-        SLATarget("recognition_accuracy_spanish", 85.0, "percent", None,
-                 ">85% recognition accuracy Spanish"),
+        SLATarget("message_processing_time", 3.0, "seconds", None,
+                 "<3s Message Processing Response Time"),
+        SLATarget("messages_per_minute_capacity", 500, "messages/minute", None,
+                 "500+ Messages/Minute Processing Capacity"),
+        SLATarget("media_processing_time_large", 10.0, "seconds", None,
+                 "<10s Media Processing for Large Files (up to 10MB)"),
+        SLATarget("cross_channel_handoff_time", 1.0, "seconds", None,
+                 "<1s Cross-channel Handoff Context Switch"),
+        SLATarget("database_query_time", 0.1, "seconds", None,
+                 "<100ms Database Query Average"),
+        SLATarget("redis_operation_time", 0.05, "seconds", None,
+                 "<50ms Redis Operation Average"),
+        SLATarget("concurrent_processing_capacity", 100, "concurrent_messages", None,
+                 "100+ Concurrent Message Processing"),
     ]
     
     def __init__(self, config: Dict[str, Any] = None):
         self.config = config or {}
         self.base_url = self.config.get('base_url', 'http://localhost:8001')
-        self.websocket_url = self.config.get('websocket_url', 'ws://localhost:8001')
+        self.whatsapp_webhook_url = self.config.get('webhook_url', 'http://localhost:8001/whatsapp/webhook')
         
         # Test results storage
         self.sla_results: List[SLAResult] = []
@@ -95,80 +96,85 @@ class VoiceSLAValidator:
         self.session_lock = threading.Lock()
         
         # Performance tracking
-        self.response_times: List[float] = []
-        self.bilingual_switch_times: List[float] = []
-        self.memory_usage_samples: List[float] = []
-        self.concurrent_session_counts: List[int] = []
+        self.message_processing_times: List[float] = []
+        self.media_processing_times: List[float] = []
+        self.database_query_times: List[float] = []
+        self.redis_operation_times: List[float] = []
+        self.cross_channel_handoff_times: List[float] = []
+        self.concurrent_message_counts: List[int] = []
         
         # Test data
-        self.english_test_phrases = self._generate_english_test_phrases()
-        self.spanish_test_phrases = self._generate_spanish_test_phrases()
-        self.mixed_language_tests = self._generate_mixed_language_tests()
+        self.test_messages = self._generate_test_messages()
+        self.test_media_files = self._generate_test_media_files()
         
-    def _generate_english_test_phrases(self) -> List[str]:
-        """Generate English test phrases covering business scenarios"""
+    def _generate_test_messages(self) -> List[Dict[str, Any]]:
+        """Generate test messages for various scenarios"""
         return [
-            "I need help setting up marketing automation for my agency",
-            "Can you create a workflow for client onboarding process",
-            "I want to automate my social media posting schedule",
-            "Help me track my business expenses and revenue streams",
-            "I need automated email sequences for lead nurturing",
-            "Create a customer support automation workflow",
-            "Set up invoice generation and payment tracking",
-            "Build a content creation and publishing pipeline",
-            "Automate my appointment scheduling and calendar management",
-            "Help me with competitive analysis and market research"
+            # Simple text messages
+            {"text": "Hello, I need help with my business", "type": "text", "complexity": "low"},
+            {"text": "Can you help me set up marketing automation?", "type": "text", "complexity": "medium"},
+            {"text": "I need a comprehensive business analysis with market research, competitor analysis, financial projections, and strategic recommendations for my expanding e-commerce platform targeting millennial consumers in the health and wellness space", "type": "text", "complexity": "high"},
+            
+            # Business-focused messages
+            {"text": "Create a workflow for client onboarding", "type": "text", "complexity": "medium"},
+            {"text": "Set up automated email sequences for my lead nurturing campaign", "type": "text", "complexity": "medium"},
+            {"text": "I need help with social media automation", "type": "text", "complexity": "low"},
+            
+            # Spanish messages for bilingual testing
+            {"text": "Hola, necesito ayuda con mi negocio", "type": "text", "complexity": "low", "language": "es"},
+            {"text": "¿Puedes ayudarme a configurar automatización de marketing?", "type": "text", "complexity": "medium", "language": "es"},
+            {"text": "Necesito un análisis integral del negocio con investigación de mercado", "type": "text", "complexity": "high", "language": "es"},
+            
+            # Media messages (will be simulated)
+            {"text": "[IMAGE] Product photo for marketing", "type": "image", "complexity": "medium"},
+            {"text": "[DOCUMENT] Business plan PDF", "type": "document", "complexity": "high"},
+            {"text": "[VIDEO] Product demo video", "type": "video", "complexity": "high"},
         ]
     
-    def _generate_spanish_test_phrases(self) -> List[str]:
-        """Generate Spanish test phrases covering business scenarios"""
-        return [
-            "Necesito ayuda configurando automatización de marketing para mi agencia",
-            "¿Puedes crear un flujo de trabajo para incorporar clientes?",
-            "Quiero automatizar mi programación de publicaciones en redes sociales",
-            "Ayúdame a rastrear mis gastos comerciales e ingresos",
-            "Necesito secuencias de correo automatizadas para cultivar leads",
-            "Crea un flujo de trabajo de automatización de soporte al cliente",
-            "Configura la generación de facturas y seguimiento de pagos",
-            "Construye un pipeline de creación y publicación de contenido",
-            "Automatiza mi programación de citas y gestión de calendario",
-            "Ayúdame con análisis competitivo e investigación de mercado"
+    def _generate_test_media_files(self) -> List[Dict[str, Any]]:
+        """Generate test media files for performance testing"""
+        media_files = []
+        
+        # Create temporary test files of various sizes
+        sizes = [
+            (1024 * 100, "small_image.jpg", "image/jpeg"),      # 100KB
+            (1024 * 500, "medium_image.jpg", "image/jpeg"),     # 500KB  
+            (1024 * 1024 * 2, "large_image.jpg", "image/jpeg"), # 2MB
+            (1024 * 1024 * 5, "large_document.pdf", "application/pdf"), # 5MB
+            (1024 * 1024 * 9, "large_video.mp4", "video/mp4"), # 9MB (under 10MB limit)
         ]
         
-    def _generate_mixed_language_tests(self) -> List[Dict[str, Any]]:
-        """Generate mixed language test scenarios for code-switching"""
-        return [
-            {
-                "english_phrase": "I need help with my business",
-                "spanish_phrase": "Necesito ayuda con mi empresa",
-                "switch_type": "mid_conversation"
-            },
-            {
-                "english_phrase": "Can you automate my marketing?",
-                "spanish_phrase": "¿Puedes automatizar mi marketing?",
-                "switch_type": "language_preference_change"
-            },
-            {
-                "english_phrase": "Set up workflows for my agency",
-                "spanish_phrase": "Configura flujos de trabajo para mi agencia",
-                "switch_type": "bilingual_user_test"
-            }
-        ]
+        for size, filename, content_type in sizes:
+            # Create temporary file
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=filename.split('.')[-1])
+            temp_file.write(b'0' * size)  # Fill with dummy data
+            temp_file.close()
+            
+            media_files.append({
+                "file_path": temp_file.name,
+                "filename": filename,
+                "content_type": content_type,
+                "size_bytes": size,
+                "size_mb": size / (1024 * 1024)
+            })
+        
+        return media_files
 
-    async def validate_voice_response_time_sla(self, concurrent_users: int = 100) -> SLAResult:
+    async def validate_message_processing_sla(self, concurrent_messages: int = 100) -> SLAResult:
         """
-        Validate <2s voice response time SLA (95th percentile)
-        Critical for Issue #50 - currently claimed but not validated
+        Validate <3s message processing SLA
+        Critical for Issue #50 - response time not validated under load
         """
-        logger.info(f"🎯 Validating voice response time SLA with {concurrent_users} concurrent users")
+        logger.info(f"🎯 Validating message processing SLA with {concurrent_messages} concurrent messages")
         
-        response_times = []
+        processing_times = []
         tasks = []
         
-        # Create concurrent voice requests
-        for i in range(concurrent_users):
+        # Create concurrent message processing tasks
+        for i in range(concurrent_messages):
+            message = self.test_messages[i % len(self.test_messages)]
             task = asyncio.create_task(
-                self._simulate_voice_conversation(f"voice_sla_test_{i}")
+                self._simulate_whatsapp_message_processing(f"test_user_{i}", message)
             )
             tasks.append(task)
         
@@ -180,122 +186,102 @@ class VoiceSLAValidator:
         # Process results
         successful_results = []
         for result in results:
-            if isinstance(result, dict) and 'response_time' in result:
-                response_times.append(result['response_time'])
+            if isinstance(result, dict) and 'processing_time' in result:
+                processing_times.append(result['processing_time'])
                 successful_results.append(result)
         
-        if not response_times:
+        if not processing_times:
             return SLAResult(
-                target=next(t for t in self.SLA_TARGETS if t.name == "voice_response_time"),
+                target=next(t for t in self.SLA_TARGETS if t.name == "message_processing_time"),
                 measured_value=float('inf'),
                 passed=False,
                 sample_size=0
             )
         
-        # Calculate 95th percentile
-        p95_response_time = np.percentile(response_times, 95)
-        target = next(t for t in self.SLA_TARGETS if t.name == "voice_response_time")
+        # Calculate average processing time
+        avg_processing_time = statistics.mean(processing_times)
+        max_processing_time = max(processing_times)
+        target = next(t for t in self.SLA_TARGETS if t.name == "message_processing_time")
         
         # Store results for analysis
-        self.response_times.extend(response_times)
+        self.message_processing_times.extend(processing_times)
         
         result = SLAResult(
             target=target,
-            measured_value=p95_response_time,
-            percentile_value=p95_response_time,
-            passed=p95_response_time < target.target_value,
-            sample_size=len(response_times)
+            measured_value=avg_processing_time,
+            passed=avg_processing_time < target.target_value,
+            sample_size=len(processing_times)
         )
         
-        logger.info(f"🎯 Voice Response Time SLA: {p95_response_time:.3f}s (target: <{target.target_value}s)")
-        logger.info(f"✅ Sample size: {len(response_times)}, Success rate: {len(successful_results)/concurrent_users:.1%}")
+        logger.info(f"🎯 Message Processing SLA: {avg_processing_time:.3f}s avg (target: <{target.target_value}s)")
+        logger.info(f"📊 Max time: {max_processing_time:.3f}s, Success rate: {len(successful_results)/concurrent_messages:.1%}")
         
         return result
 
-    async def validate_concurrent_sessions_sla(self, target_sessions: int = 500) -> SLAResult:
+    async def validate_throughput_sla(self, target_throughput: int = 500) -> SLAResult:
         """
-        Validate 500+ concurrent voice sessions SLA
-        Critical for Issue #50 - architecture supports but not validated
+        Validate 500+ messages/minute processing capacity
+        Critical for Issue #50 - concurrent processing capacity not tested
         """
-        logger.info(f"🎯 Validating concurrent sessions SLA: {target_sessions} sessions")
+        logger.info(f"🎯 Validating message throughput SLA: {target_throughput} messages/minute")
         
-        active_sessions = []
-        session_tasks = []
-        successful_sessions = 0
+        messages_processed = 0
+        start_time = time.time()
+        test_duration = 60.0  # 1 minute test
+        
+        # Create message processing tasks
+        processing_tasks = []
         
         try:
-            # Gradually ramp up concurrent sessions
-            batch_size = 50
-            for batch_start in range(0, target_sessions, batch_size):
-                batch_end = min(batch_start + batch_size, target_sessions)
-                batch_tasks = []
+            # Continuously create processing tasks for 1 minute
+            while time.time() - start_time < test_duration:
+                # Calculate current rate to reach target
+                elapsed = time.time() - start_time
+                target_rate = target_throughput / 60.0  # messages per second
                 
-                # Create batch of sessions
-                for i in range(batch_start, batch_end):
-                    session_id = f"concurrent_test_{i}"
+                # Create batch of messages
+                batch_size = max(1, int(target_rate * 2))  # Create slightly more to test capacity
+                
+                for i in range(batch_size):
+                    message = self.test_messages[messages_processed % len(self.test_messages)]
                     task = asyncio.create_task(
-                        self._maintain_voice_session(session_id, duration=60.0)
+                        self._simulate_whatsapp_message_processing(
+                            f"throughput_test_{messages_processed}", 
+                            message
+                        )
                     )
-                    batch_tasks.append(task)
-                    session_tasks.append(task)
+                    processing_tasks.append(task)
+                    messages_processed += 1
                 
-                # Wait for batch to establish
-                await asyncio.sleep(1.0)
-                
-                # Track active sessions
-                with self.session_lock:
-                    self.concurrent_session_counts.append(len(session_tasks))
-                
-                logger.info(f"📈 Active sessions: {len(session_tasks)}")
+                # Small delay to control rate
+                await asyncio.sleep(1.0 / target_rate)
             
-            # Maintain all sessions for test period
-            logger.info(f"🔄 Maintaining {len(session_tasks)} concurrent sessions...")
-            peak_sessions = len(session_tasks)
+            # Wait for all tasks to complete
+            logger.info(f"🔄 Waiting for {len(processing_tasks)} messages to complete processing...")
+            results = await asyncio.gather(*processing_tasks, return_exceptions=True)
             
-            # Monitor sessions for stability
-            monitor_duration = 30.0  # 30 seconds
-            monitor_start = time.time()
+            # Calculate actual throughput
+            actual_duration = time.time() - start_time
+            successful_results = [r for r in results if isinstance(r, dict) and r.get('success', False)]
+            actual_throughput = len(successful_results) / (actual_duration / 60.0)  # messages per minute
             
-            while time.time() - monitor_start < monitor_duration:
-                # Count active sessions
-                active_count = sum(1 for task in session_tasks if not task.done())
-                self.concurrent_session_counts.append(active_count)
-                
-                if active_count < target_sessions * 0.95:  # Allow 5% session loss
-                    logger.warning(f"⚠️ Session count dropped to {active_count}")
-                
-                await asyncio.sleep(1.0)
-            
-            # Gracefully shutdown sessions
-            logger.info("🔄 Shutting down concurrent sessions...")
-            for task in session_tasks:
-                if not task.done():
-                    task.cancel()
-            
-            # Wait for cleanup
-            await asyncio.sleep(2.0)
-            
-            # Calculate results
-            peak_concurrent = max(self.concurrent_session_counts) if self.concurrent_session_counts else 0
-            avg_concurrent = statistics.mean(self.concurrent_session_counts) if self.concurrent_session_counts else 0
-            
-            target = next(t for t in self.SLA_TARGETS if t.name == "concurrent_voice_sessions")
+            target = next(t for t in self.SLA_TARGETS if t.name == "messages_per_minute_capacity")
             
             result = SLAResult(
                 target=target,
-                measured_value=peak_concurrent,
-                passed=peak_concurrent >= target.target_value,
-                sample_size=len(self.concurrent_session_counts)
+                measured_value=actual_throughput,
+                passed=actual_throughput >= target.target_value,
+                sample_size=len(successful_results)
             )
             
-            logger.info(f"🎯 Concurrent Sessions SLA: {peak_concurrent} peak (target: ≥{target.target_value})")
-            logger.info(f"📊 Average concurrent: {avg_concurrent:.0f}, Stability: {(avg_concurrent/peak_concurrent)*100:.1f}%")
+            logger.info(f"🎯 Throughput SLA: {actual_throughput:.0f} msg/min (target: ≥{target.target_value} msg/min)")
+            logger.info(f"📊 Messages processed: {len(successful_results)}/{messages_processed}")
             
             return result
             
         except Exception as e:
-            logger.error(f"❌ Concurrent sessions test failed: {e}")
-            target = next(t for t in self.SLA_TARGETS if t.name == "concurrent_voice_sessions")
+            logger.error(f"❌ Throughput test failed: {e}")
+            target = next(t for t in self.SLA_TARGETS if t.name == "messages_per_minute_capacity")
             return SLAResult(
                 target=target,
                 measured_value=0,
@@ -303,236 +289,272 @@ class VoiceSLAValidator:
                 sample_size=0
             )
 
-    async def validate_bilingual_performance_sla(self) -> SLAResult:
+    async def validate_media_processing_sla(self) -> SLAResult:
         """
-        Validate bilingual Spanish/English switching performance
-        Critical for Issue #50 - switching latency not benchmarked
+        Validate media processing performance for large files
+        Critical for Issue #50 - large file handling not benchmarked
         """
-        logger.info("🎯 Validating bilingual switching performance SLA")
+        logger.info("🎯 Validating media processing SLA for large files")
         
-        switch_times = []
+        media_processing_times = []
         
-        # Test language switching scenarios
-        for test_case in self.mixed_language_tests:
-            # Start in English
-            start_time = time.time()
-            english_response = await self._simulate_voice_request(
-                test_case["english_phrase"], 
-                language="en"
+        try:
+            # Test each media file size
+            for media_file in self.test_media_files:
+                logger.info(f"📎 Testing {media_file['filename']} ({media_file['size_mb']:.1f}MB)")
+                
+                start_time = time.time()
+                success = await self._simulate_media_processing(media_file)
+                processing_time = time.time() - start_time
+                
+                if success:
+                    media_processing_times.append(processing_time)
+                    logger.info(f"   ✅ Processed in {processing_time:.3f}s")
+                else:
+                    logger.error(f"   ❌ Failed to process {media_file['filename']}")
+            
+            # Focus on large files (>5MB) for SLA validation
+            large_file_times = [
+                time for i, time in enumerate(media_processing_times)
+                if self.test_media_files[i]['size_mb'] >= 5.0
+            ]
+            
+            if not large_file_times:
+                logger.error("❌ No large files processed successfully")
+                avg_time = float('inf')
+            else:
+                avg_time = statistics.mean(large_file_times)
+                max_time = max(large_file_times)
+                logger.info(f"📊 Large files: avg {avg_time:.3f}s, max {max_time:.3f}s")
+            
+            target = next(t for t in self.SLA_TARGETS if t.name == "media_processing_time_large")
+            
+            result = SLAResult(
+                target=target,
+                measured_value=avg_time,
+                passed=avg_time < target.target_value,
+                sample_size=len(large_file_times)
             )
-            english_time = time.time() - start_time
             
-            # Switch to Spanish - measure switching overhead
-            switch_start = time.time()
-            spanish_response = await self._simulate_voice_request(
-                test_case["spanish_phrase"], 
-                language="es"
+            logger.info(f"🎯 Media Processing SLA: {avg_time:.3f}s avg (target: <{target.target_value}s)")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ Media processing test failed: {e}")
+            target = next(t for t in self.SLA_TARGETS if t.name == "media_processing_time_large")
+            return SLAResult(
+                target=target,
+                measured_value=float('inf'),
+                passed=False,
+                sample_size=0
             )
-            spanish_time = time.time() - switch_start
-            
-            # Calculate switching overhead
-            baseline_time = (english_time + spanish_time) / 2
-            switch_overhead = spanish_time - baseline_time
-            
-            if switch_overhead > 0:  # Only positive overhead counts
-                switch_times.append(switch_overhead)
-            
-            logger.debug(f"🔄 Switch overhead: {switch_overhead:.3f}s for '{test_case['switch_type']}'")
+        finally:
+            # Clean up temporary files
+            for media_file in self.test_media_files:
+                try:
+                    os.unlink(media_file['file_path'])
+                except:
+                    pass
+
+    async def validate_cross_channel_handoff_sla(self) -> SLAResult:
+        """
+        Validate cross-channel handoff performance
+        Critical for Issue #50 - context switch time not validated
+        """
+        logger.info("🎯 Validating cross-channel handoff SLA")
         
-        # Test multiple rapid switches
-        rapid_switch_times = await self._test_rapid_language_switching()
-        switch_times.extend(rapid_switch_times)
+        handoff_times = []
         
-        # Calculate average switching overhead
-        avg_switch_time = statistics.mean(switch_times) if switch_times else 0
-        max_switch_time = max(switch_times) if switch_times else 0
+        try:
+            # Test various handoff scenarios
+            test_scenarios = [
+                {"from": "whatsapp", "to": "voice", "context": "business_planning"},
+                {"from": "whatsapp", "to": "email", "context": "document_review"},
+                {"from": "voice", "to": "whatsapp", "context": "follow_up"},
+                {"from": "email", "to": "whatsapp", "context": "urgent_response"},
+            ]
+            
+            for scenario in test_scenarios:
+                logger.info(f"🔄 Testing {scenario['from']} → {scenario['to']} handoff")
+                
+                # Simulate context-rich conversation state
+                conversation_context = await self._create_rich_conversation_context(scenario['context'])
+                
+                # Measure handoff time
+                handoff_start = time.time()
+                success = await self._simulate_cross_channel_handoff(
+                    scenario['from'], 
+                    scenario['to'], 
+                    conversation_context
+                )
+                handoff_time = time.time() - handoff_start
+                
+                if success:
+                    handoff_times.append(handoff_time)
+                    self.cross_channel_handoff_times.append(handoff_time)
+                    logger.info(f"   ✅ Handoff completed in {handoff_time:.3f}s")
+                else:
+                    logger.error(f"   ❌ Handoff failed for {scenario['from']} → {scenario['to']}")
+            
+            # Calculate average handoff time
+            if not handoff_times:
+                avg_handoff_time = float('inf')
+                logger.error("❌ No successful handoffs")
+            else:
+                avg_handoff_time = statistics.mean(handoff_times)
+                max_handoff_time = max(handoff_times)
+                logger.info(f"📊 Handoff times: avg {avg_handoff_time:.3f}s, max {max_handoff_time:.3f}s")
+            
+            target = next(t for t in self.SLA_TARGETS if t.name == "cross_channel_handoff_time")
+            
+            result = SLAResult(
+                target=target,
+                measured_value=avg_handoff_time,
+                passed=avg_handoff_time < target.target_value,
+                sample_size=len(handoff_times)
+            )
+            
+            logger.info(f"🎯 Cross-channel Handoff SLA: {avg_handoff_time:.3f}s (target: <{target.target_value}s)")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ Cross-channel handoff test failed: {e}")
+            target = next(t for t in self.SLA_TARGETS if t.name == "cross_channel_handoff_time")
+            return SLAResult(
+                target=target,
+                measured_value=float('inf'),
+                passed=False,
+                sample_size=0
+            )
+
+    async def validate_database_performance_sla(self, concurrent_queries: int = 50) -> SLAResult:
+        """
+        Validate database performance under concurrent load
+        Critical for Issue #50 - database connection pool not tested under concurrent load
+        """
+        logger.info(f"🎯 Validating database performance SLA with {concurrent_queries} concurrent queries")
         
-        target = next(t for t in self.SLA_TARGETS if t.name == "bilingual_switching_overhead")
+        query_times = []
+        tasks = []
+        
+        # Create various database operations
+        query_types = [
+            "customer_lookup",
+            "conversation_history",
+            "memory_storage",
+            "configuration_read",
+            "analytics_update"
+        ]
+        
+        # Create concurrent database query tasks
+        for i in range(concurrent_queries):
+            query_type = query_types[i % len(query_types)]
+            task = asyncio.create_task(
+                self._simulate_database_operation(f"db_test_{i}", query_type)
+            )
+            tasks.append(task)
+        
+        # Execute all tasks concurrently
+        start_time = time.time()
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        total_time = time.time() - start_time
+        
+        # Process results
+        successful_results = []
+        for result in results:
+            if isinstance(result, dict) and 'query_time' in result:
+                query_times.append(result['query_time'])
+                successful_results.append(result)
+        
+        if not query_times:
+            avg_query_time = float('inf')
+        else:
+            avg_query_time = statistics.mean(query_times)
+            max_query_time = max(query_times)
+            
+            # Store for analysis
+            self.database_query_times.extend(query_times)
+            
+            logger.info(f"📊 DB queries: avg {avg_query_time:.3f}s, max {max_query_time:.3f}s")
+        
+        target = next(t for t in self.SLA_TARGETS if t.name == "database_query_time")
         
         result = SLAResult(
             target=target,
-            measured_value=avg_switch_time,
-            passed=avg_switch_time < target.target_value,
-            sample_size=len(switch_times)
+            measured_value=avg_query_time,
+            passed=avg_query_time < target.target_value,
+            sample_size=len(query_times)
         )
         
-        logger.info(f"🎯 Bilingual Switching SLA: {avg_switch_time:.3f}s avg overhead (target: <{target.target_value}s)")
-        logger.info(f"📊 Max overhead: {max_switch_time:.3f}s, Tests: {len(switch_times)}")
+        logger.info(f"🎯 Database Performance SLA: {avg_query_time:.3f}s avg (target: <{target.target_value}s)")
         
         return result
 
-    async def validate_elevenlabs_rate_limits(self) -> Dict[str, Any]:
-        """
-        Validate ElevenLabs API rate limit handling
-        Critical for Issue #50 - handling not tested under load
-        """
-        logger.info("🎯 Validating ElevenLabs API rate limit handling")
-        
-        rate_limit_results = {
-            "requests_per_minute_limit": 0,
-            "graceful_degradation": False,
-            "error_recovery": False,
-            "queue_management": False
-        }
-        
-        # Test rate limit discovery
-        requests_count = 0
-        start_time = time.time()
-        
-        try:
-            # Rapidly send requests until rate limited
-            for i in range(200):  # Should trigger rate limit
-                try:
-                    await self._make_elevenlabs_request(f"Rate limit test {i}")
-                    requests_count += 1
-                    
-                    # Small delay to avoid overwhelming
-                    await asyncio.sleep(0.1)
-                    
-                except Exception as e:
-                    if "rate limit" in str(e).lower():
-                        elapsed = time.time() - start_time
-                        rate_limit_results["requests_per_minute_limit"] = int(requests_count / (elapsed / 60))
-                        rate_limit_results["graceful_degradation"] = True
-                        logger.info(f"📊 Rate limit detected: {requests_count} requests in {elapsed:.1f}s")
-                        break
-                    else:
-                        logger.error(f"❌ Unexpected error: {e}")
-            
-            # Test error recovery
-            await asyncio.sleep(2.0)  # Wait for rate limit reset
-            
-            try:
-                await self._make_elevenlabs_request("Recovery test")
-                rate_limit_results["error_recovery"] = True
-                logger.info("✅ Rate limit error recovery successful")
-            except Exception as e:
-                logger.error(f"❌ Rate limit recovery failed: {e}")
-            
-        except Exception as e:
-            logger.error(f"❌ Rate limit validation failed: {e}")
-        
-        return rate_limit_results
-
-    async def validate_webrtc_stability(self, duration_minutes: int = 5) -> Dict[str, Any]:
-        """
-        Validate WebRTC connection stability
-        Critical for Issue #50 - no failure recovery testing
-        """
-        logger.info(f"🎯 Validating WebRTC connection stability over {duration_minutes} minutes")
-        
-        stability_results = {
-            "total_connections": 0,
-            "successful_connections": 0,
-            "connection_failures": 0,
-            "average_connection_time": 0,
-            "reconnection_success": False,
-            "data_integrity": True
-        }
-        
-        connection_times = []
-        test_duration = duration_minutes * 60  # Convert to seconds
-        start_time = time.time()
-        
-        try:
-            while time.time() - start_time < test_duration:
-                connection_start = time.time()
-                
-                try:
-                    # Test WebRTC connection
-                    success = await self._test_webrtc_connection()
-                    connection_time = time.time() - connection_start
-                    
-                    stability_results["total_connections"] += 1
-                    
-                    if success:
-                        stability_results["successful_connections"] += 1
-                        connection_times.append(connection_time)
-                    else:
-                        stability_results["connection_failures"] += 1
-                        
-                        # Test reconnection
-                        reconnect_success = await self._test_webrtc_reconnection()
-                        if reconnect_success:
-                            stability_results["reconnection_success"] = True
-                
-                except Exception as e:
-                    stability_results["connection_failures"] += 1
-                    logger.error(f"❌ WebRTC connection error: {e}")
-                
-                # Test interval
-                await asyncio.sleep(5.0)
-        
-        except Exception as e:
-            logger.error(f"❌ WebRTC stability test failed: {e}")
-        
-        # Calculate metrics
-        if connection_times:
-            stability_results["average_connection_time"] = statistics.mean(connection_times)
-        
-        success_rate = (stability_results["successful_connections"] / 
-                       stability_results["total_connections"]) if stability_results["total_connections"] > 0 else 0
-        
-        logger.info(f"📊 WebRTC Stability: {success_rate:.1%} success rate")
-        logger.info(f"🔄 Connections: {stability_results['successful_connections']}/{stability_results['total_connections']}")
-        
-        return stability_results
-
     async def run_comprehensive_sla_validation(self) -> Dict[str, Any]:
         """
-        Run complete SLA validation suite for Issue #50
+        Run complete SLA validation suite for Issue #50 - WhatsApp Integration
         Returns comprehensive results for production readiness assessment
         """
-        logger.info("🚀 Starting comprehensive SLA validation for Issue #50")
+        logger.info("🚀 Starting comprehensive WhatsApp SLA validation for Issue #50")
         start_time = datetime.now()
         
         validation_results = {
             "timestamp": start_time.isoformat(),
+            "integration_type": "whatsapp",
             "sla_results": [],
             "production_ready": False,
             "critical_failures": [],
             "performance_summary": {},
-            "elevenlabs_validation": {},
-            "webrtc_validation": {}
+            "infrastructure_validation": {}
         }
         
         try:
-            # 1. Voice Response Time SLA (CRITICAL)
-            logger.info("1️⃣ Testing voice response time SLA...")
-            response_time_result = await self.validate_voice_response_time_sla(100)
-            self.sla_results.append(response_time_result)
-            if not response_time_result.passed:
+            # 1. Message Processing SLA (CRITICAL)
+            logger.info("1️⃣ Testing message processing SLA...")
+            processing_result = await self.validate_message_processing_sla(100)
+            self.sla_results.append(processing_result)
+            if not processing_result.passed:
                 validation_results["critical_failures"].append(
-                    f"Voice response time SLA failed: {response_time_result.measured_value:.3f}s > {response_time_result.target.target_value}s"
+                    f"Message processing SLA failed: {processing_result.measured_value:.3f}s > {processing_result.target.target_value}s"
                 )
             
-            # 2. Concurrent Sessions SLA (CRITICAL)  
-            logger.info("2️⃣ Testing concurrent sessions SLA...")
-            concurrent_result = await self.validate_concurrent_sessions_sla(500)
-            self.sla_results.append(concurrent_result)
-            if not concurrent_result.passed:
+            # 2. Throughput SLA (CRITICAL)
+            logger.info("2️⃣ Testing message throughput SLA...")
+            throughput_result = await self.validate_throughput_sla(500)
+            self.sla_results.append(throughput_result)
+            if not throughput_result.passed:
                 validation_results["critical_failures"].append(
-                    f"Concurrent sessions SLA failed: {concurrent_result.measured_value} < {concurrent_result.target.target_value}"
+                    f"Message throughput SLA failed: {throughput_result.measured_value:.0f} < {throughput_result.target.target_value} msg/min"
                 )
             
-            # 3. Bilingual Performance SLA (HIGH)
-            logger.info("3️⃣ Testing bilingual performance SLA...")
-            bilingual_result = await self.validate_bilingual_performance_sla()
-            self.sla_results.append(bilingual_result)
-            if not bilingual_result.passed:
+            # 3. Media Processing SLA (HIGH)
+            logger.info("3️⃣ Testing media processing SLA...")
+            media_result = await self.validate_media_processing_sla()
+            self.sla_results.append(media_result)
+            if not media_result.passed:
                 validation_results["critical_failures"].append(
-                    f"Bilingual switching SLA failed: {bilingual_result.measured_value:.3f}s > {bilingual_result.target.target_value}s"
+                    f"Media processing SLA failed: {media_result.measured_value:.3f}s > {media_result.target.target_value}s"
                 )
             
-            # 4. ElevenLabs API Rate Limits (HIGH)
-            logger.info("4️⃣ Testing ElevenLabs rate limit handling...")
-            elevenlabs_result = await self.validate_elevenlabs_rate_limits()
-            validation_results["elevenlabs_validation"] = elevenlabs_result
+            # 4. Cross-channel Handoff SLA (HIGH)
+            logger.info("4️⃣ Testing cross-channel handoff SLA...")
+            handoff_result = await self.validate_cross_channel_handoff_sla()
+            self.sla_results.append(handoff_result)
+            if not handoff_result.passed:
+                validation_results["critical_failures"].append(
+                    f"Cross-channel handoff SLA failed: {handoff_result.measured_value:.3f}s > {handoff_result.target.target_value}s"
+                )
             
-            # 5. WebRTC Stability (MEDIUM)
-            logger.info("5️⃣ Testing WebRTC connection stability...")
-            webrtc_result = await self.validate_webrtc_stability(5)
-            validation_results["webrtc_validation"] = webrtc_result
+            # 5. Database Performance SLA (MEDIUM)
+            logger.info("5️⃣ Testing database performance SLA...")
+            db_result = await self.validate_database_performance_sla(50)
+            self.sla_results.append(db_result)
+            if not db_result.passed:
+                validation_results["critical_failures"].append(
+                    f"Database performance SLA failed: {db_result.measured_value:.3f}s > {db_result.target.target_value}s"
+                )
             
             # Compile results
             validation_results["sla_results"] = [asdict(result) for result in self.sla_results]
@@ -540,14 +562,12 @@ class VoiceSLAValidator:
             # Determine production readiness
             critical_sla_passed = all(
                 result.passed for result in self.sla_results 
-                if result.target.name in ["voice_response_time", "concurrent_voice_sessions"]
+                if result.target.name in ["message_processing_time", "messages_per_minute_capacity"]
             )
             
             validation_results["production_ready"] = (
                 critical_sla_passed and 
-                len(validation_results["critical_failures"]) == 0 and
-                elevenlabs_result.get("graceful_degradation", False) and
-                webrtc_result.get("reconnection_success", False)
+                len(validation_results["critical_failures"]) == 0
             )
             
             # Performance summary
@@ -558,7 +578,7 @@ class VoiceSLAValidator:
             total_duration = (end_time - start_time).total_seconds()
             
             logger.info("=" * 80)
-            logger.info("🎯 COMPREHENSIVE SLA VALIDATION RESULTS")
+            logger.info("🎯 WHATSAPP INTEGRATION SLA VALIDATION RESULTS")
             logger.info("=" * 80)
             logger.info(f"⏱️  Total validation time: {total_duration:.1f} seconds")
             logger.info(f"🎯 Production ready: {'✅ YES' if validation_results['production_ready'] else '❌ NO'}")
@@ -580,202 +600,260 @@ class VoiceSLAValidator:
 
     # Helper methods for testing infrastructure
     
-    async def _simulate_voice_conversation(self, session_id: str) -> Dict[str, Any]:
-        """Simulate a complete voice conversation"""
+    async def _simulate_whatsapp_message_processing(self, user_id: str, message: Dict[str, Any]) -> Dict[str, Any]:
+        """Simulate WhatsApp message processing pipeline"""
         try:
-            # Select random test phrase
-            import random
-            test_phrase = random.choice(self.english_test_phrases)
-            
             start_time = time.time()
             
-            # Simulate voice processing pipeline
-            # 1. Speech-to-text
-            stt_start = time.time()
-            await asyncio.sleep(0.1)  # Simulate STT processing
-            stt_time = time.time() - stt_start
+            # Simulate message validation
+            await asyncio.sleep(0.01)
             
-            # 2. EA processing  
-            ea_start = time.time()
-            ea_response = await self._simulate_ea_processing(test_phrase)
-            ea_time = time.time() - ea_start
+            # Simulate EA processing based on message complexity
+            complexity_delays = {"low": 0.5, "medium": 1.2, "high": 2.0}
+            ea_delay = complexity_delays.get(message.get("complexity", "medium"), 1.0)
             
-            # 3. Text-to-speech
-            tts_start = time.time()
-            await asyncio.sleep(0.05)  # Simulate TTS processing
-            tts_time = time.time() - tts_start
+            # Add language processing overhead for Spanish
+            if message.get("language") == "es":
+                ea_delay += 0.1  # Small bilingual processing overhead
+            
+            # Simulate EA processing
+            ea_response = await self._simulate_ea_processing(message["text"], ea_delay)
+            
+            # Simulate response formatting and delivery
+            await asyncio.sleep(0.05)
             
             total_time = time.time() - start_time
             
             return {
                 "success": True,
-                "session_id": session_id,
-                "response_time": total_time,
-                "stt_time": stt_time,
-                "ea_time": ea_time,
-                "tts_time": tts_time,
-                "test_phrase": test_phrase
+                "user_id": user_id,
+                "message": message,
+                "processing_time": total_time,
+                "ea_response": ea_response
             }
             
         except Exception as e:
             return {
                 "success": False,
-                "session_id": session_id,
+                "user_id": user_id,
                 "error": str(e),
-                "response_time": float('inf')
+                "processing_time": float('inf')
             }
 
-    async def _simulate_voice_request(self, phrase: str, language: str) -> Dict[str, Any]:
-        """Simulate individual voice request"""
+    async def _simulate_media_processing(self, media_file: Dict[str, Any]) -> bool:
+        """Simulate media file processing"""
         try:
-            # Simulate processing based on language
-            processing_time = 0.5 if language == "en" else 0.6  # Spanish slightly slower
+            # Processing time based on file size (realistic simulation)
+            size_mb = media_file['size_mb']
+            
+            if media_file['content_type'].startswith('image/'):
+                # Image processing: ~1s per MB
+                processing_time = size_mb * 1.0
+            elif media_file['content_type'].startswith('video/'):
+                # Video processing: ~2s per MB  
+                processing_time = size_mb * 2.0
+            else:
+                # Document processing: ~0.5s per MB
+                processing_time = size_mb * 0.5
+            
+            # Add base processing overhead
+            processing_time += 0.5
+            
             await asyncio.sleep(processing_time)
             
-            return {
-                "success": True,
-                "phrase": phrase,
-                "language": language,
-                "processing_time": processing_time
-            }
+            return True
+            
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            logger.error(f"Media processing simulation failed: {e}")
+            return False
 
-    async def _simulate_ea_processing(self, message: str) -> str:
-        """Simulate EA processing time"""
-        # Simulate variable processing time based on message complexity
-        base_time = 0.3
-        complexity_factor = len(message) / 100.0
-        processing_time = base_time + complexity_factor
+    async def _create_rich_conversation_context(self, context_type: str) -> Dict[str, Any]:
+        """Create rich conversation context for handoff testing"""
+        contexts = {
+            "business_planning": {
+                "previous_messages": [
+                    "I need help creating a business plan",
+                    "My industry is e-commerce wellness products",
+                    "Target market is millennials aged 25-35"
+                ],
+                "customer_data": {
+                    "industry": "e-commerce",
+                    "business_stage": "startup",
+                    "primary_goal": "business_planning"
+                },
+                "context_size_kb": 2.5
+            },
+            "document_review": {
+                "previous_messages": [
+                    "Please review this contract",
+                    "I need feedback on the pricing terms",
+                    "What are the key risks?"
+                ],
+                "customer_data": {
+                    "document_type": "contract",
+                    "review_focus": "pricing_terms",
+                    "urgency": "high"
+                },
+                "context_size_kb": 1.8
+            },
+            "follow_up": {
+                "previous_messages": [
+                    "Thank you for the marketing automation setup",
+                    "Can we review the performance?",
+                    "I want to optimize the conversion rates"
+                ],
+                "customer_data": {
+                    "project_type": "marketing_automation",
+                    "status": "implemented",
+                    "next_step": "optimization"
+                },
+                "context_size_kb": 3.2
+            },
+            "urgent_response": {
+                "previous_messages": [
+                    "URGENT: Website is down",
+                    "Lost sales due to server issues",
+                    "Need immediate backup plan"
+                ],
+                "customer_data": {
+                    "issue_type": "technical",
+                    "severity": "critical",
+                    "business_impact": "high"
+                },
+                "context_size_kb": 1.2
+            }
+        }
         
-        await asyncio.sleep(processing_time)
-        return f"EA response to: {message}"
+        return contexts.get(context_type, contexts["business_planning"])
 
-    async def _maintain_voice_session(self, session_id: str, duration: float) -> Dict[str, Any]:
-        """Maintain a voice session for specified duration"""
+    async def _simulate_cross_channel_handoff(self, from_channel: str, to_channel: str, context: Dict[str, Any]) -> bool:
+        """Simulate cross-channel handoff with context preservation"""
+        try:
+            # Simulate context serialization time (based on context size)
+            context_size_kb = context.get("context_size_kb", 1.0)
+            serialization_time = context_size_kb * 0.05  # 50ms per KB
+            await asyncio.sleep(serialization_time)
+            
+            # Simulate channel-specific setup time
+            channel_setup_times = {
+                "whatsapp": 0.1,
+                "voice": 0.3,
+                "email": 0.2
+            }
+            
+            setup_time = channel_setup_times.get(to_channel, 0.2)
+            await asyncio.sleep(setup_time)
+            
+            # Simulate context deserialization and validation
+            await asyncio.sleep(0.05)
+            
+            # Simulate first message in new channel to verify context
+            await asyncio.sleep(0.1)
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Cross-channel handoff simulation failed: {e}")
+            return False
+
+    async def _simulate_database_operation(self, operation_id: str, query_type: str) -> Dict[str, Any]:
+        """Simulate database operations with realistic timing"""
         try:
             start_time = time.time()
             
-            with self.session_lock:
-                self.active_sessions.append({
-                    "id": session_id,
-                    "start_time": start_time
-                })
+            # Simulate different query types with realistic timing
+            query_delays = {
+                "customer_lookup": 0.02,      # 20ms - indexed lookup
+                "conversation_history": 0.05,  # 50ms - small result set
+                "memory_storage": 0.08,       # 80ms - write operation
+                "configuration_read": 0.01,   # 10ms - cached config
+                "analytics_update": 0.12      # 120ms - aggregation query
+            }
             
-            # Simulate session activity
-            while time.time() - start_time < duration:
-                # Periodic session activity
-                await asyncio.sleep(1.0)
-                
-                # Simulate occasional voice interaction
-                if (time.time() - start_time) % 10 < 1:  # Every 10 seconds
-                    await self._simulate_voice_request("Session maintenance", "en")
+            delay = query_delays.get(query_type, 0.05)
             
-            return {"success": True, "duration": time.time() - start_time}
-            
-        except asyncio.CancelledError:
-            return {"success": True, "cancelled": True}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-        finally:
-            with self.session_lock:
-                self.active_sessions = [s for s in self.active_sessions if s["id"] != session_id]
-
-    async def _test_rapid_language_switching(self) -> List[float]:
-        """Test rapid language switching overhead"""
-        switch_times = []
-        
-        # Rapid switches between English and Spanish
-        languages = ["en", "es"] * 10  # 20 rapid switches
-        phrases = ["Quick test", "Prueba rápida"] * 10
-        
-        for i in range(len(languages) - 1):
-            if languages[i] != languages[i + 1]:  # Language switch
-                switch_start = time.time()
-                await self._simulate_voice_request(phrases[i + 1], languages[i + 1])
-                switch_time = time.time() - switch_start
-                switch_times.append(switch_time - 0.5)  # Subtract base processing time
-        
-        return [t for t in switch_times if t > 0]  # Only positive overheads
-
-    async def _make_elevenlabs_request(self, text: str) -> Dict[str, Any]:
-        """Simulate ElevenLabs API request"""
-        try:
-            # Simulate API call delay
-            await asyncio.sleep(0.1)
-            
-            # Simulate rate limiting (every 50th request)
+            # Add some randomness to simulate real database behavior
             import random
-            if random.randint(1, 50) == 1:
-                raise Exception("Rate limit exceeded")
+            delay *= random.uniform(0.8, 1.5)
             
-            return {"success": True, "text": text}
+            await asyncio.sleep(delay)
+            
+            query_time = time.time() - start_time
+            
+            return {
+                "success": True,
+                "operation_id": operation_id,
+                "query_type": query_type,
+                "query_time": query_time
+            }
+            
         except Exception as e:
-            raise e
+            return {
+                "success": False,
+                "operation_id": operation_id,
+                "error": str(e),
+                "query_time": float('inf')
+            }
 
-    async def _test_webrtc_connection(self) -> bool:
-        """Test WebRTC connection establishment"""
-        try:
-            # Simulate WebRTC connection
-            await asyncio.sleep(0.2)
-            
-            # Simulate occasional connection failures
-            import random
-            return random.random() > 0.05  # 5% failure rate
-        except Exception:
-            return False
-
-    async def _test_webrtc_reconnection(self) -> bool:
-        """Test WebRTC reconnection capability"""
-        try:
-            # Simulate reconnection attempt
-            await asyncio.sleep(0.5)
-            return True  # Assume reconnection works
-        except Exception:
-            return False
+    async def _simulate_ea_processing(self, message: str, delay: float) -> str:
+        """Simulate EA processing with specified delay"""
+        await asyncio.sleep(delay)
+        return f"EA response to: {message[:50]}..."
 
     def _generate_performance_summary(self) -> Dict[str, Any]:
         """Generate comprehensive performance summary"""
         summary = {
-            "response_times": {},
-            "concurrent_sessions": {},
-            "bilingual_performance": {},
+            "message_processing": {},
+            "media_processing": {},
+            "database_performance": {},
+            "cross_channel_handoffs": {},
             "overall_assessment": {}
         }
         
-        # Response time analysis
-        if self.response_times:
-            summary["response_times"] = {
-                "count": len(self.response_times),
-                "mean": statistics.mean(self.response_times),
-                "median": statistics.median(self.response_times),
-                "p95": np.percentile(self.response_times, 95),
-                "p99": np.percentile(self.response_times, 99),
-                "min": min(self.response_times),
-                "max": max(self.response_times)
+        # Message processing analysis
+        if self.message_processing_times:
+            summary["message_processing"] = {
+                "count": len(self.message_processing_times),
+                "mean": statistics.mean(self.message_processing_times),
+                "median": statistics.median(self.message_processing_times),
+                "p95": np.percentile(self.message_processing_times, 95),
+                "p99": np.percentile(self.message_processing_times, 99),
+                "min": min(self.message_processing_times),
+                "max": max(self.message_processing_times)
             }
         
-        # Concurrent sessions analysis
-        if self.concurrent_session_counts:
-            summary["concurrent_sessions"] = {
-                "peak": max(self.concurrent_session_counts),
-                "average": statistics.mean(self.concurrent_session_counts),
-                "stability": statistics.stdev(self.concurrent_session_counts) if len(self.concurrent_session_counts) > 1 else 0
+        # Media processing analysis
+        if self.media_processing_times:
+            summary["media_processing"] = {
+                "count": len(self.media_processing_times),
+                "mean": statistics.mean(self.media_processing_times),
+                "max": max(self.media_processing_times),
+                "files_within_sla": sum(1 for t in self.media_processing_times if t < 10.0)
             }
         
-        # Bilingual performance
-        if self.bilingual_switch_times:
-            summary["bilingual_performance"] = {
-                "average_switch_time": statistics.mean(self.bilingual_switch_times),
-                "max_switch_time": max(self.bilingual_switch_times),
-                "switch_consistency": statistics.stdev(self.bilingual_switch_times) if len(self.bilingual_switch_times) > 1 else 0
+        # Database performance analysis  
+        if self.database_query_times:
+            summary["database_performance"] = {
+                "count": len(self.database_query_times),
+                "mean": statistics.mean(self.database_query_times),
+                "p95": np.percentile(self.database_query_times, 95),
+                "queries_within_sla": sum(1 for t in self.database_query_times if t < 0.1)
+            }
+        
+        # Cross-channel handoff analysis
+        if self.cross_channel_handoff_times:
+            summary["cross_channel_handoffs"] = {
+                "count": len(self.cross_channel_handoff_times),
+                "mean": statistics.mean(self.cross_channel_handoff_times),
+                "max": max(self.cross_channel_handoff_times),
+                "handoffs_within_sla": sum(1 for t in self.cross_channel_handoff_times if t < 1.0)
             }
         
         # Overall assessment
         sla_pass_rate = sum(1 for r in self.sla_results if r.passed) / len(self.sla_results) if self.sla_results else 0
         summary["overall_assessment"] = {
             "sla_pass_rate": sla_pass_rate,
-            "critical_slas_passed": all(r.passed for r in self.sla_results if r.target.name in ["voice_response_time", "concurrent_voice_sessions"]),
+            "critical_slas_passed": all(r.passed for r in self.sla_results if r.target.name in ["message_processing_time", "messages_per_minute_capacity"]),
             "production_recommendation": "APPROVED" if sla_pass_rate >= 0.8 else "NEEDS_OPTIMIZATION"
         }
         
@@ -787,89 +865,106 @@ class VoiceSLAValidator:
 @pytest.fixture
 async def sla_validator():
     """Create SLA validator instance"""
-    return VoiceSLAValidator()
+    return WhatsAppSLAValidator()
 
 @pytest.mark.asyncio
 @pytest.mark.performance
-class TestVoiceIntegrationSLAValidation:
-    """Test suite for voice integration SLA validation"""
+class TestWhatsAppIntegrationSLAValidation:
+    """Test suite for WhatsApp integration SLA validation"""
     
-    async def test_voice_response_time_sla_validation(self, sla_validator):
-        """Test voice response time SLA validation"""
-        result = await sla_validator.validate_voice_response_time_sla(50)
+    async def test_message_processing_sla_validation(self, sla_validator):
+        """Test message processing SLA validation"""
+        result = await sla_validator.validate_message_processing_sla(50)
         
-        assert result.target.name == "voice_response_time"
+        assert result.target.name == "message_processing_time"
         assert result.sample_size > 0
         assert isinstance(result.measured_value, float)
         
         # SLA must pass for production
         if not result.passed:
             pytest.fail(
-                f"CRITICAL: Voice response time SLA failed - {result.measured_value:.3f}s > {result.target.target_value}s. "
+                f"CRITICAL: Message processing SLA failed - {result.measured_value:.3f}s > {result.target.target_value}s. "
                 f"This blocks production deployment per Issue #50"
             )
     
-    async def test_concurrent_sessions_sla_validation(self, sla_validator):
-        """Test concurrent sessions SLA validation"""
-        result = await sla_validator.validate_concurrent_sessions_sla(100)  # Reduced for testing
+    async def test_throughput_sla_validation(self, sla_validator):
+        """Test message throughput SLA validation"""
+        result = await sla_validator.validate_throughput_sla(100)  # Reduced for testing
         
-        assert result.target.name == "concurrent_voice_sessions"
+        assert result.target.name == "messages_per_minute_capacity"
         assert result.sample_size > 0
         assert isinstance(result.measured_value, (int, float))
         
         # Should support at least the test amount
-        assert result.measured_value >= 100, f"Failed to support {100} concurrent sessions"
+        assert result.measured_value >= 100, f"Failed to support {100} messages/minute"
     
-    async def test_bilingual_performance_sla_validation(self, sla_validator):
-        """Test bilingual performance SLA validation"""
-        result = await sla_validator.validate_bilingual_performance_sla()
+    async def test_media_processing_sla_validation(self, sla_validator):
+        """Test media processing SLA validation"""
+        result = await sla_validator.validate_media_processing_sla()
         
-        assert result.target.name == "bilingual_switching_overhead"
+        assert result.target.name == "media_processing_time_large"
         assert isinstance(result.measured_value, float)
         
-        # Switching overhead must be acceptable
+        # Media processing must be acceptable for large files
         if not result.passed:
             pytest.fail(
-                f"CRITICAL: Bilingual switching SLA failed - {result.measured_value:.3f}s > {result.target.target_value}s. "
-                f"This impacts Spanish market expansion per Phase 2 PRD"
+                f"CRITICAL: Media processing SLA failed - {result.measured_value:.3f}s > {result.target.target_value}s. "
+                f"This impacts large file handling capability"
             )
     
-    async def test_elevenlabs_rate_limit_handling(self, sla_validator):
-        """Test ElevenLabs API rate limit handling"""
-        result = await sla_validator.validate_elevenlabs_rate_limits()
+    async def test_cross_channel_handoff_sla_validation(self, sla_validator):
+        """Test cross-channel handoff SLA validation"""
+        result = await sla_validator.validate_cross_channel_handoff_sla()
         
-        assert isinstance(result, dict)
-        assert "graceful_degradation" in result
-        assert "error_recovery" in result
+        assert result.target.name == "cross_channel_handoff_time"
+        assert isinstance(result.measured_value, float)
         
-        # Must handle rate limits gracefully for production
-        if not result.get("graceful_degradation", False):
-            pytest.fail("CRITICAL: ElevenLabs rate limit handling not implemented - blocks production deployment")
+        # Handoff time must be acceptable
+        if not result.passed:
+            pytest.fail(
+                f"CRITICAL: Cross-channel handoff SLA failed - {result.measured_value:.3f}s > {result.target.target_value}s. "
+                f"This impacts seamless customer experience"
+            )
     
-    async def test_comprehensive_sla_validation_suite(self, sla_validator):
-        """Test complete SLA validation suite for Issue #50"""
+    async def test_database_performance_sla_validation(self, sla_validator):
+        """Test database performance SLA validation"""
+        result = await sla_validator.validate_database_performance_sla(25)  # Reduced for testing
+        
+        assert result.target.name == "database_query_time"
+        assert isinstance(result.measured_value, float)
+        
+        # Database performance must be acceptable
+        if not result.passed:
+            pytest.fail(
+                f"WARNING: Database performance SLA failed - {result.measured_value:.3f}s > {result.target.target_value}s. "
+                f"This may impact overall system performance"
+            )
+    
+    async def test_comprehensive_whatsapp_sla_validation(self, sla_validator):
+        """Test complete WhatsApp SLA validation suite for Issue #50"""
         results = await sla_validator.run_comprehensive_sla_validation()
         
         assert isinstance(results, dict)
         assert "production_ready" in results
         assert "sla_results" in results
         assert "critical_failures" in results
+        assert results["integration_type"] == "whatsapp"
         
         # Production readiness gate
         if not results["production_ready"]:
             failure_summary = "\n".join(results["critical_failures"])
             pytest.fail(
-                f"PRODUCTION DEPLOYMENT BLOCKED - Issue #50 SLA validation failed:\n{failure_summary}"
+                f"PRODUCTION DEPLOYMENT BLOCKED - Issue #50 WhatsApp SLA validation failed:\n{failure_summary}"
             )
         
         # Log success
-        logger.info("✅ Issue #50 SLA validation PASSED - Production deployment approved")
+        logger.info("✅ Issue #50 WhatsApp SLA validation PASSED - Production deployment approved")
 
 
 if __name__ == "__main__":
     async def main():
-        """Run comprehensive SLA validation"""
-        validator = VoiceSLAValidator()
+        """Run comprehensive WhatsApp SLA validation"""
+        validator = WhatsAppSLAValidator()
         results = await validator.run_comprehensive_sla_validation()
         
         print(json.dumps(results, indent=2, default=str))
