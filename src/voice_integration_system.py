@@ -700,7 +700,7 @@ class VoiceIntegrationSystem:
     
     async def run_server(
         self,
-        host: str = "0.0.0.0",
+        host: str = "127.0.0.1",
         port: int = 8001,
         workers: int = 1,
         reload: bool = False
@@ -767,7 +767,7 @@ async def main():
     if await voice_system.initialize():
         # Run server
         await voice_system.run_server(
-            host=os.getenv("HOST", "0.0.0.0"),
+            host=os.getenv("HOST", "127.0.0.1"),
             port=int(os.getenv("PORT", "8001")),
             reload=os.getenv("RELOAD", "false").lower() == "true"
         )

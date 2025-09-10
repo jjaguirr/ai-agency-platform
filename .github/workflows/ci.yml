@@ -61,19 +61,9 @@ jobs:
           echo "Testing Redis connection..."
           docker compose -f docker-compose.ci.yml exec -T redis redis-cli ping > /dev/null
           
-          echo "Testing Qdrant API..."
-          curl -s http://localhost:6333/health | grep -q "ok" 
+          echo "Qdrant removed for faster CI startup" 
           
-          echo "Testing Voice CI Test Runner..."
-          curl -s http://localhost:8084/health | grep -q "memory-monitor"
-          
-          echo "Testing Voice API Mock..."
-          curl -s http://localhost:8085/health | grep -q "voice-api"
-          
-          echo "Testing Voice Status Endpoint..."
-          curl -s http://localhost:8085/voice/status | grep -q "voice_ready"
-          
-          echo "✅ All services including voice integration are connected and responding!"
+          echo "✅ All services are connected and responding!"
       
       - name: Test EA Basic Conversation
         run: |

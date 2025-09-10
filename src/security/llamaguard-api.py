@@ -488,7 +488,7 @@ async def get_stats():
 if __name__ == "__main__":
     uvicorn.run(
         "llamaguard-api:app",
-        host="0.0.0.0",
+        host="127.0.0.1",
         port=8080,
         log_level=LOG_LEVEL.lower(),
         reload=False

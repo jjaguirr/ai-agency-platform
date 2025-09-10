@@ -278,7 +278,7 @@ def get_testing_config() -> VoiceIntegrationConfig:
         whisper_model="base",
         enable_memory_integration=False,  # Disable for faster tests
         response_time_sla=5.0,  # More lenient for testing
-        temp_path="/tmp/voice_integration_test"
+        temp_path="./temp/voice_integration_test"
     )
 
 # Configuration factory
