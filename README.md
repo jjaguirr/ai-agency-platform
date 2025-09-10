@@ -15,6 +15,9 @@ docker-compose up
 # Run tests
 ./scripts/testing/run_essential_tests.py
 
+# ^^^
+source venv/bin/activate && PYTHONPATH=. python scripts/testing/run_essential_tests.py
+
 # Voice system demo
 python scripts/demos/run_voice_system.py
 ```
@@ -26,6 +29,12 @@ python scripts/demos/run_voice_system.py
 
 ## 🏗️ Platform Overview
 Premium-casual Executive Assistant that orchestrates specialist agents (Social Media, Finance, Marketing, Business) for ambitious professionals, entrepreneurs, and creators.
+
+## Demo Communication Details:
+Email: 
+Phone Number (SMS & WhatsApp):
+Direct Platform Link:
+...
 
 **Core Features**:
 - 🤖 EA Orchestration of specialist agents
