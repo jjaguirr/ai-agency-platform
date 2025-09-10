@@ -18,30 +18,38 @@ jobs:
         uses: docker/setup-buildx-action@v3
       
       - name: Start Docker services
+        timeout-minutes: 8
         run: |
-          echo "Starting Docker services (using optimized CI config with dependencies)..."
+          echo "Starting Docker services (using optimized CI config)..."
           docker compose -f docker-compose.ci.yml up -d
           
           echo "Container status after startup:"
           docker compose -f docker-compose.ci.yml ps
           
-          # Wait for services using simple approach (avoid jq dependency issues)
-          echo "Waiting for services to start and become healthy..."
+          # Use Docker's built-in health checks - more reliable than manual polling
+          echo "Waiting for services to become healthy (using Docker health checks)..."
           
-          # Give containers time to start
-          sleep 30
+          # Wait for health checks to pass (Docker Compose will show services as healthy)
+          timeout 300 bash -c '
+            while true; do
+              POSTGRES_HEALTH=$(docker inspect --format="{{.State.Health.Status}}" ai-agency-postgres-ci 2>/dev/null || echo "starting")
+              REDIS_HEALTH=$(docker inspect --format="{{.State.Health.Status}}" ai-agency-redis-ci 2>/dev/null || echo "starting")
+              QDRANT_HEALTH=$(docker inspect --format="{{.State.Health.Status}}" ai-agency-qdrant-ci 2>/dev/null || echo "starting")
+              CI_RUNNER_HEALTH=$(docker inspect --format="{{.State.Health.Status}}" ai-agency-ci-test-runner 2>/dev/null || echo "starting")
+              
+              echo "Health Status - Postgres: $POSTGRES_HEALTH, Redis: $REDIS_HEALTH, Qdrant: $QDRANT_HEALTH, CI-Runner: $CI_RUNNER_HEALTH"
+              
+              if [[ "$POSTGRES_HEALTH" == "healthy" && "$REDIS_HEALTH" == "healthy" && "$QDRANT_HEALTH" == "healthy" && "$CI_RUNNER_HEALTH" == "healthy" ]]; then
+                echo "✅ All services are healthy!"
+                break
+              fi
+              
+              sleep 10
+            done
+          '
           
-          # Check each service individually with longer timeouts
-          echo "Checking PostgreSQL..."
-          timeout 120 bash -c 'until docker compose -f docker-compose.ci.yml exec -T postgres pg_isready -U testuser -d testdb; do sleep 5; done'
-          
-          echo "Checking Redis..."  
-          timeout 60 bash -c 'until docker compose -f docker-compose.ci.yml exec -T redis redis-cli ping | grep -q PONG; do sleep 5; done'
-          
-          echo "Checking Qdrant..."
-          timeout 90 bash -c 'until wget --spider --quiet http://localhost:6333/health 2>/dev/null; do sleep 5; done'
-          
-          echo "✅ All services are healthy!"
+          echo "Final container status:"
+          docker compose -f docker-compose.ci.yml ps
           
       - name: Verify service connectivity
         id: health
