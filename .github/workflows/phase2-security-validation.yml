@@ -130,11 +130,7 @@ jobs:
           psql -h localhost -U postgres -d ai_agency_platform_test -f src/database/schema.sql
         else
           echo "Schema file not found, creating basic test schema..."
-          psql -h localhost -U postgres -d ai_agency_platform_test -c "
-            CREATE TABLE IF NOT EXISTS customers (id SERIAL PRIMARY KEY, name VARCHAR(255));
-            CREATE TABLE IF NOT EXISTS sessions (id SERIAL PRIMARY KEY, customer_id INTEGER);
-            INSERT INTO customers (name) VALUES ('test_customer');
-          "
+          psql -h localhost -U postgres -d ai_agency_platform_test -c 'CREATE TABLE IF NOT EXISTS customers (id SERIAL PRIMARY KEY, name VARCHAR(255)); CREATE TABLE IF NOT EXISTS sessions (id SERIAL PRIMARY KEY, customer_id INTEGER); INSERT INTO customers (name) VALUES ('"'"'test_customer'"'"');'
         fi
         
         # Verify database setup
