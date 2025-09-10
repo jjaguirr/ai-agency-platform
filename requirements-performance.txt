@@ -1,0 +1,42 @@
+# Performance Testing Framework Dependencies
+
+# Core performance testing
+pytest-benchmark>=4.0.0
+pytest-asyncio>=0.23.0
+pytest-xdist>=3.5.0  # Parallel test execution
+pytest-cov>=4.0.0    # Coverage reporting
+
+# Load testing framework  
+locust>=2.23.0        # Distributed load testing
+aiohttp-requests>=0.2.0  # Async HTTP for load testing
+
+# Performance monitoring
+psutil>=5.9.0         # System resource monitoring  
+py-spy>=0.3.14        # Python profiler
+memory-profiler>=0.61.0  # Memory usage profiling
+
+# Database performance testing
+asyncpg>=0.29.0       # PostgreSQL async client
+aiopg>=1.4.0          # Additional PostgreSQL tools
+sqlalchemy-utils>=0.41.0  # Database utilities
+
+# Real-time metrics
+prometheus-client>=0.19.0
+grafana-client>=3.5.0  # Grafana dashboard automation
+influxdb-client>=1.40.0  # Time series database
+
+# Advanced profiling
+line-profiler>=4.1.0  # Line-by-line profiling
+profilestats>=1.0.2   # Profile statistics
+
+# Load simulation
+faker>=22.0.0         # Synthetic data generation
+factory-boy>=3.3.0    # Test data factories
+
+# Performance visualization  
+matplotlib>=3.8.0     # Performance charts
+seaborn>=0.13.0       # Statistical plots
+plotly>=5.18.0        # Interactive dashboards
+
+# Stress testing utilities
+stress-ng>=0.17.0     # System stress testing (external tool)
