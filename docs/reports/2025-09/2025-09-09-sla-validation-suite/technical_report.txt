@@ -1,0 +1,39 @@
+
+AI AGENCY PLATFORM - TECHNICAL SLA VALIDATION REPORT
+===================================================
+
+Execution Timestamp: 2025-09-09T09:19:44.109969
+Total Duration: 5.24 seconds
+
+DETAILED TEST RESULTS
+====================
+
+Voice Integration Stream Results:
+  validation_framework_import: FAIL (0.00s)
+    Error: No module named 'src.communication.whatsapp_handler'
+
+WhatsApp Integration Stream Results:
+  validation_framework_import: FAIL (0.00s)
+    Error: No module named 'src.communication.whatsapp_handler'
+
+Cross-Integration Results:
+  cross_integration_validation_suite: FAIL (0.00s)
+    Error: No module named 'tests.performance.cross_integration_sla_validation'
+
+Infrastructure Results:
+  memory_availability: FAIL (0.10s)
+  cpu_availability: PASS (1.00s)
+  disk_availability: PASS (0.10s)
+
+
+PERFORMANCE ANALYSIS
+===================
+Overall Pass Rate: 33.3%
+Critical Failure Count: 4
+
+ISSUE RESOLUTION RECOMMENDATIONS
+===============================
+1. Voice validation framework import failed: No module named 'src.communication.whatsapp_handler'
+2. WhatsApp validation framework import failed: No module named 'src.communication.whatsapp_handler'
+3. Cross-integration validation failed: No module named 'tests.performance.cross_integration_sla_validation'
+4. Insufficient memory available: 1.12GB < 2GB required
