@@ -209,7 +209,7 @@ jobs:
         fi
     
     - name: Upload performance test results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: performance-test-results-${{ matrix.test-suite }}-${{ github.sha }}
@@ -348,7 +348,7 @@ jobs:
         python-version: '3.11'
     
     - name: Download performance results
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: performance-test-results-all-${{ github.sha }}
         path: ./performance_results/

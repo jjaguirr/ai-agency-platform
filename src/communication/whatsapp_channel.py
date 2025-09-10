@@ -400,7 +400,7 @@ class WhatsAppChannel(BaseCommunicationChannel):
         """Generate consistent conversation ID for a phone number"""
         # Use customer_id + phone_number for unique conversation ID
         conversation_key = f"{self.customer_id}:{phone_number}"
-        return hashlib.md5(conversation_key.encode()).hexdigest()
+        return hashlib.md5(conversation_key.encode(), usedforsecurity=False).hexdigest()
     
     async def _log_message(self, message_data: Dict[str, Any]):
         """Log message to database for audit trail"""

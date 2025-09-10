@@ -128,6 +128,8 @@ jobs:
           echo "- PostgreSQL: Checked" >> $GITHUB_STEP_SUMMARY
           echo "- Redis: Checked" >> $GITHUB_STEP_SUMMARY
           echo "- Qdrant: Checked" >> $GITHUB_STEP_SUMMARY
+          echo "- Voice CI Test Runner: Checked" >> $GITHUB_STEP_SUMMARY
+          echo "- Voice API Mock: Checked" >> $GITHUB_STEP_SUMMARY
       
       - name: Cleanup
         if: always()

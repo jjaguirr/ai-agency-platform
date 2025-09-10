@@ -326,13 +326,13 @@ class PersonalityDatabase:
                        transformation_metadata, created_at
                 FROM personality_transformations
                 WHERE customer_id = $1 
-                AND created_at > NOW() - INTERVAL '%d hours'
-                """ % hours_back
+                AND created_at > NOW() - INTERVAL $2
+                """
                 
-                params = [customer_id]
+                params = [customer_id, f"{hours_back} hours"]
                 
                 if channel:
-                    base_query += " AND channel = $2"
+                    base_query += " AND channel = $3"
                     params.append(channel.value)
                 
                 base_query += " ORDER BY created_at DESC LIMIT $%d" % (len(params) + 1)
@@ -509,12 +509,12 @@ class PersonalityDatabase:
                        ARRAY_AGG(DISTINCT personality_tone) as tones_used
                 FROM personality_transformations
                 WHERE customer_id = $1 
-                AND created_at > NOW() - INTERVAL '%d hours'
+                AND created_at > NOW() - INTERVAL $2
                 AND consistency_score IS NOT NULL
                 GROUP BY channel
-                """ % hours_back
+                """
                 
-                rows = await conn.fetch(query, customer_id)
+                rows = await conn.fetch(query, customer_id, f"{hours_back} hours")
                 
                 channel_analysis = {}
                 overall_scores = []
@@ -582,12 +582,12 @@ class PersonalityDatabase:
                     COUNT(DISTINCT customer_id) as unique_customers,
                     COUNT(DISTINCT channel) as channels_used
                 FROM personality_transformations
-                WHERE created_at > NOW() - INTERVAL '%d hours'
-                """ % hours_back
+                WHERE created_at > NOW() - INTERVAL $1
+                """
                 
-                params = []
+                params = [f"{hours_back} hours"]
                 if customer_id:
-                    base_query += " AND customer_id = $1"
+                    base_query += " AND customer_id = $2"
                     params.append(customer_id)
                 
                 row = await conn.fetchrow(base_query, *params)

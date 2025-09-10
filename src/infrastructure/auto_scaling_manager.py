@@ -316,9 +316,9 @@ class AutoScalingManager:
                            response_time, created_at
                     FROM customer_metrics 
                     WHERE customer_id = $1 
-                    AND created_at > NOW() - INTERVAL '%d days'
+                    AND created_at > NOW() - INTERVAL $2
                     ORDER BY created_at ASC
-                """ % days, customer_id)
+                """, customer_id, f"{days} days")
                 
                 return [dict(row) for row in metrics]
         except Exception:

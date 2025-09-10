@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Agency Platform - Voice Interface</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .voice-container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.1);
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+            text-align: center;
+        }
+
+        .voice-header {
+            margin-bottom: 30px;
+        }
+
+        .voice-title {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .voice-subtitle {
+            font-size: 1.1rem;
+            color: #666;
+            margin-bottom: 20px;
+        }
+
+        .language-selector {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 30px;
+        }
+
+        .language-btn {
+            padding: 10px 20px;
+            border: 2px solid #667eea;
+            background: white;
+            color: #667eea;
+            border-radius: 25px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 600;
+        }
+
+        .language-btn.active {
+            background: #667eea;
+            color: white;
+        }
+
+        .language-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .voice-controls {
+            margin: 40px 0;
+        }
+
+        .record-button {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            border: none;
+            background: linear-gradient(135deg, #ff6b6b, #ee5a24);
+            color: white;
+            font-size: 1.2rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+            margin: 0 auto 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .record-button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 10px 30px rgba(255, 107, 107, 0.3);
+        }
+
+        .record-button.recording {
+            background: linear-gradient(135deg, #ff4757, #ff3838);
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+
+        .record-button.processing {
+            background: linear-gradient(135deg, #ffa502, #ff6348);
+            cursor: not-allowed;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin: 20px 0;
+            font-weight: 600;
+            min-height: 30px;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #ccc;
+        }
+
+        .status-dot.connected {
+            background: #2ed573;
+            animation: breathe 2s infinite;
+        }
+
+        .status-dot.recording {
+            background: #ff4757;
+            animation: pulse 1s infinite;
+        }
+
+        .status-dot.processing {
+            background: #ffa502;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes breathe {
+            0%, 100% { opacity: 0.7; }
+            50% { opacity: 1; }
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        .conversation-area {
+            margin-top: 30px;
+            max-height: 400px;
+            overflow-y: auto;
+            text-align: left;
+        }
+
+        .message {
+            margin: 15px 0;
+            padding: 15px;
+            border-radius: 15px;
+            max-width: 80%;
+        }
+
+        .message.user {
+            background: #e3f2fd;
+            margin-left: auto;
+            border-bottom-right-radius: 5px;
+        }
+
+        .message.assistant {
+            background: #f3e5f5;
+            margin-right: auto;
+            border-bottom-left-radius: 5px;
+        }
+
+        .message-content {
+            margin-bottom: 8px;
+        }
+
+        .message-meta {
+            font-size: 0.8rem;
+            color: #666;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .language-tag {
+            padding: 2px 8px;
+            background: rgba(102, 126, 234, 0.2);
+            border-radius: 10px;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+
+        .audio-player {
+            margin-top: 10px;
+        }
+
+        .audio-player audio {
+            width: 100%;
+            height: 30px;
+        }
+
+        .performance-stats {
+            margin-top: 20px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            display: none;
+        }
+
+        .performance-stats.visible {
+            display: block;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 15px;
+            text-align: center;
+        }
+
+        .stat-item {
+            padding: 10px;
+            background: white;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .toggle-stats {
+            margin-top: 20px;
+            padding: 10px 20px;
+            background: none;
+            border: 1px solid #ccc;
+            border-radius: 20px;
+            cursor: pointer;
+            color: #666;
+            transition: all 0.3s ease;
+        }
+
+        .toggle-stats:hover {
+            border-color: #667eea;
+            color: #667eea;
+        }
+
+        .error-message {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            display: none;
+        }
+
+        .error-message.visible {
+            display: block;
+        }
+
+        @media (max-width: 768px) {
+            .voice-container {
+                margin: 10px;
+                padding: 30px 20px;
+            }
+
+            .voice-title {
+                font-size: 2rem;
+            }
+
+            .language-selector {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .record-button {
+                width: 100px;
+                height: 100px;
+                font-size: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="voice-container">
+        <div class="voice-header">
+            <h1 class="voice-title">🎤 Sarah</h1>
+            <p class="voice-subtitle">Your Bilingual Executive Assistant</p>
+            <p style="color: #888; font-size: 0.9rem;">Speak in English or Spanish - I'll understand and respond naturally</p>
+        </div>
+
+        <div class="language-selector">
+            <button class="language-btn active" data-language="auto">🌐 Auto-Detect</button>
+            <button class="language-btn" data-language="en">🇺🇸 English</button>
+            <button class="language-btn" data-language="es">🇪🇸 Español</button>
+        </div>
+
+        <div class="voice-controls">
+            <button class="record-button" id="recordButton">
+                <span id="recordButtonText">🎙️ Click to Talk</span>
+            </button>
+            
+            <div class="status-indicator">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">Ready to connect</span>
+            </div>
+        </div>
+
+        <div class="conversation-area" id="conversationArea">
+            <!-- Conversation messages will appear here -->
+        </div>
+
+        <div class="error-message" id="errorMessage"></div>
+
+        <div class="performance-stats" id="performanceStats">
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <div class="stat-value" id="avgResponseTime">--</div>
+                    <div class="stat-label">Avg Response (s)</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="totalMessages">0</div>
+                    <div class="stat-label">Messages</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="languageCount">0</div>
+                    <div class="stat-label">Languages</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="slaCompliance">--</div>
+                    <div class="stat-label">SLA Target</div>
+                </div>
+            </div>
+        </div>
+
+        <button class="toggle-stats" onclick="toggleStats()">📊 Show Performance Stats</button>
+    </div>
+
+    <script>
+        class VoiceInterface {
+            constructor() {
+                this.websocket = null;
+                this.mediaRecorder = null;
+                this.audioChunks = [];
+                this.isRecording = false;
+                this.isConnected = false;
+                this.conversationId = null;
+                this.selectedLanguage = 'auto';
+                
+                // Performance tracking
+                this.stats = {
+                    totalMessages: 0,
+                    responseTimes: [],
+                    languagesUsed: new Set(),
+                    messagesUnder2s: 0
+                };
+                
+                // Customer ID (in production, this would be from authentication)
+                this.customerId = 'demo-customer-' + Math.random().toString(36).substr(2, 9);
+                
+                this.initializeEventListeners();
+                this.connect();
+            }
+
+            initializeEventListeners() {
+                // Record button
+                document.getElementById('recordButton').addEventListener('click', () => {
+                    if (this.isRecording) {
+                        this.stopRecording();
+                    } else {
+                        this.startRecording();
+                    }
+                });
+
+                // Language selector
+                document.querySelectorAll('.language-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        document.querySelectorAll('.language-btn').forEach(b => b.classList.remove('active'));
+                        e.target.classList.add('active');
+                        this.selectedLanguage = e.target.dataset.language;
+                    });
+                });
+            }
+
+            async connect() {
+                try {
+                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    const host = window.location.hostname === 'localhost' ? 'localhost:8001' : window.location.host;
+                    const wsUrl = `${protocol}//${host}/voice/ws/${this.customerId}`;
+                    
+                    this.updateStatus('Connecting...', 'connecting');
+                    
+                    this.websocket = new WebSocket(wsUrl);
+                    
+                    this.websocket.onopen = () => {
+                        this.isConnected = true;
+                        this.updateStatus('Connected - Ready to talk!', 'connected');
+                        this.showMessage('system', 'Connected to Sarah. Click the microphone to start talking!', 'en');
+                    };
+                    
+                    this.websocket.onmessage = (event) => {
+                        this.handleWebSocketMessage(JSON.parse(event.data));
+                    };
+                    
+                    this.websocket.onclose = () => {
+                        this.isConnected = false;
+                        this.updateStatus('Disconnected', 'disconnected');
+                        this.showError('Connection lost. Refresh to reconnect.');
+                    };
+                    
+                    this.websocket.onerror = (error) => {
+                        console.error('WebSocket error:', error);
+                        this.showError('Connection error. Please check your internet connection.');
+                    };
+                    
+                } catch (error) {
+                    console.error('Failed to connect:', error);
+                    this.showError('Failed to connect to voice service.');
+                }
+            }
+
+            async startRecording() {
+                if (!this.isConnected) {
+                    this.showError('Not connected to voice service.');
+                    return;
+                }
+
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            sampleRate: 44100
+                        } 
+                    });
+                    
+                    this.mediaRecorder = new MediaRecorder(stream, {
+                        mimeType: 'audio/webm;codecs=opus'
+                    });
+                    
+                    this.audioChunks = [];
+                    this.isRecording = true;
+                    
+                    this.mediaRecorder.ondataavailable = (event) => {
+                        if (event.data.size > 0) {
+                            this.audioChunks.push(event.data);
+                        }
+                    };
+                    
+                    this.mediaRecorder.onstop = () => {
+                        this.processAudioRecording();
+                    };
+                    
+                    this.mediaRecorder.start();
+                    this.updateRecordButton('🛑 Stop Recording', 'recording');
+                    this.updateStatus('Recording...', 'recording');
+                    
+                } catch (error) {
+                    console.error('Failed to start recording:', error);
+                    this.showError('Could not access microphone. Please check permissions.');
+                }
+            }
+
+            stopRecording() {
+                if (this.mediaRecorder && this.isRecording) {
+                    this.isRecording = false;
+                    this.mediaRecorder.stop();
+                    this.mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                    this.updateRecordButton('🔄 Processing...', 'processing');
+                    this.updateStatus('Processing audio...', 'processing');
+                }
+            }
+
+            async processAudioRecording() {
+                try {
+                    const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' });
+                    const audioBase64 = await this.blobToBase64(audioBlob);
+                    
+                    // Send audio to WebSocket
+                    const message = {
+                        type: 'audio_chunk',
+                        audio_data: audioBase64.split(',')[1], // Remove data URL prefix
+                        format: 'webm',
+                        is_final: true,
+                        chunk_id: Date.now().toString(),
+                        language_preference: this.selectedLanguage
+                    };
+                    
+                    this.websocket.send(JSON.stringify(message));
+                    
+                } catch (error) {
+                    console.error('Failed to process audio:', error);
+                    this.showError('Failed to process audio recording.');
+                    this.resetRecordButton();
+                }
+            }
+
+            handleWebSocketMessage(message) {
+                console.log('Received message:', message);
+                
+                switch (message.type) {
+                    case 'session_started':
+                        this.conversationId = message.conversation_id;
+                        console.log('Session started:', this.conversationId);
+                        break;
+                        
+                    case 'speech_to_text_result':
+                        this.showMessage('user', message.transcript, message.detected_language);
+                        this.stats.languagesUsed.add(message.detected_language);
+                        break;
+                        
+                    case 'ea_response':
+                        this.showMessage('assistant', message.text, message.language);
+                        this.updatePerformanceStats(message.response_time_seconds);
+                        this.resetRecordButton();
+                        break;
+                        
+                    case 'voice_response':
+                        this.playAudioResponse(message.audio_data);
+                        break;
+                        
+                    case 'error':
+                        this.showError(message.message);
+                        this.resetRecordButton();
+                        break;
+                        
+                    case 'audio_received':
+                        console.log('Audio chunk received:', message.chunk_id);
+                        break;
+                        
+                    default:
+                        console.log('Unknown message type:', message.type);
+                }
+            }
+
+            showMessage(sender, content, language = 'en') {
+                const conversationArea = document.getElementById('conversationArea');
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${sender}`;
+                
+                const timestamp = new Date().toLocaleTimeString();
+                const languageFlag = language === 'es' ? '🇪🇸' : language === 'en' ? '🇺🇸' : '🌐';
+                
+                messageDiv.innerHTML = `
+                    <div class="message-content">${content}</div>
+                    <div class="message-meta">
+                        <span>${timestamp}</span>
+                        <span class="language-tag">${languageFlag} ${language.toUpperCase()}</span>
+                    </div>
+                `;
+                
+                conversationArea.appendChild(messageDiv);
+                conversationArea.scrollTop = conversationArea.scrollHeight;
+                
+                this.stats.totalMessages++;
+                this.updateStatsDisplay();
+            }
+
+            async playAudioResponse(audioBase64) {
+                try {
+                    const audioBlob = this.base64ToBlob(audioBase64, 'audio/mpeg');
+                    const audioUrl = URL.createObjectURL(audioBlob);
+                    
+                    const audio = new Audio(audioUrl);
+                    audio.play();
+                    
+                    // Clean up URL after playing
+                    audio.onended = () => {
+                        URL.revokeObjectURL(audioUrl);
+                    };
+                    
+                } catch (error) {
+                    console.error('Failed to play audio response:', error);
+                }
+            }
+
+            updatePerformanceStats(responseTime) {
+                this.stats.responseTimes.push(responseTime);
+                if (responseTime <= 2.0) {
+                    this.stats.messagesUnder2s++;
+                }
+                this.updateStatsDisplay();
+            }
+
+            updateStatsDisplay() {
+                const avgResponseTime = this.stats.responseTimes.length > 0 
+                    ? (this.stats.responseTimes.reduce((a, b) => a + b, 0) / this.stats.responseTimes.length).toFixed(2)
+                    : '--';
+                
+                const slaCompliance = this.stats.responseTimes.length > 0
+                    ? Math.round((this.stats.messagesUnder2s / this.stats.responseTimes.length) * 100)
+                    : 0;
+
+                document.getElementById('avgResponseTime').textContent = avgResponseTime;
+                document.getElementById('totalMessages').textContent = this.stats.totalMessages;
+                document.getElementById('languageCount').textContent = this.stats.languagesUsed.size;
+                document.getElementById('slaCompliance').textContent = slaCompliance + '%';
+            }
+
+            updateRecordButton(text, state) {
+                const button = document.getElementById('recordButton');
+                const buttonText = document.getElementById('recordButtonText');
+                
+                buttonText.textContent = text;
+                
+                button.className = 'record-button';
+                if (state) {
+                    button.classList.add(state);
+                }
+            }
+
+            resetRecordButton() {
+                this.updateRecordButton('🎙️ Click to Talk', '');
+                this.updateStatus('Ready to talk', 'connected');
+            }
+
+            updateStatus(text, state) {
+                const statusText = document.getElementById('statusText');
+                const statusDot = document.getElementById('statusDot');
+                
+                statusText.textContent = text;
+                
+                statusDot.className = 'status-dot';
+                if (state) {
+                    statusDot.classList.add(state);
+                }
+            }
+
+            showError(message) {
+                const errorDiv = document.getElementById('errorMessage');
+                errorDiv.textContent = message;
+                errorDiv.classList.add('visible');
+                
+                setTimeout(() => {
+                    errorDiv.classList.remove('visible');
+                }, 5000);
+            }
+
+            // Utility functions
+            async blobToBase64(blob) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(blob);
+                });
+            }
+
+            base64ToBlob(base64, mimeType) {
+                const byteCharacters = atob(base64);
+                const byteNumbers = new Array(byteCharacters.length);
+                
+                for (let i = 0; i < byteCharacters.length; i++) {
+                    byteNumbers[i] = byteCharacters.charCodeAt(i);
+                }
+                
+                const byteArray = new Uint8Array(byteNumbers);
+                return new Blob([byteArray], { type: mimeType });
+            }
+        }
+
+        // Global functions
+        function toggleStats() {
+            const statsDiv = document.getElementById('performanceStats');
+            const button = document.querySelector('.toggle-stats');
+            
+            if (statsDiv.classList.contains('visible')) {
+                statsDiv.classList.remove('visible');
+                button.textContent = '📊 Show Performance Stats';
+            } else {
+                statsDiv.classList.add('visible');
+                button.textContent = '📊 Hide Performance Stats';
+            }
+        }
+
+        // Initialize voice interface when page loads
+        let voiceInterface;
+        
+        window.addEventListener('load', () => {
+            voiceInterface = new VoiceInterface();
+        });
+
+        // Handle page visibility changes
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden && voiceInterface && voiceInterface.isRecording) {
+                voiceInterface.stopRecording();
+            }
+        });
+    </script>
+</body>
+</html>
