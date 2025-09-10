@@ -44,7 +44,7 @@ class VoiceIntegrationConfig:
     # File Paths
     frontend_path: str = "frontend"
     logs_path: str = "logs"
-    temp_path: str = "/tmp/voice_integration"
+    temp_path: str = "./temp/voice_integration"
     
     # Database and Memory
     enable_memory_integration: bool = True

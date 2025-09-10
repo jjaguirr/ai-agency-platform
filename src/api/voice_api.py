@@ -392,7 +392,7 @@ def create_voice_api() -> FastAPI:
     return app
 
 # Development server
-def run_voice_api(host: str = "0.0.0.0", port: int = 8001, debug: bool = True):
+def run_voice_api(host: str = "127.0.0.1", port: int = 8001, debug: bool = True):
     """Run voice API server"""
     app = create_voice_api()
     

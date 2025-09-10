@@ -755,7 +755,7 @@ Provide ONLY the transformed response - no explanations or meta-commentary."""
         # Create hash of content + channel + context for caching
         import hashlib
         key_string = f"{content[:200]}:{channel.value}:{context.value if context else 'none'}"
-        return hashlib.md5(key_string.encode()).hexdigest()
+        return hashlib.md5(key_string.encode(), usedforsecurity=False).hexdigest()
     
     def _cache_transformation_result(
         self,

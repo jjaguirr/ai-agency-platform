@@ -331,7 +331,7 @@ async def get_customer_routing():
 # Development server configuration
 if __name__ == "__main__":
     port = int(os.getenv("WEBHOOK_PORT", 8000))
-    host = os.getenv("WEBHOOK_HOST", "0.0.0.0")
+    host = os.getenv("WEBHOOK_HOST", "127.0.0.1")
     
     logger.info(f"Starting WhatsApp webhook server on {host}:{port}")
     logger.info("Configured for Twilio WhatsApp Business API")
