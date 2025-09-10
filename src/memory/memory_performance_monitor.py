@@ -680,7 +680,7 @@ class MemoryPerformanceMonitor:
         runner = web.AppRunner(app)
         await runner.setup()
         
-        site = web.TCPSite(runner, '0.0.0.0', 8080)
+        site = web.TCPSite(runner, '127.0.0.1', 8080)
         await site.start()
         
         logger.info("HTTP server started on port 8080")
