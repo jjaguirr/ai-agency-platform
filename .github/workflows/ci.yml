@@ -34,11 +34,10 @@ jobs:
             while true; do
               POSTGRES_HEALTH=$(docker inspect --format="{{.State.Health.Status}}" ai-agency-postgres-ci 2>/dev/null || echo "starting")
               REDIS_HEALTH=$(docker inspect --format="{{.State.Health.Status}}" ai-agency-redis-ci 2>/dev/null || echo "starting")
-              QDRANT_HEALTH=$(docker inspect --format="{{.State.Health.Status}}" ai-agency-qdrant-ci 2>/dev/null || echo "starting")
               
-              echo "Health Status - Postgres: $POSTGRES_HEALTH, Redis: $REDIS_HEALTH, Qdrant: $QDRANT_HEALTH"
+              echo "Health Status - Postgres: $POSTGRES_HEALTH, Redis: $REDIS_HEALTH"
               
-              if [[ "$POSTGRES_HEALTH" == "healthy" && "$REDIS_HEALTH" == "healthy" && "$QDRANT_HEALTH" == "healthy" ]]; then
+              if [[ "$POSTGRES_HEALTH" == "healthy" && "$REDIS_HEALTH" == "healthy" ]]; then
                 echo "✅ All services are healthy!"
                 break
               fi
@@ -62,8 +61,7 @@ jobs:
           echo "Testing Redis connection..."
           docker compose -f docker-compose.ci.yml exec -T redis redis-cli ping > /dev/null
           
-          echo "Testing Qdrant API..."
-          curl -s http://localhost:6333/health | grep -q "ok" 
+          echo "Qdrant removed for faster CI startup" 
           
           echo "✅ All services are connected and responding!"
       
