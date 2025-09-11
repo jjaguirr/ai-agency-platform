@@ -1,0 +1,32 @@
+# DigitalOcean App Platform Configuration
+name: ai-agency-platform-webhook
+services:
+- name: webhook-api
+  github:
+    repo: jjaguirr/ai-agency-platform
+    branch: phase-2-development
+  source_dir: /
+  run_command: pip install flask gunicorn requests && python src/webhook/simple_production_webhook.py
+  environment_slug: python
+  instance_count: 1
+  instance_size_slug: basic-xxs
+  http_port: 8000
+  health_check:
+    http_path: /health
+    initial_delay_seconds: 30
+    period_seconds: 10
+    timeout_seconds: 5
+    success_threshold: 1
+    failure_threshold: 3
+  envs:
+  - key: ENVIRONMENT
+    value: production
+  - key: FLASK_ENV
+    value: production
+  - key: PORT
+    value: "8000"
+  - key: WHATSAPP_VERIFY_TOKEN
+    value: ai_agency_platform_verify
+  - key: WHATSAPP_PHONE_NUMBER_ID
+    value: "782822591574136"
+region: atl
