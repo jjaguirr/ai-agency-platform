@@ -22,8 +22,8 @@ import asyncpg
 import redis.asyncio as redis
 from mem0 import Memory
 
-from ..memory.mem0_manager import EAMemoryManager
-from ..memory.isolation_validator import MemoryIsolationValidator
+from src.memory.mem0_manager import EAMemoryManager
+from src.memory.isolation_validator import MemoryIsolationValidator
 
 logger = logging.getLogger(__name__)
 
