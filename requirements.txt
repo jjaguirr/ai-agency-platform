@@ -19,6 +19,11 @@ fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 pydantic>=2.5.0
 
+# Flask for Webhook Service
+flask>=3.0.0
+flask-limiter>=3.5.0
+gunicorn>=21.2.0
+
 # Database & Storage
 asyncpg>=0.29.0
 redis[hiredis]>=5.0.0

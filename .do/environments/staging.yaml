@@ -1,0 +1,71 @@
+# DigitalOcean App Platform Configuration - Staging Environment
+# AI Agency Platform Webhook Service
+name: ai-agency-platform-webhook-staging
+services:
+  - name: webhook-api-staging
+    source_dir: /
+    github:
+      repo: jjaguirr/ai-agency-platform
+      branch: main  # Staging uses main branch
+    run_command: gunicorn --bind 0.0.0.0:$PORT --timeout 90 --workers 1 src.webhook.unified_whatsapp_webhook:app
+    environment_slug: python
+    instance_count: 1
+    instance_size_slug: basic-xxs
+    
+    # Health check
+    health_check:
+      http_path: /health
+      initial_delay_seconds: 45
+      period_seconds: 15
+      timeout_seconds: 10
+      success_threshold: 1
+      failure_threshold: 3
+      
+    # Staging environment variables
+    envs:
+      - key: FLASK_ENV
+        value: staging
+      - key: FLASK_DEBUG
+        value: "false"
+      - key: LOG_LEVEL
+        value: "INFO"
+      - key: ENVIRONMENT
+        value: "staging"
+      - key: EA_INTEGRATION_ENABLED
+        value: "true"
+      - key: ENABLE_IP_ALLOWLIST
+        value: "true"  # Enabled for production-like testing
+      - key: ENFORCE_WEBHOOK_SECRET
+        value: "true"  # Required for staging
+      - key: WHATSAPP_VERIFY_TOKEN
+        scope: RUN_TIME
+        type: SECRET
+      - key: WHATSAPP_BUSINESS_TOKEN_STAGING
+        scope: RUN_TIME
+        type: SECRET
+      - key: WHATSAPP_BUSINESS_PHONE_ID_STAGING
+        scope: RUN_TIME
+        type: SECRET
+      - key: WHATSAPP_WEBHOOK_SECRET_STAGING
+        scope: RUN_TIME
+        type: SECRET
+      - key: ELEVENLABS_API_KEY_STAGING
+        scope: RUN_TIME
+        type: SECRET
+
+# Staging domain configuration
+domains:
+  - domain: webhook-staging.aiagency.platform
+    type: PRIMARY
+    
+# Staging alerts (production-like thresholds)
+alerts:
+  - rule: CPU_UTILIZATION
+    value: 85
+    window: FIVE_MINUTES
+  - rule: MEM_UTILIZATION
+    value: 85
+    window: FIVE_MINUTES
+  - rule: RESTART_COUNT
+    value: 3
+    window: FIVE_MINUTES

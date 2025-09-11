@@ -1,0 +1,66 @@
+# DigitalOcean App Platform Configuration - Production Environment
+# AI Agency Platform Webhook Service
+name: ai-agency-platform-webhook-prod
+services:
+  - name: webhook-api-prod
+    source_dir: /
+    github:
+      repo: jjaguirr/ai-agency-platform
+      branch: main  # Production uses main branch only
+    run_command: gunicorn --bind 0.0.0.0:$PORT --timeout 120 --workers 2 --preload src.webhook.unified_whatsapp_webhook:app
+    environment_slug: python
+    instance_count: 1  # Single instance for basic-xs
+    instance_size_slug: basic-xs  # More resources for production
+    
+    # Production health check (stricter)
+    health_check:
+      http_path: /health
+      initial_delay_seconds: 60
+      period_seconds: 20
+      timeout_seconds: 10
+      success_threshold: 1
+      failure_threshold: 2
+      
+    # Production environment variables
+    envs:
+      - key: FLASK_ENV
+        value: production
+      - key: FLASK_DEBUG
+        value: "false"
+      - key: LOG_LEVEL
+        value: "INFO"
+      - key: ENVIRONMENT
+        value: "production"
+      - key: EA_INTEGRATION_ENABLED
+        value: "true"
+      - key: ENABLE_IP_ALLOWLIST
+        value: "true"  # REQUIRED for production
+      - key: ENFORCE_WEBHOOK_SECRET
+        value: "true"  # REQUIRED for production
+      - key: WHATSAPP_VERIFY_TOKEN
+        scope: RUN_TIME
+        type: SECRET
+      - key: WHATSAPP_BUSINESS_TOKEN
+        scope: RUN_TIME
+        type: SECRET
+      - key: WHATSAPP_BUSINESS_PHONE_ID
+        scope: RUN_TIME
+        type: SECRET
+      - key: WHATSAPP_WEBHOOK_SECRET
+        scope: RUN_TIME
+        type: SECRET
+      - key: ELEVENLABS_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+
+# Production domain configuration
+domains:
+  - domain: webhook.aiagency.platform
+    type: PRIMARY
+    
+# Production alerts (disabled for initial deployment)
+# alerts:
+#   - rule: CPU_UTILIZATION
+#     value: 80
+#     window: FIVE_MINUTES
+#     operator: GREATER_THAN

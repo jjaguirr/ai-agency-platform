@@ -1,0 +1,231 @@
+name: Webhook PR Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+      - phase-2-development
+    paths:
+      - 'src/webhook/**'
+      - 'requirements.txt'
+      - '.do/**'
+      - 'scripts/deploy_webhook_production.py'
+      - 'scripts/manage_webhook_environments.py'
+      - '.github/workflows/webhook-*.yml'
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # Quick validation for PRs
+  pr-validation:
+    name: PR Validation
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install black flake8 bandit
+      
+      - name: Code Formatting Check
+        run: |
+          black --check --diff src/webhook/ scripts/
+          echo "✅ Code formatting validated"
+      
+      - name: Linting
+        run: |
+          flake8 src/webhook/ scripts/ --max-line-length=100 --exclude=__pycache__
+          echo "✅ Code linting passed"
+      
+      - name: Security Scan
+        run: |
+          bandit -r src/webhook/ -ll
+          echo "✅ Security scan completed"
+      
+      - name: Syntax Validation
+        run: |
+          python -m py_compile src/webhook/unified_whatsapp_webhook.py
+          python -m py_compile scripts/manage_webhook_environments.py
+          echo "✅ Syntax validation passed"
+      
+      - name: Import Test
+        run: |
+          cd src && python -c "
+          import sys, os
+          from unittest.mock import patch
+          
+          # Mock required environment variables
+          with patch.dict(os.environ, {
+            'WHATSAPP_VERIFY_TOKEN': 'test',
+            'WHATSAPP_BUSINESS_TOKEN': 'test',
+            'WHATSAPP_BUSINESS_PHONE_ID': 'test',
+            'FLASK_ENV': 'testing'
+          }):
+            from webhook.unified_whatsapp_webhook import app
+            print('✅ Import successful')
+          "
+      
+      - name: Configuration Validation
+        run: |
+          # Validate DigitalOcean configurations
+          python -c "
+          import yaml
+          import os
+          from pathlib import Path
+          
+          configs = [
+            '.do/environments/development.yaml',
+            '.do/environments/staging.yaml', 
+            '.do/environments/production.yaml'
+          ]
+          
+          for config_path in configs:
+            if os.path.exists(config_path):
+              with open(config_path) as f:
+                config = yaml.safe_load(f)
+                assert 'name' in config, f'Missing name in {config_path}'
+                assert 'services' in config, f'Missing services in {config_path}'
+                print(f'✅ {config_path} validated')
+          "
+      
+      - name: PR Summary
+        run: |
+          echo "## 🎉 Webhook PR Validation Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Code formatting**: Passed" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Linting**: Passed" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Security scan**: Passed" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Syntax validation**: Passed" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Import test**: Passed" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Configuration validation**: Passed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🚀 **Ready for merge** - All webhook validations passed!" >> $GITHUB_STEP_SUMMARY
+
+  # Configuration drift detection
+  config-validation:
+    name: Configuration Validation
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Check Environment Parity
+        run: |
+          echo "🔍 Checking environment configuration parity..."
+          
+          # Check that all environments have required configurations
+          python -c "
+          import yaml
+          import sys
+          
+          configs = {
+            'dev': '.do/environments/development.yaml',
+            'staging': '.do/environments/staging.yaml',
+            'prod': '.do/environments/production.yaml'
+          }
+          
+          required_keys = ['name', 'services', 'domains']
+          required_env_vars = [
+            'FLASK_ENV', 'ENVIRONMENT', 'EA_INTEGRATION_ENABLED',
+            'WHATSAPP_VERIFY_TOKEN', 'WHATSAPP_BUSINESS_TOKEN',
+            'ELEVENLABS_API_KEY'
+          ]
+          
+          for env_name, config_path in configs.items():
+            with open(config_path) as f:
+              config = yaml.safe_load(f)
+              
+              # Check required top-level keys
+              for key in required_keys:
+                if key not in config:
+                  print(f'❌ Missing {key} in {env_name}')
+                  sys.exit(1)
+              
+              # Check environment variables
+              service_envs = config['services'][0].get('envs', [])
+              env_keys = [env.get('key') for env in service_envs]
+              
+              for req_var in required_env_vars:
+                if req_var not in env_keys:
+                  print(f'❌ Missing env var {req_var} in {env_name}')
+                  sys.exit(1)
+              
+              print(f'✅ {env_name} configuration validated')
+          
+          print('✅ All environment configurations validated')
+          "
+      
+      - name: Security Configuration Check
+        run: |
+          echo "🔒 Checking production security configuration..."
+          
+          python -c "
+          import yaml
+          
+          with open('.do/environments/production.yaml') as f:
+            prod_config = yaml.safe_load(f)
+          
+          service_envs = prod_config['services'][0]['envs']
+          env_dict = {env['key']: env.get('value', 'SECRET') for env in service_envs}
+          
+          # Check production security requirements
+          assert env_dict.get('FLASK_ENV') == 'production', 'Production must use FLASK_ENV=production'
+          assert env_dict.get('FLASK_DEBUG') == 'false', 'Production must disable debug mode'
+          assert env_dict.get('ENABLE_IP_ALLOWLIST') == 'true', 'Production must enable IP allowlist'
+          assert env_dict.get('ENFORCE_WEBHOOK_SECRET') == 'true', 'Production must enforce webhook secrets'
+          
+          print('✅ Production security configuration validated')
+          "
+
+  pr-comment:
+    name: PR Comment
+    runs-on: ubuntu-latest
+    needs: [pr-validation, config-validation]
+    if: always()
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Comment PR
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const validation_status = '${{ needs.pr-validation.result }}';
+            const config_status = '${{ needs.config-validation.result }}';
+            
+            const success = validation_status === 'success' && config_status === 'success';
+            const emoji = success ? '✅' : '❌';
+            const status = success ? 'PASSED' : 'FAILED';
+            
+            const comment = `## ${emoji} Webhook PR Validation ${status}
+            
+            **Validation Results:**
+            - Code Validation: ${validation_status === 'success' ? '✅ Passed' : '❌ Failed'}  
+            - Configuration Check: ${config_status === 'success' ? '✅ Passed' : '❌ Failed'}
+            
+            ${success ? 
+              '🚀 **Ready for merge!** All webhook validation checks passed.' :
+              '⚠️ **Please fix issues** before merging this PR.'
+            }
+            
+            **Deployment Flow:**
+            - Merge to \`phase-2-development\` → Auto-deploy to Development
+            - Merge to \`main\` → Auto-deploy to Staging
+            - Production deployment requires manual trigger or \`[deploy-prod]\` in commit message
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });

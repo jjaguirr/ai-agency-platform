@@ -1,0 +1,68 @@
+# DigitalOcean App Platform Configuration - Development Environment
+# AI Agency Platform Webhook Service
+name: ai-agency-platform-webhook-dev
+services:
+  - name: webhook-api-dev
+    source_dir: /
+    github:
+      repo: jjaguirr/ai-agency-platform
+      branch: phase-2-development
+    run_command: gunicorn --bind 0.0.0.0:$PORT --timeout 60 --workers 1 --reload src.webhook.unified_whatsapp_webhook:app
+    environment_slug: python
+    instance_count: 1
+    instance_size_slug: basic-xxs
+    
+    # Health check
+    health_check:
+      http_path: /health
+      initial_delay_seconds: 30
+      period_seconds: 10
+      timeout_seconds: 5
+      success_threshold: 1
+      failure_threshold: 3
+      
+    # Development environment variables
+    envs:
+      - key: FLASK_ENV
+        value: development
+      - key: FLASK_DEBUG
+        value: "true"
+      - key: LOG_LEVEL
+        value: "DEBUG"
+      - key: ENVIRONMENT
+        value: "development"
+      - key: EA_INTEGRATION_ENABLED
+        value: "true"
+      - key: ENABLE_IP_ALLOWLIST
+        value: "false"  # Disabled for dev to allow ngrok/local testing
+      - key: ENFORCE_WEBHOOK_SECRET
+        value: "false"  # Optional for development
+      - key: WHATSAPP_VERIFY_TOKEN
+        scope: RUN_TIME
+        type: SECRET
+      - key: WHATSAPP_BUSINESS_TOKEN
+        scope: RUN_TIME
+        type: SECRET
+      - key: WHATSAPP_BUSINESS_PHONE_ID
+        scope: RUN_TIME
+        type: SECRET
+      - key: WHATSAPP_WEBHOOK_SECRET
+        scope: RUN_TIME
+        type: SECRET
+      - key: ELEVENLABS_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+
+# Development domain configuration
+domains:
+  - domain: webhook-dev.aiagency.platform
+    type: PRIMARY
+    
+# Development alerts (relaxed thresholds)
+alerts:
+  - rule: CPU_UTILIZATION
+    value: 90
+    window: FIVE_MINUTES
+  - rule: MEM_UTILIZATION
+    value: 90
+    window: FIVE_MINUTES
