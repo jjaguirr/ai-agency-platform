@@ -11,10 +11,19 @@ import hashlib
 import requests
 import os
 import time
+import ssl
+import base64
 from datetime import datetime
 from typing import Dict, Any
 from flask import Flask, request, jsonify
 from collections import defaultdict
+try:
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+    CRYPTOGRAPHY_AVAILABLE = True
+except ImportError:
+    CRYPTOGRAPHY_AVAILABLE = False
+    logging.warning("❌ cryptography package not available - mTLS verification disabled")
 
 # Simple Flask app
 app = Flask(__name__)
@@ -30,6 +39,7 @@ PHONE_NUMBER_ID = os.getenv('WHATSAPP_PHONE_NUMBER_ID', '782822591574136')
 WEBHOOK_SECRET = os.getenv('WHATSAPP_WEBHOOK_SECRET', '')
 ENVIRONMENT = os.getenv('ENVIRONMENT', 'production')
 API_KEY = os.getenv('API_KEY', 'ai-agency-secure-key-2024')
+ENABLE_MTLS = os.getenv('ENABLE_MTLS', 'true').lower() == 'true'
 
 # Rate limiting storage (use Redis in production)
 rate_limit_storage = defaultdict(list)
@@ -71,6 +81,11 @@ def handle_webhook():
             logger.warning("⚠️ Rate limit exceeded")
             return jsonify({"error": "Rate limit exceeded"}), 429
         
+        # Verify mTLS client certificate (if enabled)
+        if ENABLE_MTLS and not verify_mtls_certificate(request):
+            logger.error("❌ Invalid mTLS client certificate")
+            return jsonify({"error": "Invalid client certificate"}), 403
+            
         # Verify webhook signature for security
         if not verify_webhook_signature(request):
             logger.error("❌ Invalid webhook signature")
@@ -278,6 +293,82 @@ def root():
         "timestamp": datetime.now().isoformat()
     })
 
+def verify_mtls_certificate(req) -> bool:
+    """Verify mTLS client certificate from WhatsApp/Meta"""
+    try:
+        if not CRYPTOGRAPHY_AVAILABLE:
+            logger.warning("⚠️ mTLS verification disabled - cryptography not available")
+            return True
+            
+        # Extract client certificate from headers
+        # DigitalOcean App Platform should provide this in headers
+        client_cert_header = req.headers.get('X-Forwarded-Client-Cert') or \
+                            req.headers.get('X-Client-Cert') or \
+                            req.headers.get('X-SSL-Client-Cert')
+        
+        if not client_cert_header:
+            logger.warning("❌ mTLS: No client certificate in headers")
+            logger.debug(f"Available headers: {list(req.headers.keys())}")
+            return False
+        
+        try:
+            # Handle URL-encoded certificate
+            if client_cert_header.startswith('%'):
+                import urllib.parse
+                client_cert_header = urllib.parse.unquote(client_cert_header)
+            
+            # Handle base64 encoded certificate
+            if not client_cert_header.startswith('-----BEGIN'):
+                client_cert_data = base64.b64decode(client_cert_header)
+            else:
+                client_cert_data = client_cert_header.encode('utf-8')
+                
+            # Parse X.509 certificate
+            cert = x509.load_pem_x509_certificate(client_cert_data)
+            
+        except Exception as parse_error:
+            logger.error(f"❌ mTLS: Certificate parsing failed: {parse_error}")
+            return False
+        
+        # Verify Common Name (CN) = client.webhooks.fbclientcerts.com
+        try:
+            subject = cert.subject
+            cn_attributes = subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+            
+            if not cn_attributes:
+                logger.error("❌ mTLS: No Common Name in certificate")
+                return False
+                
+            cn = cn_attributes[0].value
+            expected_cn = "client.webhooks.fbclientcerts.com"
+            
+            if cn != expected_cn:
+                logger.error(f"❌ mTLS: Invalid CN - expected: {expected_cn}, got: {cn}")
+                return False
+                
+        except Exception as cn_error:
+            logger.error(f"❌ mTLS: CN verification failed: {cn_error}")
+            return False
+        
+        # Verify certificate is not expired
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
+        
+        if now < cert.not_valid_before:
+            logger.error(f"❌ mTLS: Certificate not yet valid (not before: {cert.not_valid_before})")
+            return False
+            
+        if now > cert.not_valid_after:
+            logger.error(f"❌ mTLS: Certificate expired (not after: {cert.not_valid_after})")
+            return False
+        
+        logger.info(f"✅ mTLS: Client certificate verified - CN: {cn}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ mTLS verification error: {e}")
+        return False
+
 def verify_webhook_signature(req) -> bool:
     """Verify webhook signature for security"""
     try:
@@ -328,12 +419,12 @@ def check_rate_limit(req) -> bool:
 
 @app.before_request
 def require_api_key():
-    """Require API key for all endpoints except verification"""
-    # Allow webhook verification (GET request required by WhatsApp)
-    if request.method == 'GET' and 'webhook' in request.path:
+    """Require API key for all endpoints except webhooks and health checks"""
+    # Allow all webhook requests (WhatsApp handles its own signature verification)
+    if 'webhook' in request.path:
         return
     
-    # Allow health checks
+    # Allow health checks and root endpoint
     if request.path in ['/', '/health']:
         return
     
@@ -353,6 +444,7 @@ if __name__ == "__main__":
         logger.warning("🔓 SECURITY WARNING: Using default API key!")
     
     logger.info(f"🔐 Security features enabled:")
+    logger.info(f"  - mTLS verification: {'✓' if ENABLE_MTLS and CRYPTOGRAPHY_AVAILABLE else '✗'}")
     logger.info(f"  - Signature validation: {'✓' if WEBHOOK_SECRET else '✗'}")
     logger.info(f"  - Rate limiting: ✓")  
     logger.info(f"  - API authentication: ✓")
