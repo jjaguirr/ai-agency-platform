@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import uuid
+import hashlib
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
@@ -74,7 +75,9 @@ class CustomerEAInstance:
         if not self.qdrant_collection:
             self.qdrant_collection = f"customer_{self.customer_id}_memory"
         if not self.postgres_schema:
-            self.postgres_schema = f"customer_{hash(self.customer_id) % 1000}"
+            # Use cryptographic hash for secure, consistent customer isolation
+            customer_hash = hashlib.sha256(self.customer_id.encode()).hexdigest()
+            self.postgres_schema = f"customer_{customer_hash[:16]}"
 
 class CustomerEAManager:
     """
@@ -224,9 +227,11 @@ class CustomerEAManager:
                 logger.info(f"Customer {customer_id} already exists, returning existing instance")
                 return existing_instance
             
-            # Allocate infrastructure resources
+            # Allocate infrastructure resources  
             redis_db = await self._allocate_redis_db()
-            postgres_schema = f"customer_{hash(customer_id) % 1000}"
+            # Use cryptographic hash for secure, consistent customer isolation
+            customer_hash = hashlib.sha256(customer_id.encode()).hexdigest()
+            postgres_schema = f"customer_{customer_hash[:16]}"
             
             # Get tier configuration
             tier_config = self.tier_configs[tier]
@@ -415,8 +420,9 @@ class CustomerEAManager:
             except:
                 continue
         
-        # If no DB available, use hash-based allocation
-        return hash(datetime.now().isoformat()) % 14
+        # If no DB available, use secure hash-based allocation
+        fallback_hash = hashlib.sha256(datetime.now().isoformat().encode()).hexdigest()
+        return (int(fallback_hash[:8], 16) % 14) + 1  # Use DBs 1-14, avoid DB 0
     
     async def _initialize_ea_instance(self, customer_instance: CustomerEAInstance) -> ExecutiveAssistant:
         """Initialize EA instance with customer-specific configuration"""

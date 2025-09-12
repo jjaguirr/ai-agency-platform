@@ -10,9 +10,11 @@ import hmac
 import hashlib
 import requests
 import os
+import time
 from datetime import datetime
 from typing import Dict, Any
 from flask import Flask, request, jsonify
+from collections import defaultdict
 
 # Simple Flask app
 app = Flask(__name__)
@@ -27,6 +29,10 @@ ACCESS_TOKEN = os.getenv('WHATSAPP_ACCESS_TOKEN')
 PHONE_NUMBER_ID = os.getenv('WHATSAPP_PHONE_NUMBER_ID', '782822591574136')
 WEBHOOK_SECRET = os.getenv('WHATSAPP_WEBHOOK_SECRET', '')
 ENVIRONMENT = os.getenv('ENVIRONMENT', 'production')
+API_KEY = os.getenv('API_KEY', 'ai-agency-secure-key-2024')
+
+# Rate limiting storage (use Redis in production)
+rate_limit_storage = defaultdict(list)
 
 logger.info(f"🚀 Starting WhatsApp Webhook - Environment: {ENVIRONMENT}")
 logger.info(f"📱 Phone ID: {PHONE_NUMBER_ID}")
@@ -60,8 +66,15 @@ def handle_webhook():
         data = request.get_json()
         logger.info("📱 Webhook received")
         
-        # Temporarily disable signature validation for debugging
-        logger.info("⚠️ Signature validation temporarily disabled for debugging")
+        # Rate limiting check
+        if not check_rate_limit(request):
+            logger.warning("⚠️ Rate limit exceeded")
+            return jsonify({"error": "Rate limit exceeded"}), 429
+        
+        # Verify webhook signature for security
+        if not verify_webhook_signature(request):
+            logger.error("❌ Invalid webhook signature")
+            return jsonify({"error": "Invalid signature"}), 403
         
         # Process messages
         process_webhook_data(data)
@@ -265,6 +278,83 @@ def root():
         "timestamp": datetime.now().isoformat()
     })
 
+def verify_webhook_signature(req) -> bool:
+    """Verify webhook signature for security"""
+    try:
+        if not WEBHOOK_SECRET:
+            logger.warning("⚠️ No webhook secret configured - signature validation disabled")
+            return True  # Allow in development, but warn
+        
+        signature = req.headers.get('X-Hub-Signature-256', '')
+        if not signature:
+            logger.error("❌ Missing webhook signature")
+            return False
+        
+        expected_signature = 'sha256=' + hmac.new(
+            WEBHOOK_SECRET.encode('utf-8'),
+            req.get_data(),
+            hashlib.sha256
+        ).hexdigest()
+        
+        return hmac.compare_digest(signature, expected_signature)
+    except Exception as e:
+        logger.error(f"Signature verification error: {e}")
+        return False
+
+def check_rate_limit(req) -> bool:
+    """Basic rate limiting - 60 requests per minute per IP"""
+    try:
+        client_ip = req.headers.get('X-Forwarded-For', req.remote_addr)
+        current_time = time.time()
+        
+        # Clean old entries (older than 1 minute)
+        cutoff_time = current_time - 60
+        rate_limit_storage[client_ip] = [
+            timestamp for timestamp in rate_limit_storage[client_ip]
+            if timestamp > cutoff_time
+        ]
+        
+        # Check if under limit (60 per minute)
+        if len(rate_limit_storage[client_ip]) >= 60:
+            return False
+        
+        # Add current request
+        rate_limit_storage[client_ip].append(current_time)
+        return True
+        
+    except Exception as e:
+        logger.error(f"Rate limiting error: {e}")
+        return True  # Allow by default on error
+
+@app.before_request
+def require_api_key():
+    """Require API key for all endpoints except verification"""
+    # Allow webhook verification (GET request required by WhatsApp)
+    if request.method == 'GET' and 'webhook' in request.path:
+        return
+    
+    # Allow health checks
+    if request.path in ['/', '/health']:
+        return
+    
+    # Check API key for all other requests
+    api_key = request.headers.get('X-API-Key')
+    if not api_key or api_key != API_KEY:
+        logger.warning(f"⚠️ Unauthorized access attempt from {request.remote_addr}")
+        return jsonify({"error": "Unauthorized"}), 401
+
 if __name__ == "__main__":
     port = int(os.getenv('PORT', 8000))
+    
+    # Security warnings
+    if not WEBHOOK_SECRET:
+        logger.warning("🔓 SECURITY WARNING: WEBHOOK_SECRET not configured!")
+    if API_KEY == 'ai-agency-secure-key-2024':
+        logger.warning("🔓 SECURITY WARNING: Using default API key!")
+    
+    logger.info(f"🔐 Security features enabled:")
+    logger.info(f"  - Signature validation: {'✓' if WEBHOOK_SECRET else '✗'}")
+    logger.info(f"  - Rate limiting: ✓")  
+    logger.info(f"  - API authentication: ✓")
+    
     app.run(host='0.0.0.0', port=port, debug=False)
