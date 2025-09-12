@@ -17,18 +17,36 @@ from typing import Dict, Any
 from flask import Flask, request, jsonify
 
 # Add src directory to Python path for EA imports
-sys.path.append('/Users/jose/Documents/🚀 Projects/⚡ Active/ai-agency-platform/src')
+# Try multiple possible paths (local dev vs deployed container)
+import os
+possible_src_paths = [
+    '/Users/jose/Documents/🚀 Projects/⚡ Active/ai-agency-platform/src',  # Local dev
+    '../src',  # Relative path in deployment
+    '/app/src',  # Common container path
+    './src'  # Current directory
+]
 
-try:
-    from agents.executive_assistant import ExecutiveAssistant, ConversationChannel
-    from customer_ea_manager import handle_whatsapp_customer_message
-    CUSTOMER_EA_AVAILABLE = True
-except ImportError as e:
-    print(f"Warning: Could not import EA systems: {e}")
-    ExecutiveAssistant = None
-    ConversationChannel = None
-    handle_whatsapp_customer_message = None
-    CUSTOMER_EA_AVAILABLE = False
+for path in possible_src_paths:
+    if os.path.exists(path):
+        sys.path.append(path)
+        print(f"Added {path} to Python path")
+        break
+
+# For now, disable EA integration in production until we can properly deploy the src files
+CUSTOMER_EA_AVAILABLE = False
+print("🚨 EA integration temporarily disabled - using fallback responses")
+
+# try:
+#     from agents.executive_assistant import ExecutiveAssistant, ConversationChannel
+#     from customer_ea_manager import handle_whatsapp_customer_message
+#     CUSTOMER_EA_AVAILABLE = True
+#     print("✅ EA systems imported successfully")
+# except ImportError as e:
+#     print(f"Warning: Could not import EA systems: {e}")
+#     ExecutiveAssistant = None
+#     ConversationChannel = None
+#     handle_whatsapp_customer_message = None
+#     CUSTOMER_EA_AVAILABLE = False
 
 # Simple Flask app
 app = Flask(__name__)
@@ -166,8 +184,19 @@ async def handle_message_with_ea(message: Dict[str, Any]):
                 fallback_response = f"Hi! I'm your Executive Assistant Sarah. I received your message: '{content[:100]}' and I'm processing it now. Let me get back to you in just a moment!"
                 send_response(from_number, fallback_response)
         else:
-            # Fallback if EA not available
-            response = f"Thanks for your message: '{content[:100]}...' I'll get back to you soon!"
+            # Enhanced fallback response for EA service
+            response = f"""Hi! I'm Sarah, your Executive Assistant from AI Agency Platform. 
+
+I received your message: "{content[:100]}{'...' if len(content) > 100 else ''}"
+
+I'm currently processing this and will have my full conversation system online shortly. In the meantime, I want you to know:
+
+🤖 I'm designed to learn your business and create automated workflows
+⚡ I can help with daily operations, process automation, and business intelligence  
+📱 I'm available 24/7 via WhatsApp, phone, and email
+🧠 I remember everything about our conversations
+
+Let me get back to you with a proper response in just a moment!"""
             send_response(from_number, response)
             
     except Exception as e:
