@@ -10,9 +10,25 @@ import hmac
 import hashlib
 import requests
 import os
+import sys
+import asyncio
 from datetime import datetime
 from typing import Dict, Any
 from flask import Flask, request, jsonify
+
+# Add src directory to Python path for EA imports
+sys.path.append('/Users/jose/Documents/🚀 Projects/⚡ Active/ai-agency-platform/src')
+
+try:
+    from agents.executive_assistant import ExecutiveAssistant, ConversationChannel
+    from customer_ea_manager import handle_whatsapp_customer_message
+    CUSTOMER_EA_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Could not import EA systems: {e}")
+    ExecutiveAssistant = None
+    ConversationChannel = None
+    handle_whatsapp_customer_message = None
+    CUSTOMER_EA_AVAILABLE = False
 
 # Simple Flask app
 app = Flask(__name__)
@@ -115,8 +131,8 @@ def process_webhook_data(data: Dict[str, Any]):
     except Exception as e:
         logger.error(f"Error processing webhook: {e}")
 
-def handle_message(message: Dict[str, Any]):
-    """Handle individual message"""
+async def handle_message_with_ea(message: Dict[str, Any]):
+    """Handle message with Executive Assistant integration"""
     try:
         from_number = message.get('from', '')
         message_type = message.get('type', 'text')
@@ -128,15 +144,56 @@ def handle_message(message: Dict[str, Any]):
         else:
             content = f"[{message_type} message received]"
         
-        logger.info(f"📨 Message from {from_number}: {content[:50]}...")
+        logger.info(f"📨 WhatsApp message from {from_number}: {content[:50]}...")
         
-        # Send simple response
-        if content.strip():
+        # Route to Customer EA Management System if available
+        if CUSTOMER_EA_AVAILABLE and handle_whatsapp_customer_message and content.strip():
+            try:
+                # Process message through Customer EA Management System
+                # This handles auto-provisioning, tier management, usage limits, etc.
+                ea_response = await handle_whatsapp_customer_message(
+                    whatsapp_number=from_number,
+                    message=content,
+                    conversation_id=f"wa_{from_number}_{message.get('id', 'unknown')}"
+                )
+                
+                logger.info(f"🏢 Customer EA response generated for {from_number}: {ea_response[:100]}...")
+                send_response(from_number, ea_response)
+                
+            except Exception as ea_error:
+                logger.error(f"Customer EA processing error: {ea_error}")
+                # Fallback to simple response
+                fallback_response = f"Hi! I'm your Executive Assistant Sarah. I received your message: '{content[:100]}' and I'm processing it now. Let me get back to you in just a moment!"
+                send_response(from_number, fallback_response)
+        else:
+            # Fallback if EA not available
             response = f"Thanks for your message: '{content[:100]}...' I'll get back to you soon!"
             send_response(from_number, response)
             
     except Exception as e:
         logger.error(f"Message handling error: {e}")
+        # Emergency fallback
+        try:
+            if 'from_number' in locals():
+                send_response(from_number, "I received your message and I'm working on it. Please give me a moment.")
+        except:
+            pass
+
+def handle_message(message: Dict[str, Any]):
+    """Sync wrapper for async EA message handling"""
+    try:
+        # Run async EA handling in new event loop
+        asyncio.run(handle_message_with_ea(message))
+    except Exception as e:
+        logger.error(f"Error running async EA handler: {e}")
+        # Fallback to simple sync handling
+        try:
+            from_number = message.get('from', '')
+            content = message.get('text', {}).get('body', '') if message.get('type') == 'text' else '[non-text message]'
+            response = f"Hi! I received your message: '{content[:100]}' - I'm your Executive Assistant and I'm processing this now."
+            send_response(from_number, response)
+        except Exception as fallback_error:
+            logger.error(f"Fallback handling also failed: {fallback_error}")
 
 def send_response(to_number: str, message: str):
     """Send response via WhatsApp API"""
