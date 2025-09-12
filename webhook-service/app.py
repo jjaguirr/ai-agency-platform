@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 VERIFY_TOKEN = os.getenv('WHATSAPP_VERIFY_TOKEN', 'ai_agency_platform_verify')
 ACCESS_TOKEN = os.getenv('WHATSAPP_ACCESS_TOKEN')
 PHONE_NUMBER_ID = os.getenv('WHATSAPP_PHONE_NUMBER_ID', '782822591574136')
-WEBHOOK_SECRET = os.getenv('WHATSAPP_WEBHOOK_SECRET', '')
+WEBHOOK_SECRET = os.getenv('APP_TOKEN', '')
 ENVIRONMENT = os.getenv('ENVIRONMENT', 'production')
 API_KEY = os.getenv('API_KEY', 'ai-agency-secure-key-2024')
 ENABLE_MTLS = os.getenv('ENABLE_MTLS', 'false').lower() == 'true'
