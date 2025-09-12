@@ -39,7 +39,7 @@ PHONE_NUMBER_ID = os.getenv('WHATSAPP_PHONE_NUMBER_ID', '782822591574136')
 WEBHOOK_SECRET = os.getenv('WHATSAPP_WEBHOOK_SECRET', '')
 ENVIRONMENT = os.getenv('ENVIRONMENT', 'production')
 API_KEY = os.getenv('API_KEY', 'ai-agency-secure-key-2024')
-ENABLE_MTLS = os.getenv('ENABLE_MTLS', 'true').lower() == 'true'
+ENABLE_MTLS = os.getenv('ENABLE_MTLS', 'false').lower() == 'true'
 
 # Rate limiting storage (use Redis in production)
 rate_limit_storage = defaultdict(list)
@@ -308,7 +308,7 @@ def verify_mtls_certificate(req) -> bool:
         
         if not client_cert_header:
             logger.warning("❌ mTLS: No client certificate in headers")
-            logger.debug(f"Available headers: {list(req.headers.keys())}")
+            logger.info(f"📋 Available headers: {dict(req.headers)}")
             return False
         
         try:
