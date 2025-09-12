@@ -32,21 +32,17 @@ for path in possible_src_paths:
         print(f"Added {path} to Python path")
         break
 
-# For now, disable EA integration in production until we can properly deploy the src files
-CUSTOMER_EA_AVAILABLE = False
-print("🚨 EA integration temporarily disabled - using fallback responses")
-
-# try:
-#     from agents.executive_assistant import ExecutiveAssistant, ConversationChannel
-#     from customer_ea_manager import handle_whatsapp_customer_message
-#     CUSTOMER_EA_AVAILABLE = True
-#     print("✅ EA systems imported successfully")
-# except ImportError as e:
-#     print(f"Warning: Could not import EA systems: {e}")
-#     ExecutiveAssistant = None
-#     ConversationChannel = None
-#     handle_whatsapp_customer_message = None
-#     CUSTOMER_EA_AVAILABLE = False
+# Enable EA integration with Customer EA Manager bridge module
+try:
+    from customer_ea_manager import handle_whatsapp_customer_message, health_check as ea_health_check
+    CUSTOMER_EA_AVAILABLE = True
+    print("✅ Customer EA Manager imported successfully - EA integration ENABLED")
+except ImportError as e:
+    print(f"Warning: Could not import Customer EA Manager: {e}")
+    handle_whatsapp_customer_message = None
+    ea_health_check = None
+    CUSTOMER_EA_AVAILABLE = False
+    print("🚨 EA integration disabled - using fallback responses")
 
 # Simple Flask app
 app = Flask(__name__)
@@ -256,18 +252,35 @@ def send_response(to_number: str, message: str):
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    """Health check endpoint"""
-    return jsonify({
+    """Enhanced health check endpoint with EA system status"""
+    health_status = {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "service": "whatsapp-webhook-simple",
+        "service": "whatsapp-webhook-ea-integrated",
         "environment": ENVIRONMENT,
         "checks": {
             "access_token": bool(ACCESS_TOKEN),
             "verify_token": bool(VERIFY_TOKEN),
-            "phone_number_id": bool(PHONE_NUMBER_ID)
+            "phone_number_id": bool(PHONE_NUMBER_ID),
+            "ea_integration": CUSTOMER_EA_AVAILABLE
         }
-    }), 200
+    }
+    
+    # Add EA system health if available
+    if CUSTOMER_EA_AVAILABLE and ea_health_check:
+        try:
+            import asyncio
+            ea_health = asyncio.run(ea_health_check())
+            health_status["ea_system"] = ea_health
+        except Exception as e:
+            health_status["ea_system"] = {"status": "error", "error": str(e)}
+    
+    # Determine overall health
+    if not CUSTOMER_EA_AVAILABLE:
+        health_status["status"] = "degraded"
+        health_status["warning"] = "EA integration disabled"
+    
+    return jsonify(health_status), 200
 
 @app.route('/', methods=['GET'])
 def root():
