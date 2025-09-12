@@ -5,7 +5,6 @@ Minimal dependencies, optimized for container deployment
 """
 
 import logging
-import json
 import hmac
 import hashlib
 import requests
