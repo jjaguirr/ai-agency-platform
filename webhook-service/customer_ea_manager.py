@@ -11,6 +11,9 @@ import sys
 from datetime import datetime
 from typing import Dict, Any, Optional
 
+# Initialize logger first
+logger = logging.getLogger(__name__)
+
 # Add project root to Python path to enable absolute imports
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
@@ -28,8 +31,6 @@ except ImportError as e:
     WhatsAppChannel = None
     UnifiedContextStore = None
     EA_IMPORTS_AVAILABLE = False
-
-logger = logging.getLogger(__name__)
 
 class CustomerEAManager:
     """

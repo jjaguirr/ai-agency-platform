@@ -179,19 +179,21 @@ async def handle_message_with_ea(message: Dict[str, Any]):
                 fallback_response = f"Hi! I'm your Executive Assistant Sarah. I received your message: '{content[:100]}' and I'm processing it now. Let me get back to you in just a moment!"
                 send_response(from_number, fallback_response)
         else:
-            # Enhanced fallback response for EA service
+            # Enhanced fallback response for EA service with deployment debugging
             response = f"""Hi! I'm Sarah, your Executive Assistant from AI Agency Platform. 
 
 I received your message: "{content[:100]}{'...' if len(content) > 100 else ''}"
 
-I'm currently processing this and will have my full conversation system online shortly. In the meantime, I want you to know:
+🔧 I'm currently setting up my full conversation system. Here's what I can tell you:
 
 🤖 I'm designed to learn your business and create automated workflows
-⚡ I can help with daily operations, process automation, and business intelligence  
+⚡ I help with daily operations, process automation, and business intelligence  
 📱 I'm available 24/7 via WhatsApp, phone, and email
 🧠 I remember everything about our conversations
 
-Let me get back to you with a proper response in just a moment!"""
+Status: EA System = {'ENABLED' if CUSTOMER_EA_AVAILABLE else 'DEPLOYING'}
+
+I'll have my full capabilities online very soon. Thanks for your patience! 😊"""
             send_response(from_number, response)
             
     except Exception as e:
