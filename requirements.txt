@@ -13,8 +13,11 @@ httpx>=0.25.0
 cryptography>=41.0.0
 pyjwt>=2.8.0
 
-# Database connections (lightweight)
+# Database connections (comprehensive)
 asyncpg>=0.29.0
+psycopg2-binary>=2.9.9
+sqlalchemy>=2.0.0
+sqlalchemy[asyncio]>=2.0.0
 redis>=5.0.0
 
 # AI and Memory Layer (minimal)
