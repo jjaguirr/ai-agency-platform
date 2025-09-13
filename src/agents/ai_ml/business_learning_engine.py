@@ -21,6 +21,8 @@ from typing import Dict, List, Any, Optional, Tuple, Set
 from dataclasses import dataclass, asdict
 from enum import Enum
 
+logger = logging.getLogger(__name__)
+
 # Lightweight fallback imports for production deployment
 try:
     import numpy as np
@@ -35,8 +37,6 @@ except ImportError as e:
     np = None
     SentenceTransformer = None
     spacy = None
-
-logger = logging.getLogger(__name__)
 
 
 class BusinessEntityType(Enum):
