@@ -29,10 +29,10 @@ langchain-core>=0.1.0
 langchain-openai>=0.0.5
 langgraph>=0.0.1
 
-# ML and NLP dependencies
-sentence-transformers>=2.2.0
-spacy>=3.7.0
-numpy>=1.24.0
+# ML and NLP dependencies (removed heavy dependencies for deployment)
+# sentence-transformers>=2.2.0  # Causes PyTorch disk space overflow
+# spacy>=3.7.0                  # Heavy NLP library
+# numpy>=1.24.0                 # Will use lightweight fallback
 
 # Voice integration
 elevenlabs>=2.14.0

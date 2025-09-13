@@ -21,9 +21,20 @@ from typing import Dict, List, Any, Optional, Tuple, Set
 from dataclasses import dataclass, asdict
 from enum import Enum
 
-import numpy as np
-from sentence_transformers import SentenceTransformer
-import spacy
+# Lightweight fallback imports for production deployment
+try:
+    import numpy as np
+    from sentence_transformers import SentenceTransformer
+    import spacy
+    ML_DEPENDENCIES_AVAILABLE = True
+    logger.info("Full ML dependencies loaded")
+except ImportError as e:
+    # Lightweight fallback for production without heavy ML dependencies
+    logger.warning(f"Heavy ML dependencies not available ({e}), using lightweight fallback mode")
+    ML_DEPENDENCIES_AVAILABLE = False
+    np = None
+    SentenceTransformer = None
+    spacy = None
 
 logger = logging.getLogger(__name__)
 
@@ -125,20 +136,29 @@ class BusinessLearningEngine:
             return
         
         try:
-            # Initialize sentence transformer for semantic similarity
-            self.sentence_transformer = SentenceTransformer(
-                self.config["sentence_transformer_model"]
-            )
-            
-            # Initialize spaCy for NER and linguistic analysis
-            self.nlp_model = spacy.load(self.config["spacy_model"])
-            
-            self._model_initialized = True
-            logger.info("AI/ML models initialized successfully")
-            
+            if ML_DEPENDENCIES_AVAILABLE:
+                # Initialize sentence transformer for semantic similarity
+                self.sentence_transformer = SentenceTransformer(
+                    self.config["sentence_transformer_model"]
+                )
+
+                # Initialize spaCy for NER and linguistic analysis
+                self.nlp_model = spacy.load(self.config["spacy_model"])
+
+                self._model_initialized = True
+                logger.info("AI/ML models initialized successfully")
+            else:
+                # Fallback mode without heavy ML dependencies
+                self.sentence_transformer = None
+                self.nlp_model = None
+                self._model_initialized = False
+                logger.info("Using lightweight fallback mode without heavy ML models")
+
         except Exception as e:
             logger.error(f"Failed to initialize AI/ML models: {e}")
             # Fallback to simplified processing without advanced models
+            self.sentence_transformer = None
+            self.nlp_model = None
             self._model_initialized = False
     
     async def extract_business_insights(self, conversation_text: str, 
@@ -576,11 +596,11 @@ class BusinessLearningEngine:
             return patterns
         
         # Semantic similarity matching if sentence transformer is available
-        if self._model_initialized and self.sentence_transformer:
+        if self._model_initialized and self.sentence_transformer and ML_DEPENDENCIES_AVAILABLE:
             try:
                 # Get embeddings for current text
                 current_embedding = self.sentence_transformer.encode([text])
-                
+
                 # Compare with context memories
                 for memory in context_memories:
                     memory_text = memory.get("memory", "")
@@ -589,7 +609,7 @@ class BusinessLearningEngine:
                         similarity = np.dot(current_embedding[0], memory_embedding[0]) / (
                             np.linalg.norm(current_embedding[0]) * np.linalg.norm(memory_embedding[0])
                         )
-                        
+
                         if similarity > self.config["similarity_threshold"]:
                             pattern = BusinessPattern(
                                 pattern_type="context_similarity",
