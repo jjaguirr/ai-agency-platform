@@ -1,0 +1,58 @@
+domains:
+- domain: webhook.aiagency.platform
+  type: PRIMARY
+ingress:
+  rules:
+  - component:
+      name: webhook-api
+    match:
+      path:
+        prefix: /
+name: ai-agency-platform-webhook
+region: atl
+services:
+- environment_slug: python
+  envs:
+  - key: FLASK_ENV
+    scope: RUN_AND_BUILD_TIME
+    value: production
+  - key: WHATSAPP_VERIFY_TOKEN
+    scope: RUN_TIME
+    type: SECRET
+    value: EV[1:3ImkFfYF4Di0PHW9kntf+AR81wZVh3wo:cIt4r9Xm5rkpKqtKonpdbA==]
+  - key: WHATSAPP_BUSINESS_TOKEN
+    scope: RUN_TIME
+    type: SECRET
+    value: EV[1:dxEhpqvfohQB+zD/fTS2KrLN9J5Wgy5D:bwSUQIvmnvQBSgLTMwqL0A==]
+  - key: WHATSAPP_BUSINESS_PHONE_ID
+    scope: RUN_TIME
+    type: SECRET
+    value: EV[1:x1nSuUS5jWoNHI6CspUyu2RtFT0EHqKC:rkoRV+xmvHKLAX6xl9wRUg==]
+  - key: WHATSAPP_WEBHOOK_SECRET
+    scope: RUN_TIME
+    type: SECRET
+    value: EV[1:sXgUXyUdiClCgj/RKWEKVJqUtMwiRTLz:fmyvKlWpCXqDZLsY9beOBw==]
+  - key: ELEVENLABS_API_KEY
+    scope: RUN_TIME
+    type: SECRET
+    value: EV[1:Vqe18fj/rFyxsceJKsfzTNGaagP08ZiH:elNgWX3CiV9ODibVEO93JA==]
+  - key: EA_INTEGRATION_ENABLED
+    scope: RUN_AND_BUILD_TIME
+    value: "true"
+  - key: ENVIRONMENT
+    scope: RUN_AND_BUILD_TIME
+    value: production
+  - key: LOG_LEVEL
+    scope: RUN_AND_BUILD_TIME
+    value: INFO
+  github:
+    branch: phase-2-development
+    repo: jjaguirr/ai-agency-platform
+  health_check:
+    http_path: /health
+  http_port: 8080
+  instance_count: 1
+  instance_size_slug: basic-xxs
+  name: webhook-api
+  run_command: gunicorn --bind 0.0.0.0:$PORT --timeout 120 --workers 2 src.webhook.unified_whatsapp_webhook:app
+  source_dir: /
