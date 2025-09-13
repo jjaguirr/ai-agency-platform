@@ -7,7 +7,6 @@ services:
     github:
       repo: jjaguirr/ai-agency-platform
       branch: phase-2-development
-    build_command: pip install -r requirements-webhook.txt
     run_command: gunicorn --bind 0.0.0.0:$PORT --timeout 120 --workers 2 src.webhook.unified_whatsapp_webhook:app
     environment_slug: python
     instance_count: 1
