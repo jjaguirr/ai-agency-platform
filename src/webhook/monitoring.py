@@ -84,9 +84,20 @@ class WebhookMonitor:
             'start_time': time.time()
         }
         
-        # Start background cleanup task
-        asyncio.create_task(self._cleanup_old_metrics())
-    
+        # Background cleanup task (started lazily when needed)
+        self._cleanup_task = None
+
+    def _ensure_cleanup_task_started(self):
+        """Start the cleanup task if not already running"""
+        if self._cleanup_task is None:
+            try:
+                loop = asyncio.get_running_loop()
+                self._cleanup_task = loop.create_task(self._cleanup_old_metrics())
+                logger.info("✅ Started background cleanup task")
+            except RuntimeError:
+                # No event loop running, cleanup task will be started later
+                logger.debug("No event loop running, cleanup task will be started when needed")
+
     def record_request(self, 
                       endpoint: str,
                       method: str, 
@@ -100,7 +111,10 @@ class WebhookMonitor:
                       customer_id: Optional[str] = None,
                       message_type: Optional[str] = None) -> None:
         """Record a webhook request metric"""
-        
+
+        # Ensure cleanup task is started (lazy initialization)
+        self._ensure_cleanup_task_started()
+
         timestamp = time.time()
         metric = WebhookMetric(
             timestamp=timestamp,
