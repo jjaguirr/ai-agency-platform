@@ -20,6 +20,8 @@ services:
     envs:
       - key: FLASK_ENV
         value: production
+      - key: PYTHONPATH
+        value: /workspace
       - key: WHATSAPP_VERIFY_TOKEN
         scope: RUN_TIME
         type: SECRET
