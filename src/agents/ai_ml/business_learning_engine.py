@@ -23,20 +23,34 @@ from enum import Enum
 
 logger = logging.getLogger(__name__)
 
-# Lightweight fallback imports for production deployment
-try:
-    import numpy as np
-    from sentence_transformers import SentenceTransformer
-    import spacy
-    ML_DEPENDENCIES_AVAILABLE = True
-    logger.info("Full ML dependencies loaded")
-except ImportError as e:
-    # Lightweight fallback for production without heavy ML dependencies
-    logger.warning(f"Heavy ML dependencies not available ({e}), using lightweight fallback mode")
-    ML_DEPENDENCIES_AVAILABLE = False
-    np = None
-    SentenceTransformer = None
-    spacy = None
+# Initialize lightweight fallback mode by default
+ML_DEPENDENCIES_AVAILABLE = False
+np = None
+SentenceTransformer = None
+spacy = None
+
+def _load_ml_dependencies():
+    """Attempt to load heavy ML dependencies when needed."""
+    global ML_DEPENDENCIES_AVAILABLE, np, SentenceTransformer, spacy
+
+    if ML_DEPENDENCIES_AVAILABLE:
+        return True
+
+    try:
+        import numpy as np_module
+        from sentence_transformers import SentenceTransformer as STModel
+        import spacy as spacy_module
+
+        # Only set globals if all imports succeed
+        np = np_module
+        SentenceTransformer = STModel
+        spacy = spacy_module
+        ML_DEPENDENCIES_AVAILABLE = True
+        logger.info("Successfully loaded heavy ML dependencies")
+        return True
+    except ImportError as e:
+        logger.warning(f"Heavy ML dependencies not available ({e}), using lightweight fallback mode")
+        return False
 
 
 class BusinessEntityType(Enum):
@@ -136,7 +150,7 @@ class BusinessLearningEngine:
             return
         
         try:
-            if ML_DEPENDENCIES_AVAILABLE:
+            if _load_ml_dependencies():
                 # Initialize sentence transformer for semantic similarity
                 self.sentence_transformer = SentenceTransformer(
                     self.config["sentence_transformer_model"]
@@ -596,7 +610,7 @@ class BusinessLearningEngine:
             return patterns
         
         # Semantic similarity matching if sentence transformer is available
-        if self._model_initialized and self.sentence_transformer and ML_DEPENDENCIES_AVAILABLE:
+        if self._model_initialized and self.sentence_transformer and ML_DEPENDENCIES_AVAILABLE and np is not None:
             try:
                 # Get embeddings for current text
                 current_embedding = self.sentence_transformer.encode([text])
