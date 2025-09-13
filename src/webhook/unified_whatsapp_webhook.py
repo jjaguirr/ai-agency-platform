@@ -92,29 +92,24 @@ if os.getenv('ELEVENLABS_API_KEY'):
     except Exception as e:
         logger.warning(f"Voice integration initialization failed: {e}")
 
+@app.after_request
+def set_security_headers(response):
+    """Add security headers to response"""
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    response.headers['Content-Security-Policy'] = "default-src 'self'"
+    return response
+
 @app.before_request
 def before_request():
     """Security middleware for all requests"""
-    # Add security headers
-    if request.endpoint:
-        add_security_headers()
-    
     # IP allowlisting for webhook endpoints
     if request.endpoint and 'webhook' in request.endpoint:
         if ENABLE_IP_ALLOWLIST and not is_allowed_ip(request.remote_addr):
             logger.warning(f"🚫 Blocked request from unauthorized IP: {request.remote_addr}")
             return jsonify({"error": "Unauthorized IP address"}), 403
-
-def add_security_headers():
-    """Add security headers to response"""
-    @app.after_request
-    def set_security_headers(response):
-        response.headers['X-Content-Type-Options'] = 'nosniff'
-        response.headers['X-Frame-Options'] = 'DENY'
-        response.headers['X-XSS-Protection'] = '1; mode=block'
-        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
-        response.headers['Content-Security-Policy'] = "default-src 'self'"
-        return response
 
 def is_allowed_ip(client_ip: str) -> bool:
     """Check if client IP is in WhatsApp Business API allowlist"""
