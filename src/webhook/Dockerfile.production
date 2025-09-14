@@ -1,0 +1,160 @@
+# Meta-Compliant WhatsApp Webhook Service - Production Container
+# Hardened for Tech Provider requirements with security best practices
+
+# Use specific Python version for reproducible builds
+FROM python:3.11.9-slim-bookworm
+
+# Metadata
+LABEL maintainer="AI Agency Platform <support@aiagency.platform>"
+LABEL description="Meta-compliant WhatsApp webhook service for EA integration"
+LABEL version="2.0.0"
+LABEL security.scan="required"
+
+# Security: Set timezone and locale
+ENV TZ=UTC
+ENV LC_ALL=C.UTF-8
+ENV LANG=C.UTF-8
+
+# Python configuration
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONFAULTHANDLER=1
+ENV PYTHONHASHSEED=random
+ENV PYTHONPATH=/app
+
+# Security: Disable pip root warnings and cache
+ENV PIP_NO_CACHE_DIR=1
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV PIP_ROOT_USER_ACTION=ignore
+
+# Production Flask configuration
+ENV FLASK_ENV=production
+ENV FLASK_DEBUG=0
+ENV ENVIRONMENT=production
+
+# Set working directory
+WORKDIR /app
+
+# Security: Create non-root user first
+RUN groupadd --gid 1000 webhook && \
+    useradd --uid 1000 --gid webhook --shell /bin/bash --create-home webhook
+
+# Install system dependencies with security updates
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        # Build dependencies
+        gcc \
+        g++ \
+        libc6-dev \
+        # Runtime dependencies
+        curl \
+        ca-certificates \
+        # Security tools
+        dumb-init \
+        # Network debugging (production)
+        netcat-traditional \
+    && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Security: Update CA certificates
+RUN update-ca-certificates
+
+# Copy and install Python requirements with security checks
+COPY requirements-webhook.txt requirements-production.txt ./
+
+# Install Python dependencies with security settings
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir --require-hashes -r requirements-production.txt || \
+    pip install --no-cache-dir -r requirements-webhook.txt
+
+# Copy application source code
+COPY --chown=webhook:webhook src/ ./src/
+COPY --chown=webhook:webhook scripts/ ./scripts/
+
+# Copy configuration files (without secrets)
+COPY --chown=webhook:webhook .env.production.template ./
+COPY --chown=webhook:webhook pyproject.toml ./
+
+# Security: Set proper file permissions
+RUN find /app -type f -exec chmod 644 {} \; && \
+    find /app -type d -exec chmod 755 {} \; && \
+    chmod +x /app/scripts/*.py || true && \
+    chmod +x /app/src/webhook/*.py
+
+# Create required directories
+RUN mkdir -p /app/logs /app/tmp /app/data && \
+    chown -R webhook:webhook /app
+
+# Security: Switch to non-root user
+USER webhook
+
+# Health check with enhanced validation
+HEALTHCHECK --interval=30s --timeout=15s --start-period=60s --retries=3 \
+    CMD curl -f -H "User-Agent: HealthCheck/1.0" \
+        http://localhost:8000/health?deep=true || exit 1
+
+# Create startup script for production readiness
+RUN cat > /app/startup.sh << 'EOF'
+#!/bin/bash
+set -e
+
+echo "🚀 Starting Meta-Compliant WhatsApp Webhook Service..."
+echo "Environment: ${ENVIRONMENT:-production}"
+echo "Version: ${APP_VERSION:-2.0.0}"
+echo "Build: ${BUILD_VERSION:-latest}"
+
+# Validate environment variables
+if [ -z "$META_APP_ID" ] || [ -z "$META_APP_SECRET" ]; then
+    echo "❌ ERROR: Meta App configuration missing"
+    echo "Required: META_APP_ID, META_APP_SECRET"
+    exit 1
+fi
+
+if [ -z "$WHATSAPP_BUSINESS_TOKEN" ] || [ -z "$WHATSAPP_VERIFY_TOKEN" ]; then
+    echo "❌ ERROR: WhatsApp Business API configuration missing"
+    echo "Required: WHATSAPP_BUSINESS_TOKEN, WHATSAPP_VERIFY_TOKEN"
+    exit 1
+fi
+
+if [ -z "$ENCRYPTION_KEY" ] || [ ${#ENCRYPTION_KEY} -lt 32 ]; then
+    echo "❌ ERROR: Encryption key missing or too short (min 32 chars)"
+    exit 1
+fi
+
+echo "✅ Environment validation passed"
+
+# Production startup with Gunicorn
+echo "🔄 Starting Gunicorn server..."
+exec gunicorn \
+    --bind 0.0.0.0:${PORT:-8000} \
+    --workers ${GUNICORN_WORKERS:-4} \
+    --worker-class sync \
+    --worker-connections ${GUNICORN_WORKER_CONNECTIONS:-1000} \
+    --max-requests ${GUNICORN_MAX_REQUESTS:-10000} \
+    --max-requests-jitter ${GUNICORN_MAX_REQUESTS_JITTER:-1000} \
+    --timeout ${GUNICORN_TIMEOUT:-120} \
+    --keep-alive 2 \
+    --preload \
+    --access-logfile - \
+    --error-logfile - \
+    --log-level info \
+    --capture-output \
+    --enable-stdio-inheritance \
+    --pid /tmp/gunicorn.pid \
+    src.webhook.whatsapp_webhook_service:app
+EOF
+
+RUN chmod +x /app/startup.sh
+
+# Network security: Expose only necessary port
+EXPOSE 8000
+
+# Production startup with security wrapper
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["/app/startup.sh"]
+
+# Security: Add metadata
+LABEL security.non-root=true
+LABEL security.no-new-privileges=true
+LABEL security.read-only-root=true

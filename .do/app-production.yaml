@@ -1,0 +1,271 @@
+# DigitalOcean App Platform Configuration - Meta-Compliant WhatsApp Webhook Service
+# Production-Ready Configuration for Tech Provider Requirements
+
+name: whatsapp-webhook-service-meta-compliant
+region: nyc
+
+services:
+  - name: webhook-api
+    source_dir: /
+    github:
+      repo: jjaguirr/ai-agency-platform
+      branch: main  # Use main branch for production
+      deploy_on_push: true
+
+    # Production container configuration
+    dockerfile_path: src/webhook/Dockerfile.webhook-service
+    build_command: |
+      echo "Building Meta-compliant WhatsApp webhook service..."
+
+    # Gunicorn production server configuration
+    run_command: >
+      gunicorn
+      --bind 0.0.0.0:$PORT
+      --timeout 120
+      --workers 4
+      --worker-class sync
+      --worker-connections 1000
+      --max-requests 10000
+      --max-requests-jitter 1000
+      --preload
+      --access-logfile -
+      --error-logfile -
+      --log-level info
+      --capture-output
+      --enable-stdio-inheritance
+      src.webhook.whatsapp_webhook_service:app
+
+    # Production scaling configuration
+    instance_count: 2  # High availability with load balancing
+    instance_size_slug: basic-s  # Increased for Meta API calls and encryption
+
+    # Auto-scaling configuration
+    autoscaling:
+      min_instance_count: 2
+      max_instance_count: 8
+      metrics:
+        cpu:
+          percent: 70
+        memory:
+          percent: 80
+
+    # Enhanced health check with Meta endpoints
+    health_check:
+      http_path: /health
+      initial_delay_seconds: 60
+      period_seconds: 30
+      timeout_seconds: 10
+      success_threshold: 1
+      failure_threshold: 3
+
+    # HTTP configuration with security headers
+    http_port: 8000
+    routes:
+      - path: /health
+      - path: /embedded-signup
+      - path: /embedded-signup/health
+      - path: /webhook/whatsapp
+      - path: /webhook/meta-deauth
+      - path: /api/clients/register
+      - path: /metrics  # For monitoring
+
+    # Production environment variables
+    envs:
+      # Flask and Python configuration
+      - key: FLASK_ENV
+        value: production
+      - key: PYTHONPATH
+        value: /workspace
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: PYTHON_UNBUFFERED
+        value: "1"
+
+      # Security configuration
+      - key: PRODUCTION_MODE
+        value: "true"
+      - key: ENABLE_IP_ALLOWLIST
+        value: "true"
+      - key: ENFORCE_WEBHOOK_SECRET
+        value: "true"
+      - key: SECURE_COOKIES
+        value: "true"
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      - key: SESSION_COOKIE_HTTPONLY
+        value: "true"
+
+      # Meta App configuration (SECRETS)
+      - key: META_APP_ID
+        scope: RUN_TIME
+        type: SECRET
+      - key: META_APP_SECRET
+        scope: RUN_TIME
+        type: SECRET
+      - key: EMBEDDED_SIGNUP_CONFIG_ID
+        scope: RUN_TIME
+        type: SECRET
+
+      # WhatsApp Business API configuration (SECRETS)
+      - key: WHATSAPP_VERIFY_TOKEN
+        scope: RUN_TIME
+        type: SECRET
+      - key: WHATSAPP_BUSINESS_TOKEN
+        scope: RUN_TIME
+        type: SECRET
+      - key: WHATSAPP_BUSINESS_PHONE_ID
+        scope: RUN_TIME
+        type: SECRET
+      - key: WHATSAPP_WEBHOOK_SECRET
+        scope: RUN_TIME
+        type: SECRET
+
+      # Meta Embedded Signup configuration
+      - key: META_WEBHOOK_VERIFY_TOKEN
+        scope: RUN_TIME
+        type: SECRET
+      - key: META_API_VERSION
+        value: "v20.0"
+      - key: META_BUSINESS_TOKEN_TTL
+        value: "5184000"  # 60 days
+
+      # Encryption configuration (AES-256)
+      - key: ENCRYPTION_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: META_TOKEN_ENCRYPTION_KEY
+        scope: RUN_TIME
+        type: SECRET
+
+      # Redis configuration for client registry
+      - key: REDIS_URL
+        scope: RUN_TIME
+        type: SECRET
+
+      # EA Integration configuration
+      - key: EA_INTEGRATION_ENABLED
+        value: "true"
+      - key: EA_DEFAULT_TIMEOUT
+        value: "30"
+      - key: EA_MAX_RETRIES
+        value: "3"
+
+      # Voice integration (optional)
+      - key: ELEVENLABS_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+
+      # Rate limiting configuration
+      - key: RATE_LIMIT_STORAGE
+        value: "redis"
+      - key: RATE_LIMIT_DEFAULT
+        value: "1000 per hour"
+      - key: RATE_LIMIT_WEBHOOK
+        value: "10000 per hour"
+
+      # Monitoring and metrics
+      - key: METRICS_ENABLED
+        value: "true"
+      - key: PROMETHEUS_PORT
+        value: "9090"
+      - key: DATADOG_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+
+      # Business model configuration
+      - key: CLIENT_ONBOARDING_MODE
+        value: "embedded_signup"
+      - key: MULTI_TENANT_MODE
+        value: "true"
+      - key: CUSTOMER_ISOLATION_ENABLED
+        value: "true"
+
+# Domain configuration for HTTPS (required by Meta)
+domains:
+  - domain: webhook.aiagency.platform
+    type: PRIMARY
+  - domain: whatsapp.aiagency.platform
+    type: ALIAS
+
+# Database configuration (managed services)
+databases:
+  - name: webhook-redis
+    engine: REDIS
+    production: true
+    version: "7"
+
+# Static site for embedded signup frontend (optional)
+static_sites:
+  - name: embedded-signup-frontend
+    source_dir: src/webhook/templates
+    index_document: embedded_signup.html
+    routes:
+      - path: /signup
+      - path: /integration
+
+# Production alerts and monitoring
+alerts:
+  - rule: CPU_UTILIZATION
+    value: 80
+    operator: GREATER_THAN
+  - rule: MEM_UTILIZATION
+    value: 85
+    operator: GREATER_THAN
+  - rule: RESTART_COUNT
+    value: 5
+    operator: GREATER_THAN
+    window: FIVE_MINUTES
+  - rule: RESPONSE_TIME_95P
+    value: 2000  # 2 seconds max response time
+    operator: GREATER_THAN
+    window: FIVE_MINUTES
+
+# Jobs for periodic tasks
+jobs:
+  - name: token-rotation
+    source_dir: /
+    github:
+      repo: jjaguirr/ai-agency-platform
+      branch: main
+    run_command: python scripts/rotate_meta_tokens.py
+    instance_count: 1
+    instance_size_slug: basic-xxs
+    kind: PRE_DEPLOY  # Run before deployment
+
+  - name: health-check-meta-apis
+    source_dir: /
+    github:
+      repo: jjaguirr/ai-agency-platform
+      branch: main
+    run_command: python scripts/validate_meta_integration.py
+    instance_count: 1
+    instance_size_slug: basic-xxs
+    kind: POST_DEPLOY  # Run after deployment
+
+# Ingress configuration for enhanced security
+ingress:
+  rules:
+    - component:
+        name: webhook-api
+      match:
+        path:
+          prefix: /webhook/whatsapp
+      cors:
+        allow_origins:
+          - exact: https://webhook.aiagency.platform
+          - exact: https://business.facebook.com
+        allow_methods:
+          - GET
+          - POST
+        allow_headers:
+          - Content-Type
+          - Authorization
+          - X-Hub-Signature-256
+        max_age: 86400
+
+# Production deployment configuration
+deploy:
+  preserve_path_prefix: false
+  source_dir: /

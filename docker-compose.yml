@@ -275,6 +275,76 @@ services:
     networks:
       - ai-agency-network
 
+  # WhatsApp Webhook Service - Centralized message routing
+  whatsapp-webhook:
+    build:
+      context: .
+      dockerfile: src/webhook/Dockerfile.webhook-service
+    container_name: ai-agency-whatsapp-webhook
+    ports:
+      - "8000:8000"
+    environment:
+      - WHATSAPP_BUSINESS_TOKEN=${WHATSAPP_BUSINESS_TOKEN}
+      - WHATSAPP_BUSINESS_PHONE_ID=${WHATSAPP_BUSINESS_PHONE_ID}
+      - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN}
+      - WHATSAPP_WEBHOOK_SECRET=${WHATSAPP_WEBHOOK_SECRET}
+      - REDIS_URL=redis://redis:6379
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - ENVIRONMENT=development
+      - FLASK_DEBUG=true
+      - ENABLE_IP_ALLOWLIST=false  # Disabled for local development
+      - ENFORCE_WEBHOOK_SECRET=false  # Disabled for local development
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src:ro  # Read-only source mount for development
+      - ./logs/webhook:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - ai-agency-network
+
+  # EA Client Simulator - For development and testing
+  ea-client-simulator:
+    build:
+      context: .
+      dockerfile: src/communication/Dockerfile.ea-bridge
+    container_name: ai-agency-ea-simulator
+    ports:
+      - "8001:8001"  # MCP server port
+    environment:
+      - CUSTOMER_ID=test-customer
+      - WHATSAPP_PHONE_NUMBER=19496212077  # Your test phone number
+      - WHATSAPP_WEBHOOK_SERVICE_URL=http://whatsapp-webhook:8000
+      - EA_AUTH_TOKEN=test-auth-token-123
+      - MCP_PORT=8001
+      - POSTGRES_URL=postgresql://${POSTGRES_USER:-mcphub}:${POSTGRES_PASSWORD:-mcphub_password}@postgres:5432/${POSTGRES_DB:-mcphub}
+      - REDIS_URL=redis://redis:6379
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    depends_on:
+      whatsapp-webhook:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src:ro  # Read-only source mount for development
+      - ./logs/ea-client:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - ai-agency-network
+
 
 volumes:
   postgres_data:

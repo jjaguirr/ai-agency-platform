@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Business Integration - AI Agency Platform</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+            text-align: center;
+        }
+        .logo {
+            font-size: 3rem;
+            margin-bottom: 10px;
+        }
+        h1 {
+            color: #2d3748;
+            margin-bottom: 10px;
+            font-size: 2.5rem;
+        }
+        .subtitle {
+            color: #718096;
+            font-size: 1.2rem;
+            margin-bottom: 40px;
+        }
+        .step {
+            background: #f7fafc;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+            text-align: left;
+        }
+        .step-number {
+            background: #667eea;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 15px;
+            font-weight: bold;
+        }
+        .step-content {
+            display: inline-block;
+            vertical-align: middle;
+            max-width: calc(100% - 50px);
+        }
+        .signup-button {
+            background: #25D366;
+            color: white;
+            border: none;
+            padding: 16px 32px;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            margin: 20px 0;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .signup-button:hover {
+            background: #22c55e;
+        }
+        .signup-button:disabled {
+            background: #cbd5e0;
+            cursor: not-allowed;
+        }
+        .whatsapp-icon {
+            width: 24px;
+            height: 24px;
+        }
+        .error {
+            background: #fed7d7;
+            color: #c53030;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            display: none;
+        }
+        .success {
+            background: #c6f6d5;
+            color: #276749;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            display: none;
+        }
+        .loading {
+            display: none;
+            margin: 20px 0;
+        }
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .form-group {
+            margin: 20px 0;
+            text-align: left;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #2d3748;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 1rem;
+            box-sizing: border-box;
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        .requirements {
+            background: #fef5e7;
+            border-left: 4px solid #f6ad55;
+            padding: 20px;
+            margin: 30px 0;
+            border-radius: 0 8px 8px 0;
+        }
+        .requirements h3 {
+            margin-top: 0;
+            color: #744210;
+        }
+        .requirements ul {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+        .requirements li {
+            margin-bottom: 8px;
+            color: #744210;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">💬</div>
+        <h1>WhatsApp Business Integration</h1>
+        <p class="subtitle">Connect your WhatsApp Business Account to AI Agency Platform</p>
+
+        <div class="requirements">
+            <h3>Before You Start</h3>
+            <p>To complete WhatsApp integration, you need:</p>
+            <ul>
+                <li>A verified WhatsApp Business Account</li>
+                <li>Admin access to your Facebook Business Manager</li>
+                <li>Your EA Client credentials</li>
+                <li>A phone number for WhatsApp communication</li>
+            </ul>
+        </div>
+
+        <div class="step">
+            <span class="step-number">1</span>
+            <div class="step-content">
+                <strong>Connect WhatsApp Business Account</strong><br>
+                Click the button below to authorize your WhatsApp Business Account
+            </div>
+        </div>
+
+        <div class="step">
+            <span class="step-number">2</span>
+            <div class="step-content">
+                <strong>Complete Registration</strong><br>
+                Enter your client details and phone number for communication
+            </div>
+        </div>
+
+        <div class="step">
+            <span class="step-number">3</span>
+            <div class="step-content">
+                <strong>Start Using WhatsApp</strong><br>
+                Send messages to your WhatsApp Business number to interact with your EA
+            </div>
+        </div>
+
+        <div class="error" id="error-message"></div>
+        <div class="success" id="success-message"></div>
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Processing your request...</p>
+        </div>
+
+        <div id="step-1">
+            <button class="signup-button" onclick="startEmbeddedSignup()" id="signup-btn">
+                <svg class="whatsapp-icon" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.890-5.335 11.893-11.893A11.821 11.821 0 0020.885 3.488"/>
+                </svg>
+                Connect WhatsApp Business
+            </button>
+        </div>
+
+        <div id="step-2" style="display: none;">
+            <h3>Complete Your Registration</h3>
+            <form id="registration-form">
+                <div class="form-group">
+                    <label for="client-id">Client ID *</label>
+                    <input type="text" id="client-id" name="client_id" required
+                           placeholder="Enter your EA client ID">
+                </div>
+
+                <div class="form-group">
+                    <label for="customer-id">Customer ID *</label>
+                    <input type="text" id="customer-id" name="customer_id" required
+                           placeholder="Enter your customer ID">
+                </div>
+
+                <div class="form-group">
+                    <label for="phone-number">Phone Number *</label>
+                    <input type="tel" id="phone-number" name="phone_number" required
+                           placeholder="+1234567890" pattern="^\+[1-9]\d{1,14}$">
+                    <small>Include country code (e.g., +1234567890)</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="mcp-endpoint">MCP Endpoint *</label>
+                    <input type="url" id="mcp-endpoint" name="mcp_endpoint" required
+                           placeholder="https://your-ea-server.com/mcp">
+                </div>
+
+                <div class="form-group">
+                    <label for="auth-token">Auth Token *</label>
+                    <input type="password" id="auth-token" name="auth_token" required
+                           placeholder="Your EA authentication token">
+                </div>
+
+                <button type="submit" class="signup-button">
+                    Complete Registration
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = "{{ api_base_url }}";
+        const META_APP_ID = "{{ meta_app_id }}";
+
+        let authorizationCode = null;
+        let integrationData = null;
+
+        function showError(message) {
+            const errorDiv = document.getElementById('error-message');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            document.getElementById('success-message').style.display = 'none';
+        }
+
+        function showSuccess(message) {
+            const successDiv = document.getElementById('success-message');
+            successDiv.textContent = message;
+            successDiv.style.display = 'block';
+            document.getElementById('error-message').style.display = 'none';
+        }
+
+        function showLoading(show = true) {
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
+            document.getElementById('signup-btn').disabled = show;
+        }
+
+        function startEmbeddedSignup() {
+            if (!META_APP_ID) {
+                showError('Meta App ID not configured. Please contact support.');
+                return;
+            }
+
+            // Meta Embedded Signup URL
+            const configId = 'YOUR_CONFIG_ID'; // This should be configured in Meta App settings
+            const redirectUri = encodeURIComponent(`${API_BASE}embedded-signup/callback`);
+            const state = Math.random().toString(36).substring(2, 15);
+
+            const signupUrl = `https://www.facebook.com/dialog/oauth` +
+                `?client_id=${META_APP_ID}` +
+                `&redirect_uri=${redirectUri}` +
+                `&state=${state}` +
+                `&response_type=code` +
+                `&config_id=${configId}` +
+                `&scope=whatsapp_business_management,whatsapp_business_messaging`;
+
+            // Open Meta Embedded Signup in popup
+            const popup = window.open(
+                signupUrl,
+                'facebook-embedded-signup',
+                'width=600,height=700,scrollbars=yes,resizable=yes'
+            );
+
+            // Listen for popup close or message
+            const checkClosed = setInterval(() => {
+                if (popup.closed) {
+                    clearInterval(checkClosed);
+                    // Check URL parameters for authorization code
+                    checkForAuthorizationCode();
+                }
+            }, 1000);
+        }
+
+        function checkForAuthorizationCode() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const code = urlParams.get('code');
+            const error = urlParams.get('error');
+            const errorDescription = urlParams.get('error_description');
+
+            if (error) {
+                showError(`Authorization failed: ${errorDescription || error}`);
+                return;
+            }
+
+            if (code) {
+                authorizationCode = code;
+                exchangeAuthorizationCode(code);
+            } else {
+                showError('No authorization code received. Please try again.');
+            }
+        }
+
+        async function exchangeAuthorizationCode(code) {
+            showLoading(true);
+
+            try {
+                const response = await fetch(`${API_BASE}embedded-signup/token-exchange`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        authorization_code: code,
+                        client_id: 'temp', // Will be filled in step 2
+                        customer_id: 'temp',
+                        mcp_endpoint: 'temp',
+                        auth_token: 'temp'
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    integrationData = data.integration_data;
+                    showSuccess(`WhatsApp Business Account connected: ${integrationData.display_phone_number}`);
+
+                    // Show step 2
+                    document.getElementById('step-1').style.display = 'none';
+                    document.getElementById('step-2').style.display = 'block';
+                } else {
+                    showError(data.message || 'Token exchange failed');
+                }
+            } catch (error) {
+                showError('Network error: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // Handle registration form submission
+        document.getElementById('registration-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            showLoading(true);
+
+            const formData = new FormData(e.target);
+            const clientId = formData.get('client_id');
+            const customerID = formData.get('customer_id');
+            const phoneNumber = formData.get('phone_number');
+            const mcpEndpoint = formData.get('mcp_endpoint');
+            const authToken = formData.get('auth_token');
+
+            // First, complete token exchange with correct client data
+            try {
+                const tokenResponse = await fetch(`${API_BASE}embedded-signup/token-exchange`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        authorization_code: authorizationCode,
+                        client_id: clientId,
+                        customer_id: customerID,
+                        mcp_endpoint: mcpEndpoint,
+                        auth_token: authToken
+                    })
+                });
+
+                if (!tokenResponse.ok) {
+                    const errorData = await tokenResponse.json();
+                    throw new Error(errorData.message || 'Token exchange failed');
+                }
+
+                // Now complete registration
+                const registrationResponse = await fetch(`${API_BASE}embedded-signup/register-client`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        client_id: clientId,
+                        phone_number: phoneNumber
+                    })
+                });
+
+                const registrationData = await registrationResponse.json();
+
+                if (registrationResponse.ok) {
+                    showSuccess('🎉 WhatsApp integration completed successfully! You can now send messages to your business number.');
+
+                    // Show completion info
+                    document.getElementById('step-2').innerHTML = `
+                        <h3>✅ Integration Complete!</h3>
+                        <div class="step">
+                            <strong>WhatsApp Business Number:</strong> ${integrationData.display_phone_number}<br>
+                            <strong>Business Account:</strong> ${integrationData.waba_name}<br>
+                            <strong>Client ID:</strong> ${clientId}
+                        </div>
+                        <p>You can now send messages to <strong>${integrationData.display_phone_number}</strong> to interact with your AI Executive Assistant.</p>
+                    `;
+                } else {
+                    showError(registrationData.message || 'Registration failed');
+                }
+            } catch (error) {
+                showError('Error: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        });
+
+        // Check for authorization code on page load
+        window.addEventListener('load', () => {
+            checkForAuthorizationCode();
+        });
+    </script>
+</body>
+</html>

@@ -13,6 +13,7 @@ aiofiles>=23.2.0
 # Security and authentication
 cryptography>=41.0.0
 pyjwt>=2.8.0
+pycryptodome>=3.19.0
 
 # Database connections (comprehensive)
 asyncpg>=0.29.0
