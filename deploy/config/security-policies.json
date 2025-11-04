@@ -1,0 +1,424 @@
+{
+  "aiAgencyPlatform": {
+    "version": "1.0.0",
+    "securityLevel": "enterprise",
+    "complianceFrameworks": [
+      "SOC2",
+      "GDPR",
+      "CCPA",
+      "ISO27001"
+    ],
+    "policies": {
+      "authentication": {
+        "jwt": {
+          "algorithm": "RS256",
+          "accessTokenExpiryMinutes": 15,
+          "refreshTokenExpiryDays": 7,
+          "issuer": "ai-agency-platform",
+          "audience": "ai-agency-customers",
+          "requireMfa": true,
+          "allowedClockSkewSeconds": 30
+        },
+        "session": {
+          "type": "redis-backed",
+          "maxAgeSeconds": 3600,
+          "secure": true,
+          "httpOnly": true,
+          "sameSite": "strict"
+        },
+        "password": {
+          "minLength": 12,
+          "requireUppercase": true,
+          "requireLowercase": true,
+          "requireNumbers": true,
+          "requireSymbols": true,
+          "maxAgeDays": 90,
+          "preventReuse": 5
+        }
+      },
+      "authorization": {
+        "model": "rbac",
+        "enforceAtEdge": true,
+        "customerIsolation": {
+          "enabled": true,
+          "strictMode": true,
+          "crossCustomerAccess": "deny-all"
+        },
+        "roles": {
+          "super_admin": {
+            "permissions": ["*"],
+            "scope": "global"
+          },
+          "customer_admin": {
+            "permissions": [
+              "customer:read",
+              "customer:update",
+              "customer:manage-users",
+              "customer:view-analytics",
+              "customer:manage-billing"
+            ],
+            "scope": "customer"
+          },
+          "customer_user": {
+            "permissions": [
+              "customer:read",
+              "customer:update-profile",
+              "customer:access-services"
+            ],
+            "scope": "customer"
+          },
+          "system_service": {
+            "permissions": [
+              "system:read-metrics",
+              "system:health-check",
+              "system:log-access"
+            ],
+            "scope": "system"
+          }
+        }
+      },
+      "dataProtection": {
+        "encryption": {
+          "atRest": {
+            "algorithm": "AES-256-GCM",
+            "keyRotationDays": 30,
+            "separateKeysPerCustomer": true
+          },
+          "inTransit": {
+            "tlsVersion": "1.3",
+            "cipherSuites": [
+              "TLS_AES_128_GCM_SHA256",
+              "TLS_AES_256_GCM_SHA384",
+              "TLS_CHACHA20_POLY1305_SHA256"
+            ],
+            "enforceHttps": true,
+            "hsts": {
+              "enabled": true,
+              "maxAge": 31536000,
+              "includeSubdomains": true,
+              "preload": true
+            }
+          },
+          "keyManagement": {
+            "provider": "vault-transit",
+            "backupEnabled": true,
+            "geoRedundancy": true
+          }
+        },
+        "customerIsolation": {
+          "network": {
+            "separateVpcs": true,
+            "networkPolicies": true,
+            "serviceMesh": true
+          },
+          "compute": {
+            "separateNamespaces": true,
+            "separateNodes": false,
+            "resourceQuotas": true
+          },
+          "data": {
+            "separateDatabases": true,
+            "separateStorage": true,
+            "separateEncryptionKeys": true
+          }
+        }
+      },
+      "networkSecurity": {
+        "firewall": {
+          "waf": {
+            "enabled": true,
+            "mode": "blocking",
+            "rules": [
+              {
+                "name": "sql-injection",
+                "action": "block",
+                "priority": 1
+              },
+              {
+                "name": "xss",
+                "action": "block",
+                "priority": 2
+              },
+              {
+                "name": "path-traversal",
+                "action": "block",
+                "priority": 3
+              },
+              {
+                "name": "rate-limiting",
+                "action": "throttle",
+                "priority": 4,
+                "rateLimit": {
+                  "requestsPerMinute": 1000,
+                  "burstLimit": 2000
+                }
+              }
+            ]
+          },
+          "networkPolicies": {
+            "defaultDeny": true,
+            "allowFromMonitoring": true,
+            "allowFromVault": true,
+            "allowFromIngress": true
+          }
+        },
+        "ddosProtection": {
+          "enabled": true,
+          "mitigationLevel": "advanced",
+          "autoMitigation": true
+        }
+      },
+      "monitoring": {
+        "securityEvents": {
+          "logLevel": "info",
+          "retentionDays": 90,
+          "alertThresholds": {
+            "failedLogins": 5,
+            "suspiciousActivity": 3,
+            "unauthorizedAccess": 1
+          }
+        },
+        "audit": {
+          "enabled": true,
+          "logAllAccess": true,
+          "logDataAccess": true,
+          "logAdminActions": true,
+          "retentionDays": 2555
+        },
+        "threatDetection": {
+          "enabled": true,
+          "realTimeScanning": true,
+          "behavioralAnalysis": true,
+          "signatureBased": true
+        }
+      },
+      "compliance": {
+        "gdpr": {
+          "enabled": true,
+          "dataSubjectRights": {
+            "access": true,
+            "portability": true,
+            "erasure": true,
+            "rectification": true,
+            "restriction": true
+          },
+          "consentManagement": true,
+          "breachNotification": {
+            "enabled": true,
+            "notificationWindowHours": 72
+          }
+        },
+        "soc2": {
+          "enabled": true,
+          "controls": [
+            "CC6.1",
+            "CC6.2",
+            "CC6.3",
+            "CC6.6",
+            "CC6.7",
+            "CC7.1",
+            "CC7.2"
+          ]
+        },
+        "ccpa": {
+          "enabled": true,
+          "consumerRights": [
+            "right-to-know",
+            "right-to-delete",
+            "right-to-opt-out",
+            "right-to-equal-service"
+          ]
+        }
+      },
+      "incidentResponse": {
+        "procedures": {
+          "detection": {
+            "automatedAlerts": true,
+            "manualReporting": true,
+            "thirdPartyNotifications": true
+          },
+          "response": {
+            "meanTimeToDetect": "15 minutes",
+            "meanTimeToRespond": "1 hour",
+            "meanTimeToResolve": "4 hours"
+          },
+          "communication": {
+            "internalNotification": true,
+            "customerNotification": true,
+            "regulatoryNotification": true
+          }
+        },
+        "escalationMatrix": {
+          "level1": {
+            "triggers": ["service-degradation", "high-cpu"],
+            "team": "platform-team",
+            "responseTime": "30 minutes"
+          },
+          "level2": {
+            "triggers": ["security-breach", "data-loss"],
+            "team": "security-team",
+            "responseTime": "15 minutes"
+          },
+          "level3": {
+            "triggers": ["system-down", "data-breach"],
+            "team": "executive-team",
+            "responseTime": "5 minutes"
+          }
+        }
+      },
+      "vulnerabilityManagement": {
+        "scanning": {
+          "frequency": "daily",
+          "tools": ["trivy", "grype", "snyk"],
+          "failBuildOnCritical": true,
+          "failBuildOnHigh": true
+        },
+        "patching": {
+          "automated": true,
+          "testingRequired": true,
+          "rollbackPlan": true,
+          "maintenanceWindow": "sunday-2am-4am"
+        },
+        "dependencyManagement": {
+          "scanDependencies": true,
+          "autoUpdate": false,
+          "requireApproval": true
+        }
+      },
+      "accessControl": {
+        "leastPrivilege": {
+          "enabled": true,
+          "reviewFrequency": "quarterly",
+          "autoRevoke": true
+        },
+        "multiFactorAuthentication": {
+          "required": true,
+          "methods": ["totp", "sms", "push"],
+          "rememberDevice": false
+        },
+        "singleSignOn": {
+          "enabled": true,
+          "providers": ["google", "microsoft", "okta"],
+          "provisioning": "jit"
+        }
+      },
+      "dataRetention": {
+        "policies": {
+          "customerData": {
+            "retentionDays": 2555,
+            "archiveAfterDays": 365,
+            "deleteAfterRetention": true
+          },
+          "auditLogs": {
+            "retentionDays": 2555,
+            "archiveAfterDays": 90,
+            "deleteAfterRetention": false
+          },
+          "systemLogs": {
+            "retentionDays": 90,
+            "archiveAfterDays": 30,
+            "deleteAfterRetention": true
+          },
+          "metrics": {
+            "retentionDays": 365,
+            "archiveAfterDays": 90,
+            "deleteAfterRetention": true
+          }
+        },
+        "automatedDeletion": {
+          "enabled": true,
+          "schedule": "daily",
+          "verificationRequired": true
+        }
+      },
+      "businessContinuity": {
+        "backup": {
+          "frequency": "daily",
+          "retentionDays": 30,
+          "encryptionEnabled": true,
+          "offsiteStorage": true,
+          "testRestoration": {
+            "frequency": "monthly",
+            "successRate": 0.99
+          }
+        },
+        "disasterRecovery": {
+          "rto": "4 hours",
+          "rpo": "15 minutes",
+          "geoRedundancy": true,
+          "automatedFailover": true
+        },
+        "highAvailability": {
+          "targetUptime": 0.9999,
+          "autoScaling": true,
+          "loadBalancing": true,
+          "healthChecks": true
+        }
+      }
+    },
+    "securityControls": {
+      "preventive": [
+        "network-segmentation",
+        "access-controls",
+        "encryption-at-rest",
+        "encryption-in-transit",
+        "input-validation",
+        "waf-protection"
+      ],
+      "detective": [
+        "intrusion-detection",
+        "log-monitoring",
+        "vulnerability-scanning",
+        "behavioral-analytics",
+        "threat-intelligence"
+      ],
+      "responsive": [
+        "incident-response-plan",
+        "automated-remediation",
+        "backup-and-recovery",
+        "forensic-analysis",
+        "regulatory-reporting"
+      ]
+    },
+    "riskAssessment": {
+      "methodology": "nist",
+      "frequency": "quarterly",
+      "riskTolerance": "low",
+      "riskAppetite": {
+        "financial": 0.01,
+        "operational": 0.05,
+        "reputational": 0.01,
+        "compliance": 0.001
+      }
+    },
+    "securityMetrics": {
+      "kpis": [
+        {
+          "name": "mean-time-to-detect",
+          "target": "< 15 minutes",
+          "measurement": "automated"
+        },
+        {
+          "name": "mean-time-to-respond",
+          "target": "< 1 hour",
+          "measurement": "automated"
+        },
+        {
+          "name": "security-incident-rate",
+          "target": "< 0.01 per month",
+          "measurement": "manual"
+        },
+        {
+          "name": "vulnerability-remediation-time",
+          "target": "< 30 days",
+          "measurement": "automated"
+        },
+        {
+          "name": "compliance-score",
+          "target": "> 95%",
+          "measurement": "automated"
+        }
+      ]
+    }
+  }
+}

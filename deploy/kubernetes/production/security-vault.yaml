@@ -1,0 +1,417 @@
+# AI Agency Platform - Production Security & Vault Configuration
+# Security policies, RBAC, and Vault integration for production
+
+---
+# Service Account for Vault Authentication
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ai-agency-production-sa
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+  annotations:
+    # Enable Vault Kubernetes authentication
+    vault.hashicorp.com/agent-inject: "true"
+    vault.hashicorp.com/role: "ai-agency-production-role"
+    vault.hashicorp.com/agent-inject-secret-config: "ai-agency/production/config"
+    vault.hashicorp.com/agent-inject-template-config: |
+      {{- with secret "ai-agency/production/config" -}}
+      DATABASE_URL="{{ .Data.database_url }}"
+      REDIS_URL="{{ .Data.redis_url }}"
+      QDRANT_URL="{{ .Data.qdrant_url }}"
+      NEO4J_URL="{{ .Data.neo4j_url }}"
+      JWT_SECRET="{{ .Data.jwt_secret }}"
+      ENCRYPTION_KEY="{{ .Data.encryption_key }}"
+      {{- end }}
+
+---
+# Role for AI Agency Platform Services
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ai-agency-production-role
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints", "configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get", "list"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets", "statefulsets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["monitoring.coreos.com"]
+  resources: ["servicemonitors"]
+  verbs: ["get", "create", "update", "patch"]
+
+---
+# Role Binding for AI Agency Platform Services
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ai-agency-production-rolebinding
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ai-agency-production-role
+subjects:
+- kind: ServiceAccount
+  name: ai-agency-production-sa
+  namespace: ai-agency-production
+
+---
+# Cluster Role for Cross-Namespace Operations
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ai-agency-production-cluster-role
+  labels:
+    app: ai-agency-platform
+rules:
+- apiGroups: [""]
+  resources: ["nodes", "namespaces"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["monitoring.coreos.com"]
+  resources: ["prometheuses", "servicemonitors"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+
+---
+# Cluster Role Binding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ai-agency-production-cluster-rolebinding
+  labels:
+    app: ai-agency-platform
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ai-agency-production-cluster-role
+subjects:
+- kind: ServiceAccount
+  name: ai-agency-production-sa
+  namespace: ai-agency-production
+
+---
+# Network Policy for Security Isolation
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ai-agency-production-netpol
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow traffic from ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+  # Allow traffic from monitoring namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ai-agency-monitoring
+    ports:
+    - protocol: TCP
+      port: 9090
+    - protocol: TCP
+      port: 3000
+    - protocol: TCP
+      port: 16686
+  # Allow traffic from vault namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: vault
+    ports:
+    - protocol: TCP
+      port: 8200
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+  # Allow HTTPS for external APIs
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  # Allow Vault communication
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: vault
+    ports:
+    - protocol: TCP
+      port: 8200
+  # Allow database connections within namespace
+  - to:
+    - podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 5432
+    - protocol: TCP
+      port: 6379
+    - protocol: TCP
+      port: 6333
+    - protocol: TCP
+      port: 7687
+
+---
+# Pod Security Policy (Legacy - for older clusters)
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: ai-agency-production-psp
+  labels:
+    app: ai-agency-platform
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+  - ALL
+  volumes:
+  - 'configMap'
+  - 'emptyDir'
+  - 'projected'
+  - 'secret'
+  - 'downwardAPI'
+  - 'persistentVolumeClaim'
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  seLinux:
+    rule: 'RunAsAny'
+  fsGroup:
+    rule: 'MustRunAs'
+    ranges:
+    - min: 1
+      max: 65535
+
+---
+# Pod Security Policy Role and Binding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ai-agency-production-psp-role
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+rules:
+- apiGroups: ['policy']
+  resources: ['podsecuritypolicies']
+  verbs: ['use']
+  resourceNames: ['ai-agency-production-psp']
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ai-agency-production-psp-rolebinding
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+roleRef:
+  kind: Role
+  name: ai-agency-production-psp-role
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: ai-agency-production-sa
+  namespace: ai-agency-production
+
+---
+# Vault Agent Injector Annotations for Secret Injection
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-agent-config
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+data:
+  config.hcl: |
+    exit_after_auth = true
+    pid_file = "/tmp/vault-agent-pid"
+
+    auto_auth {
+      method "kubernetes" {
+        mount_path = "auth/kubernetes"
+        config = {
+          role = "ai-agency-production-role"
+          service_account_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        }
+      }
+
+      sink "file" {
+        config = {
+          path = "/vault/secrets"
+          mode = 0644
+          template = "{{- with secret \"ai-agency/production/combined\" -}}{{- range $k, $v := .Data -}}{{ $k }}={{ $v }}\n{{- end -}}{{- end -}}"
+        }
+      }
+    }
+
+---
+# Security Context Constraints (OpenShift)
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: ai-agency-production-scc
+  labels:
+    app: ai-agency-platform
+allowPrivilegedContainer: false
+allowPrivilegeEscalation: false
+requiredDropCapabilities:
+- ALL
+runAsUser:
+  type: MustRunAs
+  uidRangeMin: 1000
+  uidRangeMax: 2000
+seLinuxContext:
+  type: MustRunAs
+fsGroup:
+  type: MustRunAs
+supplementalGroups:
+  type: RunAsAny
+volumes:
+- configMap
+- downwardAPI
+- emptyDir
+- persistentVolumeClaim
+- projected
+- secret
+users:
+- system:serviceaccount:ai-agency-production:ai-agency-production-sa
+
+---
+# Certificate Manager ClusterIssuer for TLS
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-production
+  labels:
+    app: ai-agency-platform
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: security@ai-agency.com
+    privateKeySecretRef:
+      name: letsencrypt-production-key
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+
+---
+# Certificate for AI Agency Platform
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: ai-agency-production-tls
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+spec:
+  secretName: ai-agency-production-tls-secret
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+  - api.production.ai-agency.com
+  - app.production.ai-agency.com
+  - grafana.production.ai-agency.com
+  - jaeger.production.ai-agency.com
+
+---
+# Kyverno Policy for Security Compliance
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: ai-agency-security-policy
+  labels:
+    app: ai-agency-platform
+spec:
+  rules:
+  - name: require-security-context
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+          namespaces:
+          - ai-agency-production
+    validate:
+      message: "Security context must be specified for all pods"
+      pattern:
+        spec:
+          securityContext:
+            runAsNonRoot: "?*"
+            runAsUser: ">0"
+  - name: require-resource-limits
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+          namespaces:
+          - ai-agency-production
+    validate:
+      message: "Resource limits must be specified for all containers"
+      pattern:
+        spec:
+          containers:
+          - resources:
+              limits:
+                memory: "?*"
+                cpu: "?*"
+  - name: require-health-checks
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+          namespaces:
+          - ai-agency-production
+    validate:
+      message: "Liveness and readiness probes must be specified"
+      pattern:
+        spec:
+          containers:
+          - livenessProbe: "?*"
+            readinessProbe: "?*"
+  - name: restrict-privileged-containers
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+          namespaces:
+          - ai-agency-production
+    validate:
+      message: "Privileged containers are not allowed"
+      pattern:
+        spec:
+          containers:
+          - securityContext:
+              privileged: "false"

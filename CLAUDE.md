@@ -5,31 +5,41 @@ You are a Technical Lead Agent with architectural decision-making capabilities f
 
 ## Context Loading Protocol
 **Project Context Sources (Priority Order):**
-1. **Current Phase PRD**: `/docs/architecture/[CURRENT_PHASE]-PRD.md` - Active requirements
-2. **Technical Design**: `/docs/architecture/Technical-Design-Document.md` - Architecture specs  
-3. **Future Phases**: `/docs/architecture/Phase-[X]-PRD.md` - Roadmap context
-4. **Meta Strategy**: `/docs/architecture/META-PRD.md` - Business strategy (may be outdated)
-5. **Project State**: `mcp__memory__*` - Current progress stored in memory
-6. **Active Issues**: `mcp__github__list_issues` - Current blockers and priorities
+1. **Product Vision**: `/docs/product/Product-Vision.md` - What we're building (simplified EA)
+2. **Architecture**: `/ARCHITECTURE.md` - Simplified EA system design
+3. **Competitive Positioning**: `/docs/product/Competitive-Positioning.md` - Market strategy (ElevenLabs as partner)
+4. **Revenue Model**: `/docs/strategy/Revenue-Model-Realistic.md` - Realistic Year 1 targets
+5. **Phase 1 PRD**: `/docs/architecture/Phase-1-PRD.md` - Foundation requirements (aligned)
+6. **Technical Design**: `/docs/architecture/Technical-Design-Document.md` - Implementation specs
+7. **Project State**: `mcp__memory__*` - Current progress stored in memory
+8. **Active Issues**: GitHub issues via `gh` CLI - Current blockers and priorities
+
+**Note**: Phase-2-PRD.md, Phase-3-PRD.md, and META-PRD.md have been archived (complex multi-agent vision abandoned in favor of simplified EA approach).
 
 **Dynamic Context Initialization:**
 ```bash
-# Discover current project phase
-current_phase = determine_active_phase_from_docs()
-requirements = read_file(f"/docs/architecture/{current_phase}-PRD.md")
-architecture = read_file("/docs/architecture/Technical-Design-Document.md")
+# Load strategic context (Zen State aligned)
+product_vision = read_file("/docs/product/Product-Vision.md")
+architecture = read_file("/ARCHITECTURE.md")
+competitive_positioning = read_file("/docs/product/Competitive-Positioning.md")
+revenue_model = read_file("/docs/strategy/Revenue-Model-Realistic.md")
+
+# Load technical specs
+phase1_requirements = read_file("/docs/architecture/Phase-1-PRD.md")
+technical_design = read_file("/docs/architecture/Technical-Design-Document.md")
 
 # Load project state
-project_state = mcp__memory__retrieve_memory({"query": f"{current_phase} progress"})
-active_blockers = mcp__github__list_issues({"labels": ["blocker", "critical"]})
+project_state = mcp__memory__retrieve_memory({"query": "project status production validation"})
+recent_progress = mcp__memory__retrieve_memory({"query": "zen state cleanup progress"})
 
 # Initialize agent working context
 agent.set_context({
-  "phase": current_phase,
-  "requirements": requirements,
-  "architecture": architecture,
-  "current_state": project_state,
-  "priorities": active_blockers
+  "product": "Simplified EA with premium-casual personality",
+  "architecture": "Single EA vs multi-agent orchestration",
+  "market_strategy": "ElevenLabs infrastructure partner, compete with Sintra/Martin",
+  "revenue_target": "$1.0M-$1.5M ARR Year 1 (400-500 customers)",
+  "current_phase": "Production-ready, customer validation",
+  "priorities": "Prove model with 100 customers before scaling"
 })
 ```
 

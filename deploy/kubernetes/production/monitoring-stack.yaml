@@ -1,0 +1,617 @@
+# AI Agency Platform - Production Monitoring Stack
+# Comprehensive observability stack for production monitoring
+
+---
+# Prometheus Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: monitoring
+    name: prometheus
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: ai-agency-platform
+      component: monitoring
+      name: prometheus
+  template:
+    metadata:
+      labels:
+        app: ai-agency-platform
+        component: monitoring
+        name: prometheus
+    spec:
+      serviceAccountName: ai-agency-production-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+      containers:
+      - name: prometheus
+        image: prom/prometheus:v2.48.0
+        imagePullPolicy: Always
+        args:
+        - '--config.file=/etc/prometheus/prometheus.yml'
+        - '--storage.tsdb.path=/prometheus'
+        - '--web.console.libraries=/etc/prometheus/console_libraries'
+        - '--web.console.templates=/etc/prometheus/consoles'
+        - '--storage.tsdb.retention.time=30d'
+        - '--web.enable-lifecycle'
+        - '--web.enable-admin-api'
+        - '--storage.tsdb.min-block-duration=2h'
+        - '--storage.tsdb.max-block-duration=2h'
+        ports:
+        - containerPort: 9090
+          name: web
+        volumeMounts:
+        - name: config
+          mountPath: /etc/prometheus
+        - name: storage
+          mountPath: /prometheus
+        - name: rules-config
+          mountPath: /etc/prometheus/rules
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+        livenessProbe:
+          httpGet:
+            path: /-/healthy
+            port: 9090
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: 9090
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: config
+        configMap:
+          name: prometheus-config
+      - name: rules-config
+        configMap:
+          name: prometheus-rules
+      - name: storage
+        persistentVolumeClaim:
+          claimName: prometheus-storage
+
+---
+# Prometheus Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: monitoring
+    name: prometheus
+spec:
+  type: ClusterIP
+  ports:
+  - port: 9090
+    targetPort: 9090
+    name: web
+  selector:
+    app: ai-agency-platform
+    component: monitoring
+    name: prometheus
+
+---
+# Grafana Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: monitoring
+    name: grafana
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: ai-agency-platform
+      component: monitoring
+      name: grafana
+  template:
+    metadata:
+      labels:
+        app: ai-agency-platform
+        component: monitoring
+        name: grafana
+    spec:
+      serviceAccountName: ai-agency-production-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 472
+        fsGroup: 472
+      containers:
+      - name: grafana
+        image: grafana/grafana:10.4.0
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 3000
+          name: web
+        env:
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: grafana-secrets
+              key: admin-password
+        - name: GF_USERS_ALLOW_SIGN_UP
+          value: "false"
+        - name: GF_INSTALL_PLUGINS
+          value: "grafana-piechart-panel,grafana-worldmap-panel,grafana-clock-panel"
+        - name: GF_LOG_LEVEL
+          value: "info"
+        - name: GF_METRICS_ENABLED
+          value: "true"
+        - name: GF_ALERTING_ENABLED
+          value: "true"
+        volumeMounts:
+        - name: storage
+          mountPath: /var/lib/grafana
+        - name: datasources
+          mountPath: /etc/grafana/provisioning/datasources
+        - name: dashboards
+          mountPath: /etc/grafana/provisioning/dashboards
+        - name: dashboards-config
+          mountPath: /etc/grafana/dashboards
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: grafana-storage
+      - name: datasources
+        configMap:
+          name: grafana-datasources
+      - name: dashboards
+        configMap:
+          name: grafana-dashboards
+      - name: dashboards-config
+        configMap:
+          name: grafana-dashboards-config
+
+---
+# Grafana Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: monitoring
+    name: grafana
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3000
+    targetPort: 3000
+    name: web
+  selector:
+    app: ai-agency-platform
+    component: monitoring
+    name: grafana
+
+---
+# Jaeger Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: monitoring
+    name: jaeger
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: ai-agency-platform
+      component: monitoring
+      name: jaeger
+  template:
+    metadata:
+      labels:
+        app: ai-agency-platform
+        component: monitoring
+        name: jaeger
+    spec:
+      serviceAccountName: ai-agency-production-sa
+      containers:
+      - name: jaeger
+        image: jaegertracing/all-in-one:1.58
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 16686
+          name: ui
+        - containerPort: 14268
+          name: collector
+        - containerPort: 14250
+          name: agent-binary
+        - containerPort: 6831
+          name: agent-compact
+          protocol: UDP
+        - containerPort: 6832
+          name: agent-json
+          protocol: UDP
+        - containerPort: 5778
+          name: agent-zipkin
+        env:
+        - name: COLLECTOR_OTLP_ENABLED
+          value: "true"
+        - name: SPAN_STORAGE_TYPE
+          value: "memory"
+        - name: MEMORY_MAX_TRACES
+          value: "100000"
+        - name: QUERY_UI_CONFIG
+          value: /etc/jaeger/ui-config.json
+        volumeMounts:
+        - name: ui-config
+          mountPath: /etc/jaeger
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 16686
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 16686
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: ui-config
+        configMap:
+          name: jaeger-config
+
+---
+# Jaeger Services
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger-ui
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: monitoring
+    name: jaeger
+spec:
+  type: ClusterIP
+  ports:
+  - port: 16686
+    targetPort: 16686
+    name: ui
+  selector:
+    app: ai-agency-platform
+    component: monitoring
+    name: jaeger
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger-collector
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: monitoring
+    name: jaeger
+spec:
+  type: ClusterIP
+  ports:
+  - port: 14268
+    targetPort: 14268
+    name: collector
+  - port: 14250
+    targetPort: 14250
+    name: agent-binary
+  - port: 6831
+    targetPort: 6831
+    name: agent-compact
+    protocol: UDP
+  - port: 6832
+    targetPort: 6832
+    name: agent-json
+    protocol: UDP
+  - port: 5778
+    targetPort: 5778
+    name: agent-zipkin
+  selector:
+    app: ai-agency-platform
+    component: monitoring
+    name: jaeger
+
+---
+# Loki Deployment for Log Aggregation
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: loki
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: monitoring
+    name: loki
+spec:
+  serviceName: loki
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ai-agency-platform
+      component: monitoring
+      name: loki
+  template:
+    metadata:
+      labels:
+        app: ai-agency-platform
+        component: monitoring
+        name: loki
+    spec:
+      serviceAccountName: ai-agency-production-sa
+      containers:
+      - name: loki
+        image: grafana/loki:2.9.0
+        imagePullPolicy: Always
+        args:
+        - -config.file=/etc/loki/local-config.yaml
+        ports:
+        - containerPort: 3100
+          name: http
+        volumeMounts:
+        - name: config
+          mountPath: /etc/loki
+        - name: storage
+          mountPath: /loki
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+        livenessProbe:
+          httpGet:
+            path: /ready
+            port: 3100
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3100
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: config
+        configMap:
+          name: loki-config
+      - name: storage
+        persistentVolumeClaim:
+          claimName: loki-storage-$(POD_NAME)
+  volumeClaimTemplates:
+  - metadata:
+      name: storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: gp3-encrypted
+      resources:
+        requests:
+          storage: 50Gi
+
+---
+# Loki Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: monitoring
+    name: loki
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3100
+    targetPort: 3100
+    name: http
+  selector:
+    app: ai-agency-platform
+    component: monitoring
+    name: loki
+
+---
+# Fluent Bit DaemonSet for Log Collection
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluent-bit
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: monitoring
+    name: fluent-bit
+spec:
+  selector:
+    matchLabels:
+      app: ai-agency-platform
+      component: monitoring
+      name: fluent-bit
+  template:
+    metadata:
+      labels:
+        app: ai-agency-platform
+        component: monitoring
+        name: fluent-bit
+    spec:
+      serviceAccountName: ai-agency-production-sa
+      tolerations:
+      - operator: Exists
+      containers:
+      - name: fluent-bit
+        image: fluent/fluent-bit:2.2.0
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 2020
+          name: metrics
+        volumeMounts:
+        - name: varlogcontainers
+          mountPath: /var/log/containers
+          readOnly: true
+        - name: varlogpods
+          mountPath: /var/log/pods
+          readOnly: true
+        - name: varlibdockercontainers
+          mountPath: /var/lib/docker/containers
+          readOnly: true
+        - name: fluent-bit-config
+          mountPath: /fluent-bit/etc
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        livenessProbe:
+          httpGet:
+            path: /api/v1/health
+            port: 2020
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /api/v1/health
+            port: 2020
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: varlogcontainers
+        hostPath:
+          path: /var/log/containers
+      - name: varlogpods
+        hostPath:
+          path: /var/log/pods
+      - name: varlibdockercontainers
+        hostPath:
+          path: /var/lib/docker/containers
+      - name: fluent-bit-config
+        configMap:
+          name: fluent-bit-config
+
+---
+# Fluent Bit Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: fluent-bit
+  namespace: ai-agency-production
+  labels:
+    app: ai-agency-platform
+    component: monitoring
+    name: fluent-bit
+spec:
+  type: ClusterIP
+  ports:
+  - port: 2020
+    targetPort: 2020
+    name: metrics
+  selector:
+    app: ai-agency-platform
+    component: monitoring
+    name: fluent-bit

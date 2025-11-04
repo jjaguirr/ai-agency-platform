@@ -1,20 +1,28 @@
 # AI Agency Platform - Production Per-Customer Infrastructure Template
+# Enhanced production deployment with comprehensive monitoring, security, and observability
 # This template is used by the Customer Provisioning Orchestrator to deploy isolated customer environments
-# Each customer gets a dedicated stack: MCP server + PostgreSQL + Redis + Qdrant + Neo4j + Memory Monitor
+# Each customer gets a dedicated stack with production-grade services and monitoring
 #
-# Usage: 
+# Usage:
 # export CUSTOMER_ID=customer_12345
-# export CUSTOMER_TIER=professional  
+# export CUSTOMER_TIER=professional
 # docker compose -f docker-compose.production.yml up -d
 #
 # Variables replaced by provisioning orchestrator:
 # ${CUSTOMER_ID} - Unique customer identifier
 # ${MCP_PORT} - Dedicated MCP server port (30000-30999)
-# ${POSTGRES_PORT} - Dedicated PostgreSQL port (31000-31999)  
+# ${POSTGRES_PORT} - Dedicated PostgreSQL port (31000-31999)
 # ${REDIS_PORT} - Dedicated Redis port (32000-32999)
 # ${QDRANT_PORT} - Dedicated Qdrant port (33000-33999)
 # ${NEO4J_PORT} - Dedicated Neo4j port (34000-34999)
 # ${MEMORY_MONITOR_PORT} - Dedicated Memory Monitor port (35000-35999)
+# ${PROMETHEUS_PORT} - Dedicated Prometheus port (36000-36999)
+# ${GRAFANA_PORT} - Dedicated Grafana port (37000-37999)
+# ${JAEGER_UI_PORT} - Dedicated Jaeger UI port (38000-38999)
+# ${JAEGER_COLLECTOR_PORT} - Dedicated Jaeger Collector port (39000-39999)
+# ${NGINX_PORT} - Dedicated Nginx port (40000-40999)
+# ${NGINX_SSL_PORT} - Dedicated Nginx SSL port (41000-41999)
+# ${LOKI_PORT} - Dedicated Loki port (42000-42999)
 # ${TIER_MEMORY_LIMIT} - Memory limit based on customer tier
 # ${TIER_CPU_LIMIT} - CPU limit based on customer tier
 # ${SECURE_PASSWORD} - Generated secure password for databases
@@ -411,6 +419,12 @@ services:
       GDPR_COMPLIANCE: true
       DATA_RETENTION_DAYS: ${TIER_DATA_RETENTION_DAYS}
       AUDIT_LOG_ENABLED: true
+      # Vault integration for secrets
+      VAULT_ADDR: ${VAULT_ADDR}
+      VAULT_TOKEN_PATH: ${VAULT_TOKEN_PATH}
+      # Security monitoring
+      SENTRY_DSN: ${VAULT_SECRET_SENTRY_DSN}
+      SECURITY_SCAN_INTERVAL: 300
     depends_on:
       postgres:
         condition: service_healthy
@@ -419,17 +433,247 @@ services:
     volumes:
       - ./config/security/customer-${CUSTOMER_ID}.yaml:/app/config/security.yaml:ro
       - ./logs/security/${CUSTOMER_ID}:/app/logs
+      - /var/run/vault:/var/run/vault:ro
     networks:
       - customer-${CUSTOMER_ID}-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
     deploy:
       resources:
         limits:
           memory: 512M
           cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
     restart: unless-stopped
     labels:
       - "ai-agency.customer-id=${CUSTOMER_ID}"
       - "ai-agency.service=security"
+      - "ai-agency.tier=${CUSTOMER_TIER}"
+
+  # Customer-Dedicated Prometheus for Metrics Collection
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: prometheus-${CUSTOMER_ID}
+    ports:
+      - "${PROMETHEUS_PORT}:9090"
+    environment:
+      CUSTOMER_ID: ${CUSTOMER_ID}
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./config/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data_${CUSTOMER_ID}:/prometheus
+    networks:
+      - customer-${CUSTOMER_ID}-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    restart: unless-stopped
+    labels:
+      - "ai-agency.customer-id=${CUSTOMER_ID}"
+      - "ai-agency.service=prometheus"
+      - "ai-agency.tier=${CUSTOMER_TIER}"
+
+  # Customer-Dedicated Grafana for Visualization
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: grafana-${CUSTOMER_ID}
+    ports:
+      - "${GRAFANA_PORT}:3000"
+    environment:
+      CUSTOMER_ID: ${CUSTOMER_ID}
+      GF_SECURITY_ADMIN_PASSWORD: ${SECURE_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_INSTALL_PLUGINS: "grafana-piechart-panel,grafana-worldmap-panel"
+      GF_LOG_LEVEL: info
+      GF_METRICS_ENABLED: "true"
+    volumes:
+      - grafana_data_${CUSTOMER_ID}:/var/lib/grafana
+      - ./config/monitoring/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./config/monitoring/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./config/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards/customer-dashboards:ro
+    networks:
+      - customer-${CUSTOMER_ID}-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+        reservations:
+          memory: 128M
+          cpus: '0.1'
+    restart: unless-stopped
+    labels:
+      - "ai-agency.customer-id=${CUSTOMER_ID}"
+      - "ai-agency.service=grafana"
+      - "ai-agency.tier=${CUSTOMER_TIER}"
+
+  # Customer-Dedicated Jaeger for Distributed Tracing
+  jaeger:
+    image: jaegertracing/all-in-one:1.58
+    container_name: jaeger-${CUSTOMER_ID}
+    ports:
+      - "${JAEGER_UI_PORT}:16686"
+      - "${JAEGER_COLLECTOR_PORT}:14268"
+    environment:
+      CUSTOMER_ID: ${CUSTOMER_ID}
+      COLLECTOR_OTLP_ENABLED: "true"
+      SPAN_STORAGE_TYPE: memory
+      MEMORY_MAX_TRACES: "100000"
+      QUERY_UI_CONFIG: /etc/jaeger/ui-config.json
+    volumes:
+      - ./config/monitoring/jaeger/ui-config.json:/etc/jaeger/ui-config.json:ro
+    networks:
+      - customer-${CUSTOMER_ID}-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:16686"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    restart: unless-stopped
+    labels:
+      - "ai-agency.customer-id=${CUSTOMER_ID}"
+      - "ai-agency.service=jaeger"
+      - "ai-agency.tier=${CUSTOMER_TIER}"
+
+  # Customer-Dedicated Nginx Reverse Proxy with Security Headers
+  nginx-proxy:
+    image: nginx:1.25-alpine
+    container_name: nginx-proxy-${CUSTOMER_ID}
+    ports:
+      - "${NGINX_PORT}:80"
+      - "${NGINX_SSL_PORT}:443"
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./config/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./config/nginx/ssl:/etc/nginx/ssl:ro
+      - ./logs/nginx/${CUSTOMER_ID}:/var/log/nginx
+    networks:
+      - customer-${CUSTOMER_ID}-network
+    depends_on:
+      - mcp-server
+      - prometheus
+      - grafana
+      - jaeger
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+        reservations:
+          memory: 64M
+          cpus: '0.1'
+    restart: unless-stopped
+    labels:
+      - "ai-agency.customer-id=${CUSTOMER_ID}"
+      - "ai-agency.service=nginx-proxy"
+      - "ai-agency.tier=${CUSTOMER_TIER}"
+
+  # Customer-Dedicated Log Aggregation Service
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: loki-${CUSTOMER_ID}
+    ports:
+      - "${LOKI_PORT}:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki_data_${CUSTOMER_ID}:/loki
+      - ./config/monitoring/loki.yml:/etc/loki/local-config.yaml:ro
+    networks:
+      - customer-${CUSTOMER_ID}-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3100/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+        reservations:
+          memory: 128M
+          cpus: '0.1'
+    restart: unless-stopped
+    labels:
+      - "ai-agency.customer-id=${CUSTOMER_ID}"
+      - "ai-agency.service=loki"
+      - "ai-agency.tier=${CUSTOMER_TIER}"
+
+  # Customer-Dedicated Fluent Bit for Log Shipping
+  fluent-bit:
+    image: fluent/fluent-bit:2.2.0
+    container_name: fluent-bit-${CUSTOMER_ID}
+    volumes:
+      - ./config/monitoring/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ./logs:/var/log/containers:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    networks:
+      - customer-${CUSTOMER_ID}-network
+    depends_on:
+      - loki
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2020/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+        reservations:
+          memory: 64M
+          cpus: '0.1'
+    restart: unless-stopped
+    labels:
+      - "ai-agency.customer-id=${CUSTOMER_ID}"
+      - "ai-agency.service=fluent-bit"
       - "ai-agency.tier=${CUSTOMER_TIER}"
 
 # Customer-Dedicated Volumes for Data Persistence
@@ -444,7 +688,7 @@ volumes:
     driver: local
     driver_opts:
       type: none
-      o: bind  
+      o: bind
       device: ./customer-volumes/${CUSTOMER_ID}/redis
   qdrant_data_${CUSTOMER_ID}:
     driver: local
@@ -470,6 +714,24 @@ volumes:
       type: none
       o: bind
       device: ./customer-volumes/${CUSTOMER_ID}/neo4j/import
+  prometheus_data_${CUSTOMER_ID}:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./customer-volumes/${CUSTOMER_ID}/prometheus
+  grafana_data_${CUSTOMER_ID}:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./customer-volumes/${CUSTOMER_ID}/grafana
+  loki_data_${CUSTOMER_ID}:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./customer-volumes/${CUSTOMER_ID}/loki
 
 # Customer-Dedicated Network for Complete Isolation
 networks:
