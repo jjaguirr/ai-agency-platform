@@ -1,0 +1,31 @@
+name: ai-ea-landing-page
+region: nyc
+
+static_sites:
+  - name: landing-page
+    github:
+      repo: jjaguirr/ai-agency-platform
+      branch: main
+      deploy_on_push: true
+
+    source_dir: /frontend
+
+    routes:
+      - path: /
+
+    # Environment variables (if needed)
+    envs: []
+
+    # Custom error pages
+    error_document: index.html
+
+    # CORS configuration (optional)
+    cors:
+      allow_origins:
+        - exact: https://ai-ea-landing-page.ondigitalocean.app
+      allow_methods:
+        - GET
+        - POST
+        - OPTIONS
+      allow_headers:
+        - Content-Type
