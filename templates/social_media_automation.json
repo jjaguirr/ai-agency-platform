@@ -1,0 +1,12 @@
+{
+  "name": "Social Media Post Automation",
+  "description": "Automatically schedule and post content across social media platforms",
+  "category": "marketing",
+  "triggers": [{"type": "schedule", "cron": "0 9 * * *"}],
+  "actions": [
+    {"type": "generate_content", "platform": "instagram"},
+    {"type": "schedule_post", "platforms": ["instagram", "facebook"]},
+    {"type": "notify_customer", "channel": "whatsapp"}
+  ],
+  "estimated_time_saved_weekly_hours": 10
+}

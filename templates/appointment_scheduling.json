@@ -1,0 +1,13 @@
+{
+  "name": "Appointment Scheduling",
+  "description": "Handle appointment booking, reminders, and rescheduling",
+  "category": "operations",
+  "triggers": [{"type": "message", "intent": "schedule_meeting"}],
+  "actions": [
+    {"type": "check_availability", "calendar": "google"},
+    {"type": "propose_times", "count": 3},
+    {"type": "confirm_booking"},
+    {"type": "send_reminder", "before": "1h"}
+  ],
+  "estimated_time_saved_weekly_hours": 3
+}

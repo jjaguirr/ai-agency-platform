@@ -1,0 +1,12 @@
+{
+  "name": "Invoice Generation",
+  "description": "Generate and send invoices based on completed work or recurring schedules",
+  "category": "finance",
+  "triggers": [{"type": "event", "event": "project_milestone"}, {"type": "schedule", "cron": "0 0 1 * *"}],
+  "actions": [
+    {"type": "generate_invoice", "format": "pdf"},
+    {"type": "send_email", "template": "invoice"},
+    {"type": "log_accounting", "action": "invoice_sent"}
+  ],
+  "estimated_time_saved_weekly_hours": 4
+}

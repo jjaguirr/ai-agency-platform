@@ -1,0 +1,12 @@
+{
+  "name": "Client Follow-Up Automation",
+  "description": "Automated follow-up emails based on client interaction triggers",
+  "category": "client_management",
+  "triggers": [{"type": "event", "event": "meeting_completed"}],
+  "actions": [
+    {"type": "wait", "duration": "24h"},
+    {"type": "send_email", "template": "followup"},
+    {"type": "log_crm", "action": "followup_sent"}
+  ],
+  "estimated_time_saved_weekly_hours": 5
+}

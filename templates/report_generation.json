@@ -1,0 +1,13 @@
+{
+  "name": "Weekly Business Report",
+  "description": "Generate weekly summary reports from business metrics",
+  "category": "analytics",
+  "triggers": [{"type": "schedule", "cron": "0 8 * * 1"}],
+  "actions": [
+    {"type": "aggregate_metrics", "period": "7d"},
+    {"type": "generate_report", "format": "pdf"},
+    {"type": "send_email", "template": "weekly_report"},
+    {"type": "store_report", "location": "drive"}
+  ],
+  "estimated_time_saved_weekly_hours": 3
+}

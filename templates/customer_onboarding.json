@@ -1,0 +1,14 @@
+{
+  "name": "Customer Onboarding Sequence",
+  "description": "Automated onboarding flow for new customers",
+  "category": "customer_success",
+  "triggers": [{"type": "event", "event": "customer_signup"}],
+  "actions": [
+    {"type": "send_welcome", "channel": "whatsapp"},
+    {"type": "schedule_discovery_call", "within": "60s"},
+    {"type": "conduct_business_discovery"},
+    {"type": "create_first_automation"},
+    {"type": "send_summary", "channel": "email"}
+  ],
+  "estimated_time_saved_weekly_hours": 2
+}

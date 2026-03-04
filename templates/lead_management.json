@@ -1,0 +1,13 @@
+{
+  "name": "Lead Qualification Pipeline",
+  "description": "Automatically qualify and route incoming leads",
+  "category": "sales",
+  "triggers": [{"type": "webhook", "source": "landing_page"}],
+  "actions": [
+    {"type": "classify_lead", "model": "business_learning_engine"},
+    {"type": "enrich_data", "sources": ["clearbit", "linkedin"]},
+    {"type": "route_lead", "rules": "score_based"},
+    {"type": "notify_sales", "channel": "whatsapp"}
+  ],
+  "estimated_time_saved_weekly_hours": 8
+}
