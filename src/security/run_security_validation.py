@@ -152,7 +152,7 @@ class SecurityValidationRunner:
             
             # Test consent management
             logger.info("Testing GDPR consent management...")
-            from src.security.gdpr_compliance_manager import ConsentType
+            from .gdpr_compliance_manager import ConsentType
             consent_result = await gdpr_manager.manage_consent(
                 ConsentType.AI_ML_PROCESSING, True, {"test": "consent"}
             )
@@ -193,7 +193,7 @@ class SecurityValidationRunner:
             logger.info("Testing security monitoring event generation...")
             
             # Simulate security events
-            from src.security.security_monitor import SecurityEvent, SecurityEventType, SecurityThreatLevel
+            from .security_monitor import SecurityEvent, SecurityEventType, SecurityThreatLevel
             
             test_events = [
                 SecurityEvent(
