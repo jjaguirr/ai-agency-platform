@@ -1,0 +1,142 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ai-agency-platform"
+version = "0.1.0"
+description = "AI Agency Platform - Executive Assistant with AI/ML Memory Integration"
+requires-python = ">=3.11"
+dependencies = [
+    # Memory Layer
+    "mem0ai>=0.1.24",
+    "qdrant-client>=1.7.0",
+    "neo4j>=5.15.0",
+    # AI/ML
+    "openai>=1.10.0",
+    "langchain>=0.1.0",
+    "langchain-core>=0.1.0",
+    "langchain-openai>=0.0.5",
+    "langgraph>=0.0.20",
+    "numpy>=1.24.0",
+    "spacy>=3.7.0",
+    "sentence-transformers>=2.2.0",
+    # Web Framework
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic>=2.5.0",
+    # Database & Storage
+    "asyncpg>=0.29.0",
+    "redis[hiredis]>=5.0.0",
+    "psycopg2-binary>=2.9.0",
+    # HTTP & Networking
+    "aiohttp>=3.9.0",
+    "aiofiles>=23.0.0",
+    "httpx>=0.25.0",
+    "requests>=2.31.0",
+    # Communication
+    "twilio>=8.0.0",
+    # Security
+    "python-jose[cryptography]>=3.3.0",
+    # Infrastructure
+    "docker>=6.0.0",
+    "pyyaml>=6.0.1",
+    # Monitoring
+    "structlog>=23.2.0",
+    "prometheus-client>=0.19.0",
+    # Utilities
+    "python-dotenv>=1.0.0",
+    "python-dateutil>=2.8.2",
+    "click>=8.1.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+    "pytest-timeout>=2.2.0",
+    "pytest-benchmark>=4.0.0",
+    "fakeredis>=2.20.0",
+    "hypothesis>=6.88.0",
+    "faker>=19.12.0",
+    "factory-boy>=3.3.0",
+    "responses>=0.23.0",
+    "coverage[toml]>=7.3.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.pytest.ini_options]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*", "*Tests"]
+python_functions = ["test_*"]
+minversion = "7.0"
+testpaths = ["tests"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--verbose",
+    "--tb=short",
+    "--cov=src",
+    "--cov-report=term-missing",
+    "--cov-report=html:htmlcov",
+    "--cov-fail-under=80",
+    "--durations=10",
+    "--asyncio-mode=auto",
+    "--timeout=30",
+]
+markers = [
+    "unit: Unit tests for individual components",
+    "integration: Integration tests requiring services",
+    "acceptance: End-to-end acceptance tests with scenarios",
+    "agent_test: Tests using AI agent evaluation frameworks",
+    "evaluation: Tests using LLM/Agent judges for evaluation",
+    "performance: Performance benchmark tests",
+    "conversation: Conversational AI testing",
+    "scenario: Scenario-driven testing",
+    "slow: Tests that take longer than 10 seconds",
+    "mock: Tests using mocked services",
+    "real_api: Tests requiring real API calls (OpenAI, etc.)",
+    "memory: Tests for memory and context persistence",
+    "cross_channel: Tests for cross-channel conversation continuity",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "*/tests/*",
+    "*/conftest.py",
+    "*/test_*.py",
+    "*/__pycache__/*",
+    "*/migrations/*",
+    "*/venv/*",
+    "*/env/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"
+title = "AI Agency Platform - Executive Assistant Coverage"
