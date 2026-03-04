@@ -40,6 +40,7 @@ wheels/
 MANIFEST
 
 # Virtual environments
+.venv/
 venv/
 env/
 ENV/
@@ -66,7 +67,9 @@ pids/
 
 # Coverage directory used by tools like istanbul
 coverage/
+htmlcov/
 .coverage
+.coverage.*
 *.lcov
 
 # nyc test coverage

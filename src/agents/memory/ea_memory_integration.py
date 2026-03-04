@@ -21,14 +21,10 @@ from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
-import sys
-import os
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
-
-from memory.mem0_manager import EAMemoryManager, OptimizedMemoryRouter, maintain_conversation_continuity
-from memory.performance_monitor import MemoryPerformanceMonitor, global_monitor
-from ..ai_ml.business_learning_engine import BusinessLearningEngine
-from ..ai_ml.workflow_template_matcher import WorkflowTemplateMatcher
+from src.memory.mem0_manager import EAMemoryManager, OptimizedMemoryRouter, maintain_conversation_continuity
+from src.memory.performance_monitor import MemoryPerformanceMonitor, global_monitor
+from src.agents.ai_ml.business_learning_engine import BusinessLearningEngine
+from src.agents.ai_ml.workflow_template_matcher import WorkflowTemplateMatcher
 
 logger = logging.getLogger(__name__)
 

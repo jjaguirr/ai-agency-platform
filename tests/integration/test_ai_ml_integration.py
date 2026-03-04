@@ -22,9 +22,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 # Import AI/ML components
-from ai_ml.business_learning_engine import BusinessLearningEngine
-from ai_ml.workflow_template_matcher import WorkflowTemplateMatcher
-from memory.ea_memory_integration import EAMemoryIntegration, ConversationContext
+from src.agents.ai_ml.business_learning_engine import BusinessLearningEngine
+from src.agents.ai_ml.workflow_template_matcher import WorkflowTemplateMatcher
+from src.agents.memory.ea_memory_integration import EAMemoryIntegration, ConversationContext
 
 
 class AIMLIntegrationTester:

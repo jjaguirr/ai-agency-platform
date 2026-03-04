@@ -9,14 +9,7 @@ import sys
 import os
 from unittest.mock import Mock, patch
 
-# Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
-
-try:
-    from src.agents.executive_assistant import ExecutiveAssistant, ConversationChannel
-except ImportError as e:
-    print(f"❌ Failed to import EA: {e}")
-    sys.exit(1)
+from src.agents.executive_assistant import ExecutiveAssistant, ConversationChannel
 
 async def test_ea_basic_conversation():
     """Ultra-simple test: EA can handle basic conversation"""

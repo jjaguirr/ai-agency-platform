@@ -13,8 +13,8 @@ import uuid
 from datetime import datetime
 from typing import Dict, List, Any
 
-from executive_assistant import ExecutiveAssistant, ConversationChannel
-from memory.ea_memory_integration import EAMemoryIntegration, ConversationContext, BusinessInsightType
+from src.agents.executive_assistant import ExecutiveAssistant, ConversationChannel
+from src.agents.memory.ea_memory_integration import EAMemoryIntegration, ConversationContext, BusinessInsightType
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
