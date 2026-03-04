@@ -22,16 +22,13 @@ import logging
 from typing import List, Dict, Any
 from pathlib import Path
 
-# Add src to path for imports
-sys.path.append(str(Path(__file__).parent.parent))
-
-from infrastructure.port_allocator import (
+from .port_allocator import (
     create_port_allocator, ServiceType, allocate_customer_ports
 )
-from infrastructure.infrastructure_orchestrator import (
+from .infrastructure_orchestrator import (
     create_infrastructure_orchestrator
 )
-from infrastructure.docker_compose_generator import DockerComposeGenerator
+from .docker_compose_generator import DockerComposeGenerator
 
 # Configure logging
 logging.basicConfig(
