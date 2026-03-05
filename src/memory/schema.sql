@@ -33,6 +33,40 @@ CREATE TABLE IF NOT EXISTS memory_performance_metrics (
     INDEX idx_memory_performance_latency (latency_seconds)
 );
 
+-- GDPR compliance audit trail
+-- No FK to customers — these records MUST survive customer deletion (compliance requirement)
+CREATE TABLE IF NOT EXISTS gdpr_compliance_audit (
+    id BIGSERIAL PRIMARY KEY,
+    customer_id VARCHAR(255) NOT NULL,
+    action_type VARCHAR(100) NOT NULL,
+    action_data JSONB NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_gdpr_audit_customer ON gdpr_compliance_audit(customer_id);
+CREATE INDEX IF NOT EXISTS idx_gdpr_audit_timestamp ON gdpr_compliance_audit(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_gdpr_audit_action ON gdpr_compliance_audit(action_type);
+
+-- Customer deletion operation state tracker
+-- Enables resumable/idempotent deletion across storage layers that don't share a transaction
+CREATE TABLE IF NOT EXISTS customer_deletion_operations (
+    deletion_id VARCHAR(64) PRIMARY KEY,
+    customer_id VARCHAR(255) NOT NULL,
+    requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    requested_by VARCHAR(255),
+    reason VARCHAR(255) NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'in_progress', 'completed', 'failed', 'verified')),
+    -- Step completion state: { "redis": {"status": "completed", "result": {...}, "at": "..."}, ... }
+    step_state JSONB NOT NULL DEFAULT '{}'::JSONB,
+    dry_run_report JSONB,
+    verification_result JSONB,
+    error TEXT,
+    completed_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_deletion_ops_customer ON customer_deletion_operations(customer_id);
+CREATE INDEX IF NOT EXISTS idx_deletion_ops_status ON customer_deletion_operations(status) WHERE status != 'verified';
+
 -- Customer isolation validation logs
 CREATE TABLE IF NOT EXISTS isolation_validation_logs (
     id BIGSERIAL PRIMARY KEY,
