@@ -111,10 +111,35 @@ class TwilioWhatsAppProvider:
             raw=params,
         )]
 
-    # --- Stubs for Task 6 -------------------------------------------------
+    # --- Outbound send ----------------------------------------------------
 
     async def send_text(self, to: str, body: str, from_: str) -> SendResult:
-        raise NotImplementedError
+        form = {
+            "To": f"whatsapp:{to}",
+            "From": f"whatsapp:{from_}",
+            "Body": body,
+        }
+        resp = await self._http.post(self._messages_url, data=form)
+        payload = resp.json()
+
+        if resp.status_code >= 400:
+            code = payload.get("code")
+            raise WhatsAppSendError(
+                payload.get("message", f"Twilio API error {resp.status_code}"),
+                status_code=resp.status_code,
+                error_code=str(code) if code is not None else None,
+            )
+
+        return SendResult(
+            provider_message_id=payload["sid"],
+            status=_STATUS_MAP.get(payload.get("status", ""), MessageStatus.UNKNOWN),
+            raw=payload,
+        )
 
     async def fetch_status(self, provider_message_id: str) -> MessageStatus:
-        raise NotImplementedError
+        url = f"{_TWILIO_API_BASE}/Accounts/{self._account_sid}/Messages/{provider_message_id}.json"
+        resp = await self._http.get(url)
+        if resp.status_code >= 400:
+            return MessageStatus.UNKNOWN
+        payload = resp.json()
+        return _STATUS_MAP.get(payload.get("status", ""), MessageStatus.UNKNOWN)

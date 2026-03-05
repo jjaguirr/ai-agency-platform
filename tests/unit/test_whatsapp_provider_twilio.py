@@ -238,3 +238,158 @@ class TestTwilioParseWebhook:
             b"", "application/x-www-form-urlencoded"
         )
         assert events == []
+
+
+# --- send_text tests ------------------------------------------------------
+
+class TestTwilioSendText:
+    ACCOUNT_SID = "ACtest123"
+    AUTH_TOKEN = "secret_tok"
+
+    def _provider_with_transport(self, handler) -> TwilioWhatsAppProvider:
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(
+            transport=transport,
+            auth=(self.ACCOUNT_SID, self.AUTH_TOKEN),
+        )
+        return TwilioWhatsAppProvider(
+            account_sid=self.ACCOUNT_SID,
+            auth_token=self.AUTH_TOKEN,
+            http_client=client,
+        )
+
+    async def test_send_text_success(self):
+        captured = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["method"] = request.method
+            captured["url"] = str(request.url)
+            captured["form"] = dict(parse_qsl(request.content.decode("utf-8")))
+            captured["auth"] = request.headers.get("authorization")
+            return httpx.Response(201, json={
+                "sid": "SM_sent_abc123",
+                "status": "queued",
+                "to": "whatsapp:+15551234567",
+                "from": "whatsapp:+14155238886",
+            })
+
+        provider = self._provider_with_transport(handler)
+        result = await provider.send_text(
+            to="+15551234567", body="hello!", from_="+14155238886"
+        )
+
+        # Returned SendResult
+        assert isinstance(result, SendResult)
+        assert result.provider_message_id == "SM_sent_abc123"
+        assert result.status == MessageStatus.QUEUED
+        assert result.raw["sid"] == "SM_sent_abc123"
+
+        # Outbound request shape
+        assert captured["method"] == "POST"
+        assert captured["url"] == (
+            f"https://api.twilio.com/2010-04-01/Accounts/{self.ACCOUNT_SID}/Messages.json"
+        )
+        assert captured["form"] == {
+            "To": "whatsapp:+15551234567",
+            "From": "whatsapp:+14155238886",
+            "Body": "hello!",
+        }
+        # Basic auth header = base64(sid:token)
+        expected_auth = "Basic " + base64.b64encode(
+            f"{self.ACCOUNT_SID}:{self.AUTH_TOKEN}".encode()
+        ).decode("ascii")
+        assert captured["auth"] == expected_auth
+
+    async def test_send_text_status_mapping(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(201, json={"sid": "SM1", "status": "sent"})
+
+        provider = self._provider_with_transport(handler)
+        result = await provider.send_text(
+            to="+15551234567", body="x", from_="+14155238886"
+        )
+        assert result.status == MessageStatus.SENT
+
+    async def test_send_text_api_error_raises(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(400, json={
+                "code": 21211,
+                "message": "Invalid 'To' Phone Number",
+                "more_info": "https://www.twilio.com/docs/errors/21211",
+            })
+
+        provider = self._provider_with_transport(handler)
+        with pytest.raises(WhatsAppSendError) as exc_info:
+            await provider.send_text(
+                to="invalid", body="x", from_="+14155238886"
+            )
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.error_code == "21211"
+        assert "Invalid 'To' Phone Number" in str(exc_info.value)
+
+    async def test_send_text_5xx_raises(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(503, json={"message": "Service Unavailable"})
+
+        provider = self._provider_with_transport(handler)
+        with pytest.raises(WhatsAppSendError) as exc_info:
+            await provider.send_text(to="+15551234567", body="x", from_="+14155238886")
+        assert exc_info.value.status_code == 503
+
+    async def test_send_text_unknown_status_maps_to_unknown(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(201, json={"sid": "SM2", "status": "weird_new_state"})
+
+        provider = self._provider_with_transport(handler)
+        result = await provider.send_text(
+            to="+15551234567", body="x", from_="+14155238886"
+        )
+        assert result.status == MessageStatus.UNKNOWN
+
+
+# --- fetch_status tests ---------------------------------------------------
+
+class TestTwilioFetchStatus:
+    ACCOUNT_SID = "ACfetch"
+
+    def _provider_with_transport(self, handler) -> TwilioWhatsAppProvider:
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(
+            transport=transport, auth=(self.ACCOUNT_SID, "tok")
+        )
+        return TwilioWhatsAppProvider(
+            account_sid=self.ACCOUNT_SID, auth_token="tok", http_client=client
+        )
+
+    async def test_fetch_status_delivered(self):
+        captured = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["method"] = request.method
+            captured["url"] = str(request.url)
+            return httpx.Response(200, json={
+                "sid": "SM_fetch_1", "status": "delivered"
+            })
+
+        provider = self._provider_with_transport(handler)
+        status = await provider.fetch_status("SM_fetch_1")
+
+        assert status == MessageStatus.DELIVERED
+        assert captured["method"] == "GET"
+        assert captured["url"] == (
+            f"https://api.twilio.com/2010-04-01/Accounts/{self.ACCOUNT_SID}/Messages/SM_fetch_1.json"
+        )
+
+    async def test_fetch_status_read(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"sid": "SM2", "status": "read"})
+
+        provider = self._provider_with_transport(handler)
+        assert await provider.fetch_status("SM2") == MessageStatus.READ
+
+    async def test_fetch_status_not_found_returns_unknown(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(404, json={"code": 20404, "message": "Not Found"})
+
+        provider = self._provider_with_transport(handler)
+        assert await provider.fetch_status("SM_missing") == MessageStatus.UNKNOWN
