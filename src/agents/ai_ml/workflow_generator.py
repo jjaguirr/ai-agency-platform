@@ -39,10 +39,11 @@ class ParsedProcess(BaseModel):
 
 # --- assembly: ParsedProcess -> N8nWorkflow ---------------------------------
 
+import re
 import uuid
 from collections import defaultdict
 
-from .n8n_schema import N8nConnectionTarget, N8nNode, N8nWorkflow
+from .n8n_schema import TRIGGER_TYPES, N8nConnectionTarget, N8nNode, N8nWorkflow
 
 _SPACING_X = 200
 _START_X = 250
@@ -148,3 +149,76 @@ def assemble(parsed: ParsedProcess) -> tuple[N8nWorkflow, list[str]]:
         connections=connections,
     )
     return workflow, customization
+
+
+# --- explain: N8nWorkflow -> plain English ----------------------------------
+
+_CONFIGURE_RE = re.compile(r"\{\{CONFIGURE:\s*(.+?)\}\}")
+
+
+def _extract_marker(s: str) -> str | None:
+    m = _CONFIGURE_RE.search(s)
+    return m.group(1).strip() if m else None
+
+
+def _describe(node: N8nNode) -> str:
+    t = node.type
+    p = node.parameters
+    if t == "n8n-nodes-base.scheduleTrigger":
+        return "runs on a schedule"
+    if t == "n8n-nodes-base.webhook":
+        return "waits for an incoming webhook"
+    if t == "n8n-nodes-base.manualTrigger":
+        return "runs manually on demand"
+    if t == "n8n-nodes-base.httpRequest":
+        detail = _extract_marker(p.get("url", ""))
+        return f"calls {detail}" if detail else "calls an external API"
+    if t == "n8n-nodes-base.if":
+        cond = _extract_marker(str(p))
+        return f"branches when {cond}" if cond else "checks a condition"
+    if t == "n8n-nodes-base.merge":
+        return "merges the incoming branches"
+    if t == "n8n-nodes-base.set":
+        return "transforms the data"
+    if t == "n8n-nodes-base.emailSend":
+        return "sends an email"
+    if t == "n8n-nodes-base.slack":
+        return "posts to Slack"
+    if t == "n8n-nodes-base.googleSheets":
+        return "writes to a spreadsheet"
+    return "runs"
+
+
+def explain(workflow: N8nWorkflow, customization: list[str]) -> str:
+    """
+    Plain-English numbered walkthrough. Deterministic — no LLM. This is the
+    confirmation step shown to the customer before deploy; it must not
+    hallucinate.
+    """
+    by_name = {n.name: n for n in workflow.nodes}
+    trigger = next(n for n in workflow.nodes if n.type in TRIGGER_TYPES)
+
+    # BFS from trigger through the connection graph
+    order: list[str] = [trigger.name]
+    seen = {trigger.name}
+    frontier = [trigger.name]
+    while frontier:
+        current = frontier.pop(0)
+        for pin in workflow.connections.get(current, {}).get("main", []):
+            for tgt in pin:
+                if tgt.node not in seen:
+                    seen.add(tgt.node)
+                    order.append(tgt.node)
+                    frontier.append(tgt.node)
+
+    lines = [
+        f"{i}. {name} — {_describe(by_name[name])}"
+        for i, name in enumerate(order, 1)
+    ]
+
+    if customization:
+        lines.append("")
+        lines.append("Before this runs:")
+        lines.extend(f"- {note}" for note in customization)
+
+    return "\n".join(lines)
