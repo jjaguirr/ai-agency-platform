@@ -33,6 +33,16 @@ class WhatsAppChannel(BaseCommunicationChannel):
     def store(self) -> MessageStore:
         return self._store
 
+    @property
+    def webhook_url(self) -> str:
+        """Canonical public URL that Twilio/provider is configured to call.
+
+        Used for signature validation — the server must validate against the
+        URL the provider signed, not whatever FastAPI reconstructs behind a
+        proxy. Empty string means 'not configured, fall back to request URL'.
+        """
+        return self._webhook_url
+
     def _get_channel_type(self) -> ChannelType:
         return ChannelType.WHATSAPP
 

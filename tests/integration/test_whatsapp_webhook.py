@@ -168,3 +168,77 @@ class TestInboundFlowEndToEnd:
 
         status = asyncio.run(mgr.store.get_status("SM_tracked_out"))
         assert status == MessageStatus.DELIVERED
+
+
+@pytest.mark.integration
+class TestSignatureValidationBehindProxy:
+    """
+    Twilio signs against the public URL it's configured to call. Behind a
+    load balancer, request.url reconstructs to the INTERNAL address. The
+    server must validate against the configured public webhook_url, not
+    whatever FastAPI sees.
+    """
+
+    PUBLIC_BASE = "https://api.public.example.com"
+
+    @pytest.fixture
+    def manager_behind_proxy(self):
+        cfg = WhatsAppConfig(
+            provider="twilio", from_number="+14155238886",
+            credentials={"account_sid": "ACproxy", "auth_token": AUTH_TOKEN},
+            webhook_base_url=self.PUBLIC_BASE,  # public URL ≠ testserver
+        )
+        mgr = WhatsAppManager()
+        mgr.register_customer(CUSTOMER_ID, cfg)
+        return mgr
+
+    def test_signature_computed_on_public_url_is_accepted(self, manager_behind_proxy):
+        """
+        Sign against public URL (as Twilio does) → server should accept
+        even though request arrives via http://testserver internally.
+        """
+        ea = AsyncMock(return_value="ok")
+        app = build_app(manager=manager_behind_proxy, ea_handler=ea)
+        client = TestClient(app)
+
+        # Twilio signs against the PUBLIC url it was configured with
+        public_url = f"{self.PUBLIC_BASE}/webhook/whatsapp/{CUSTOMER_ID}"
+        params = {"MessageSid": "SM_proxy_test", "Body": "hi",
+                  "From": "whatsapp:+15551234567",
+                  "To": "whatsapp:+14155238886", "NumMedia": "0"}
+        sig = _twilio_signature(public_url, params)
+
+        # Request arrives at http://testserver (internal) but carries
+        # signature computed against public URL
+        resp = client.post(
+            f"/webhook/whatsapp/{CUSTOMER_ID}",
+            content=urlencode(params).encode(),
+            headers={"X-Twilio-Signature": sig,
+                     "Content-Type": "application/x-www-form-urlencoded"},
+        )
+
+        assert resp.status_code == 200
+        assert ea.call_count == 1
+
+    def test_signature_computed_on_internal_url_is_rejected(self, manager_behind_proxy):
+        """
+        Sanity: signing against the wrong (internal) URL should fail.
+        This ensures we're actually validating against configured URL,
+        not just accepting anything.
+        """
+        ea = AsyncMock()
+        app = build_app(manager=manager_behind_proxy, ea_handler=ea)
+        client = TestClient(app)
+
+        internal_url = f"http://testserver/webhook/whatsapp/{CUSTOMER_ID}"
+        params = {"MessageSid": "SM_x", "Body": "hi", "From": "whatsapp:+1"}
+        sig = _twilio_signature(internal_url, params)
+
+        resp = client.post(
+            f"/webhook/whatsapp/{CUSTOMER_ID}",
+            content=urlencode(params).encode(),
+            headers={"X-Twilio-Signature": sig},
+        )
+
+        assert resp.status_code == 403
+        assert ea.call_count == 0

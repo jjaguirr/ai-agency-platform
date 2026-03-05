@@ -52,8 +52,12 @@ def build_app(*, manager: WhatsAppManager, ea_handler: EAHandler) -> FastAPI:
             raise HTTPException(status_code=404, detail="Unknown customer")
 
         body = await request.body()
-        url = str(request.url)
         headers = dict(request.headers)
+        # Validate against the configured public webhook URL. Behind a proxy
+        # or load balancer, request.url reconstructs the INTERNAL address,
+        # which won't match what the provider signed. Fall back to request
+        # URL only if no canonical URL is configured (bare dev setup).
+        url = channel.webhook_url or str(request.url)
 
         # Signature validation MUST happen before parsing the body.
         if not channel.provider.validate_signature(url=url, body=body, headers=headers):
