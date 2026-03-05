@@ -7,6 +7,8 @@ exercised without live infrastructure. Integration tests live elsewhere.
 """
 
 import json
+import re
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -20,11 +22,37 @@ from src.security.customer_deletion_pipeline import (
     VerificationResult,
     STEP_ORDER,
     PG_VARCHAR_TABLES,
+    PG_CASCADE_TABLES,
     _redis_db_for,
     _qdrant_collection_for,
     _neo4j_database_for,
     _is_uuid,
 )
+
+REPO_ROOT = Path(__file__).parents[2]
+SCHEMA_MAIN = REPO_ROOT / "src" / "database" / "schema.sql"
+SCHEMA_MEM = REPO_ROOT / "src" / "memory" / "schema.sql"
+
+# Tables with a customer_id column that are deliberately excluded from
+# deletion because they form the compliance audit trail.
+AUDIT_SURVIVOR_TABLES = {"gdpr_compliance_audit", "customer_deletion_operations"}
+
+
+def _extract_table_defs(sql: str) -> dict[str, str]:
+    """Extract CREATE TABLE bodies. Regex is good enough: schema files are
+    hand-written DDL, not arbitrary SQL."""
+    pattern = re.compile(
+        r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s*\((.*?)\);",
+        re.IGNORECASE | re.DOTALL,
+    )
+    return {m.group(1).lower(): m.group(2) for m in pattern.finditer(sql)}
+
+
+@pytest.fixture(scope="module")
+def schema_tables() -> dict[str, str]:
+    defs = _extract_table_defs(SCHEMA_MAIN.read_text())
+    defs.update(_extract_table_defs(SCHEMA_MEM.read_text()))
+    return defs
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -183,6 +211,161 @@ def make_neo4j(*, db_exists: bool = True, nodes: int = 10, rels: int = 7):
     driver.session = MagicMock(side_effect=session_router)
     driver.close = AsyncMock()
     return driver, sys_session
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Schema contract — table lists in the pipeline must match schema.sql
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestSchemaContract:
+    """The pipeline hardcodes table lists. These pin them to the DDL.
+
+    The completeness test is the one that matters: if someone adds a new
+    table with a customer_id column and doesn't update the pipeline, that
+    table silently survives deletion. GDPR violation in production.
+    """
+
+    def test_no_customer_id_table_escapes_deletion(self, schema_tables):
+        """Every table with a customer_id column is either deleted or a
+        declared audit survivor. No silent gaps."""
+        covered = (
+            set(PG_VARCHAR_TABLES)
+            | set(PG_CASCADE_TABLES)
+            | AUDIT_SURVIVOR_TABLES
+            | {"customers"}  # root — the cascade anchor
+        )
+        uncovered = []
+        for name, body in schema_tables.items():
+            if re.search(r"\bcustomer_id\b", body, re.IGNORECASE) and name not in covered:
+                uncovered.append(name)
+
+        assert not uncovered, (
+            f"Tables with customer_id not covered by deletion pipeline: {uncovered}. "
+            f"Add to PG_VARCHAR_TABLES or PG_CASCADE_TABLES in customer_deletion_pipeline.py, "
+            f"or to AUDIT_SURVIVOR_TABLES here if the omission is deliberate."
+        )
+
+    @pytest.mark.parametrize("table", PG_CASCADE_TABLES)
+    def test_cascade_table_has_on_delete_cascade(self, schema_tables, table):
+        """Pipeline relies on FK cascade from customers. If a table lacks
+        ON DELETE CASCADE, deleting the customers row FK-violates instead
+        of cascading — the pipeline would report success on a failed txn."""
+        assert table in schema_tables, f"{table} not found in schema.sql"
+        body = schema_tables[table]
+
+        # customer_id ... REFERENCES customers(id) ON DELETE CASCADE
+        fk_line = re.search(
+            r"customer_id\s+UUID\b[^,]*?REFERENCES\s+customers\s*\(\s*id\s*\)[^,]*",
+            body, re.IGNORECASE | re.DOTALL,
+        )
+        assert fk_line, f"{table}.customer_id has no FK to customers(id)"
+        assert re.search(r"ON\s+DELETE\s+CASCADE", fk_line.group(0), re.IGNORECASE), (
+            f"{table}.customer_id FK lacks ON DELETE CASCADE — cascade delete will fail"
+        )
+
+    @pytest.mark.parametrize("table", PG_VARCHAR_TABLES)
+    def test_varchar_table_needs_explicit_delete(self, schema_tables, table):
+        """These tables have no FK, so cascade won't touch them. Verify
+        that's actually true — if someone adds an FK later, the explicit
+        delete becomes redundant (harmless) but the categorization is wrong."""
+        assert table in schema_tables, f"{table} not found in schema.sql"
+        body = schema_tables[table]
+
+        assert re.search(r"\bcustomer_id\s+VARCHAR", body, re.IGNORECASE), (
+            f"{table}.customer_id is not VARCHAR — pipeline passes str, may type-mismatch"
+        )
+        # No FK to customers on the customer_id column
+        cid_decl = re.search(r"customer_id\b[^,\n]*", body, re.IGNORECASE).group(0)
+        assert "REFERENCES" not in cid_decl.upper(), (
+            f"{table}.customer_id has FK — belongs in PG_CASCADE_TABLES, not PG_VARCHAR_TABLES"
+        )
+
+    @pytest.mark.parametrize("table", sorted(AUDIT_SURVIVOR_TABLES))
+    def test_audit_table_survives_cascade(self, schema_tables, table):
+        """Audit tables MUST NOT have an FK to customers. If they do, the
+        cascade wipes the proof that the deletion happened — the one record
+        GDPR requires us to keep."""
+        assert table in schema_tables, f"{table} not found in schema.sql"
+        body = schema_tables[table]
+        assert not re.search(
+            r"customer_id\b[^,]*REFERENCES\s+customers", body, re.IGNORECASE
+        ), (
+            f"{table}.customer_id has FK to customers — "
+            f"audit trail would be destroyed by the cascade it records"
+        )
+
+    def test_customers_table_exists(self, schema_tables):
+        """The cascade anchor. If renamed, DELETE FROM customers does nothing."""
+        assert "customers" in schema_tables
+        assert re.search(r"\bid\s+UUID\s+PRIMARY\s+KEY", schema_tables["customers"], re.IGNORECASE)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Qdrant response contract — pin the JSON path we parse
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Shape recorded from Qdrant 1.x GET /collections/{name}. If Qdrant 2.x moves
+# points_count, the dry-run/verify silently report 0. This test localizes the
+# assumption.
+QDRANT_COLLECTION_INFO_RESPONSE = {
+    "result": {
+        "status": "green",
+        "optimizer_status": "ok",
+        "vectors_count": 1247,
+        "indexed_vectors_count": 1247,
+        "points_count": 1247,
+        "segments_count": 2,
+        "config": {
+            "params": {"vectors": {"size": 1536, "distance": "Cosine"}},
+            "hnsw_config": {"m": 16, "ef_construct": 100},
+        },
+        "payload_schema": {},
+    },
+    "status": "ok",
+    "time": 0.000123,
+}
+
+
+def _qdrant_cm(payload: dict, status: int = 200):
+    resp = MagicMock(status_code=status)
+    resp.json = MagicMock(return_value=payload)
+    resp.raise_for_status = MagicMock()
+    client = AsyncMock(); client.get = AsyncMock(return_value=resp)
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=client)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    return cm
+
+
+@pytest.mark.asyncio
+class TestQdrantResponseContract:
+    """Feed recorded Qdrant payloads through the ACTUAL pipeline methods.
+    No re-derived parsing — if the pipeline's JSON path is wrong, these fail."""
+
+    async def test_count_extracts_points_from_real_shape(self):
+        pipeline = CustomerDeletionPipeline("deadbeef", deletion_id="del_qshape")
+        with patch("src.security.customer_deletion_pipeline.httpx.AsyncClient",
+                   return_value=_qdrant_cm(QDRANT_COLLECTION_INFO_RESPONSE)):
+            result = await pipeline._count_qdrant(warnings=[])
+        assert result["point_count"] == 1247
+        assert result["exists"] is True
+
+    async def test_count_handles_empty_result_body(self):
+        """Qdrant 200 with {} — unlikely but shouldn't crash dry-run."""
+        pipeline = CustomerDeletionPipeline("deadbeef", deletion_id="del_qempty")
+        with patch("src.security.customer_deletion_pipeline.httpx.AsyncClient",
+                   return_value=_qdrant_cm({})):
+            result = await pipeline._count_qdrant(warnings=[])
+        assert result["point_count"] == 0
+
+    async def test_verifier_reads_same_path(self):
+        """_count_qdrant and DeletionVerifier._check_qdrant must agree —
+        both should find 1247. Divergent parsing = verify says clean when it isn't."""
+        verifier = DeletionVerifier("deadbeef")
+        with patch("src.security.customer_deletion_pipeline.httpx.AsyncClient",
+                   return_value=_qdrant_cm(QDRANT_COLLECTION_INFO_RESPONSE)):
+            remaining = await verifier._check_qdrant(errors=[])
+        assert remaining == 1247
 
 
 # ─────────────────────────────────────────────────────────────────────────────
