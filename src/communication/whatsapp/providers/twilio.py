@@ -73,12 +73,47 @@ class TwilioWhatsAppProvider:
                 return v
         return None
 
-    # --- Stubs for Tasks 5-6 ----------------------------------------------
-
-    async def send_text(self, to: str, body: str, from_: str) -> SendResult:
-        raise NotImplementedError
+    # --- Webhook parsing --------------------------------------------------
 
     def parse_webhook(self, body: bytes, content_type: str) -> list[WebhookEvent]:
+        params = dict(parse_qsl(body.decode("utf-8"), keep_blank_values=True))
+        if not params:
+            return []
+
+        sid = params.get("MessageSid") or params.get("SmsMessageSid", "")
+
+        # Status callback: MessageStatus present, no inbound Body/NumMedia
+        if "MessageStatus" in params:
+            return [StatusUpdate(
+                provider_message_id=sid,
+                status=_STATUS_MAP.get(params["MessageStatus"], MessageStatus.UNKNOWN),
+                error_code=params.get("ErrorCode"),
+                raw=params,
+            )]
+
+        # Incoming message
+        num_media = int(params.get("NumMedia", "0"))
+        media = [
+            MediaItem(
+                content_type=params[f"MediaContentType{i}"],
+                url=params[f"MediaUrl{i}"],
+            )
+            for i in range(num_media)
+        ]
+
+        return [IncomingMessage(
+            provider_message_id=sid,
+            from_number=_normalize_phone(params.get("From", "")),
+            to_number=_normalize_phone(params.get("To", "")),
+            body=params.get("Body", ""),
+            profile_name=params.get("ProfileName"),
+            media=media,
+            raw=params,
+        )]
+
+    # --- Stubs for Task 6 -------------------------------------------------
+
+    async def send_text(self, to: str, body: str, from_: str) -> SendResult:
         raise NotImplementedError
 
     async def fetch_status(self, provider_message_id: str) -> MessageStatus:
