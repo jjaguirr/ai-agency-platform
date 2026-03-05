@@ -55,6 +55,15 @@ except ImportError as e:
     logger.warning(f"Competitive positioning system not available: {e}")
     COMPETITIVE_POSITIONING_AVAILABLE = False
 
+# Phase 2: Specialist Agent Delegation
+try:
+    from .specialists import SpecialistTask, SpecialistResult, DelegationStatus
+    from .specialists.social_media import SocialMediaSpecialist
+    SPECIALISTS_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Specialist agents not available: {e}")
+    SPECIALISTS_AVAILABLE = False
+
 class ConversationChannel(Enum):
     PHONE = "phone"
     WHATSAPP = "whatsapp"
@@ -152,6 +161,13 @@ class ConversationState:
     business_areas_discovered: List[str] = field(default_factory=list)
     pain_points_identified: List[str] = field(default_factory=list)
     automation_opportunities_found: List[str] = field(default_factory=list)
+
+    # Phase 2: specialist delegation state.
+    # When a specialist returns NEEDS_CLARIFICATION, this carries the pending
+    # delegation across turns via Redis so turn N+1 can resume with the
+    # customer's answer. Cleared on COMPLETED/FAILED.
+    # Shape: {specialist_domain, original_task, pending_question, clarifications_collected}
+    active_delegation: Optional[Dict] = None
 
 class ExecutiveAssistantMemory:
     """Enhanced multi-layer memory system with AI/ML business learning capabilities"""
@@ -595,13 +611,33 @@ class ExecutiveAssistant:
             logger.warning(f"No OpenAI API key found for customer {customer_id}, LLM disabled")
             self.llm = None
         
+        # Phase 2: specialist registry. Populated before graph compile so
+        # delegation_decision has something to route to.
+        self.specialists: Dict[str, Any] = {}
+        if SPECIALISTS_AVAILABLE:
+            self.register_specialist(SocialMediaSpecialist(llm=self.llm))
+
         # Initialize LangGraph workflow
         self.graph = self._create_conversation_graph()
-        
+
         self.personality = "professional"
         self.name = "Sarah"
-        
+
         logger.info(f"Enhanced Executive Assistant initialized for customer {customer_id}")
+
+    # Default timeout for specialist.execute() — class-level so tests that
+    # bypass __init__ still see it. Individual tests override on the instance.
+    _specialist_timeout: float = 15.0
+
+    def register_specialist(self, specialist) -> None:
+        """Add a specialist to the delegation registry.
+
+        The only thing a new specialist needs to join the system. The
+        delegation framework discovers it via can_handle() scoring; no
+        graph changes, no router changes.
+        """
+        self.specialists[specialist.domain] = specialist
+        logger.info(f"Registered specialist: {specialist.domain}")
     
     def _create_conversation_graph(self) -> StateGraph:
         """Create sophisticated LangGraph conversation flow with advanced routing and state management"""
@@ -1071,15 +1107,30 @@ The key difference: automation tools give you software to configure. I give you 
                     state.confidence_score = 0.8
                     return state
             
+            # Delegation routing piggybacks on this call. Build the specialist
+            # list dynamically so registration stays registration-only.
+            specialist_domains = list(self.specialists.keys())
+            if specialist_domains:
+                delegation_section = f"""
+            Delegation target — who should handle this?
+            - ea: strategic advice, business judgment, or anything outside the specialties below
+            - {', '.join(specialist_domains)}: operational work in that domain (do a task, fetch data, take an action)
+            Pick "ea" if the customer is asking WHAT to do; pick a specialist if they're asking you to DO it.
+"""
+                output_format = "Format: INTENT_NAME,confidence_score,delegation_target"
+            else:
+                delegation_section = ""
+                output_format = "Format: INTENT_NAME,confidence_score"
+
             intent_prompt = f"""
             Classify the intent of this customer message in the context of an Executive Assistant conversation:
-            
+
             Customer message: "{last_message}"
-            
+
             Previous conversation context: {state.conversation_depth} exchanges
             Customer familiarity: {state.customer_familiarity}
             Business context available: {bool(state.business_context.business_name)}
-            
+
             Available intents:
             - WORKFLOW_CREATION: Customer wants to automate a process
             - BUSINESS_DISCOVERY: Learning about the business
@@ -1089,23 +1140,21 @@ The key difference: automation tools give you software to configure. I give you 
             - FOLLOW_UP: Following up on previous conversation
             - PROCESS_OPTIMIZATION: Improving existing processes
             - TASK_DELEGATION: Asking EA to handle specific tasks
-            
-            Return only the intent name and confidence score (0-1).
-            Format: INTENT_NAME,confidence_score
+            {delegation_section}
+            {output_format}
             """
-            
+
             try:
                 response = await self.llm.ainvoke([HumanMessage(content=intent_prompt)])
                 intent_response = response.content.strip()
-                
-                if ',' in intent_response:
-                    intent_str, confidence_str = intent_response.split(',', 1)
-                    intent_str = intent_str.strip()
-                    confidence = float(confidence_str.strip())
-                else:
-                    intent_str = intent_response
-                    confidence = 0.5
-                
+
+                # Defensive 3-field parse. Old format (2 fields) and parse
+                # failures leave delegation_hint unset → keyword backstop.
+                parts = [p.strip() for p in intent_response.split(',')]
+                intent_str = parts[0] if parts else ""
+                confidence = float(parts[1]) if len(parts) >= 2 else 0.5
+                delegation_hint = parts[2].lower() if len(parts) >= 3 else None
+
                 intent_mapping = {
                     "WORKFLOW_CREATION": ConversationIntent.WORKFLOW_CREATION,
                     "BUSINESS_DISCOVERY": ConversationIntent.BUSINESS_DISCOVERY,
@@ -1116,11 +1165,16 @@ The key difference: automation tools give you software to configure. I give you 
                     "PROCESS_OPTIMIZATION": ConversationIntent.PROCESS_OPTIMIZATION,
                     "TASK_DELEGATION": ConversationIntent.TASK_DELEGATION
                 }
-                
+
                 state.current_intent = intent_mapping.get(intent_str, ConversationIntent.UNKNOWN)
                 state.confidence_score = confidence
-                
-                logger.info(f"Intent classified: {state.current_intent.value} (confidence: {confidence})")
+                if delegation_hint:
+                    state.collected_info["_delegation_hint"] = delegation_hint
+
+                logger.info(
+                    f"Intent classified: {state.current_intent.value} "
+                    f"(confidence: {confidence}, delegate→{delegation_hint or 'unset'})"
+                )
                 
             except Exception as e:
                 logger.error(f"Error classifying intent: {e}")
@@ -1140,6 +1194,8 @@ The key difference: automation tools give you software to configure. I give you 
         workflow.add_node("update_context", update_business_context)
         workflow.add_node("handle_general_assistance", self._handle_general_assistance)
         workflow.add_node("handle_clarification", self._handle_clarification)
+        workflow.add_node("delegation_decision", self._delegation_decision)
+        workflow.add_node("specialist_execution", self._specialist_execution)
         
         # Intent-based conditional routing functions
         def route_after_intent_classification(state: ConversationState) -> str:
@@ -1157,7 +1213,7 @@ The key difference: automation tools give you software to configure. I give you 
             elif intent == ConversationIntent.BUSINESS_DISCOVERY:
                 return "business_discovery"
             elif intent in [ConversationIntent.BUSINESS_ASSISTANCE, ConversationIntent.TASK_DELEGATION]:
-                return "handle_general_assistance"
+                return "delegation_decision"
             elif intent == ConversationIntent.CLARIFICATION_NEEDED:
                 return "handle_clarification"
             elif intent == ConversationIntent.PROCESS_OPTIMIZATION:
@@ -1177,6 +1233,20 @@ The key difference: automation tools give you software to configure. I give you 
             """Route after workflow creation attempt"""
             return "update_context"
         
+        def route_after_delegation(state: ConversationState) -> str:
+            """Specialist picked → execute it. Nothing picked → EA handles it."""
+            if state.collected_info.get("_selected_specialist") or \
+               state.collected_info.get("_resume_specialist"):
+                return "specialist_execution"
+            return "handle_general_assistance"
+
+        def route_after_specialist(state: ConversationState) -> str:
+            """Fallback flag set (timeout/failed/low-conf) → EA takes over.
+            Otherwise the specialist already appended the response."""
+            if state.collected_info.get("_specialist_fallback"):
+                return "handle_general_assistance"
+            return "update_context"
+
         def route_after_business_discovery(state: ConversationState) -> str:
             """Route after business discovery based on message content"""
             try:
@@ -1204,9 +1274,30 @@ The key difference: automation tools give you software to configure. I give you 
             route_after_intent_classification,
             {
                 "business_discovery": "business_discovery",
-                "analyze_opportunities": "analyze_opportunities", 
+                "analyze_opportunities": "analyze_opportunities",
+                "delegation_decision": "delegation_decision",
                 "handle_general_assistance": "handle_general_assistance",
                 "handle_clarification": "handle_clarification"
+            }
+        )
+
+        # Delegation decision → specialist or fall through to EA
+        workflow.add_conditional_edges(
+            "delegation_decision",
+            route_after_delegation,
+            {
+                "specialist_execution": "specialist_execution",
+                "handle_general_assistance": "handle_general_assistance",
+            }
+        )
+
+        # Specialist execution → done or fall back to EA
+        workflow.add_conditional_edges(
+            "specialist_execution",
+            route_after_specialist,
+            {
+                "update_context": "update_context",
+                "handle_general_assistance": "handle_general_assistance",
             }
         )
         
@@ -1301,9 +1392,220 @@ The key difference: automation tools give you software to configure. I give you 
         state.messages.append(AIMessage(content=clarification_response))
         state.current_intent = ConversationIntent.CLARIFICATION_NEEDED
         state.requires_clarification = True
-        
+
         return state
-    
+
+    # ------------------------------------------------------------------ Phase 2
+    # Specialist delegation — two graph nodes + one context-scoping helper.
+    # These slot in between intent_classification and handle_general_assistance.
+    # Existing nodes are untouched.
+    # --------------------------------------------------------------------------
+
+    async def _delegation_decision(self, state: ConversationState) -> ConversationState:
+        """Decide whether to hand this request to a specialist.
+
+        Primary signal: _delegation_hint set by intent_classification_node.
+        That prompt already saw the message and the registered domains; no
+        second LLM call here. Hint values:
+          "<domain>"  — route directly; can_handle runs only as a sanity log
+          "ea"        — strategic/advisory; EA keeps it
+          absent      — parse failure or old format; fall to keyword backstop
+
+        Resumption short-circuit: if active_delegation is set, a specialist
+        already asked a clarifying question last turn and this message is the
+        answer. Skip everything; resume with the same specialist.
+
+        Outputs via state.collected_info:
+          _selected_specialist  — fresh delegation picked a specialist
+          _resume_specialist    — resuming a multi-turn delegation
+          (neither)             — router falls through to general assistance
+        """
+        # Resumption path — customer is answering a specialist's question
+        if state.active_delegation:
+            domain = state.active_delegation["specialist_domain"]
+            if domain in self.specialists:
+                pending_q = state.active_delegation.get("pending_question")
+                answer = state.messages[-1].content if state.messages else ""
+                clarifications = state.active_delegation.setdefault("clarifications_collected", {})
+                if pending_q:
+                    clarifications[pending_q] = answer
+                state.collected_info["_resume_specialist"] = domain
+                logger.info(f"Resuming delegation to {domain} with clarification")
+                return state
+            # Specialist was unregistered between turns — fall through, clear stale state
+            state.active_delegation = None
+
+        if not self.specialists:
+            return state
+
+        last_message = state.messages[-1].content if state.messages else ""
+        hint = state.collected_info.get("_delegation_hint")
+
+        # Hint is authoritative when it names a registered specialist.
+        if hint in self.specialists:
+            specialist = self.specialists[hint]
+            sanity = specialist.can_handle(last_message, state.current_intent)
+            if sanity < 0.2:
+                logger.warning(
+                    f"Routing sanity: LLM sent '{hint}' but can_handle={sanity:.2f} "
+                    f"disagrees — trusting hint, flag for prompt review"
+                )
+            state.collected_info["_selected_specialist"] = hint
+            logger.info(f"Delegating to {hint} (hint-routed, sanity={sanity:.2f})")
+            return state
+
+        # Hint says EA keeps it — strategic/advisory per intent classifier.
+        if hint == "ea":
+            logger.info("Intent classifier routed to EA; no delegation")
+            return state
+
+        # No usable hint (parse failure, hallucinated domain, or no specialists
+        # at classification time). Keyword backstop — the pre-hint behavior.
+        if hint is not None:
+            logger.warning(f"Delegation hint '{hint}' not in registry; falling to keywords")
+
+        best_domain, best_score = None, 0.0
+        for domain, specialist in self.specialists.items():
+            score = specialist.can_handle(last_message, state.current_intent)
+            if score > best_score:
+                best_domain, best_score = domain, score
+
+        if best_score < 0.5:
+            return state
+
+        state.collected_info["_selected_specialist"] = best_domain
+        logger.info(f"Delegating to {best_domain} (keyword backstop, score={best_score:.2f})")
+        return state
+
+    async def _specialist_execution(self, state: ConversationState) -> ConversationState:
+        """Invoke the chosen specialist and handle every outcome.
+
+        Wraps specialist.execute() in a timeout; the specialist never sees
+        the cancellation. Every path either appends an AIMessage to state
+        (success, clarification) or sets _specialist_fallback so the router
+        sends us to handle_general_assistance (timeout, exception, FAILED,
+        low confidence).
+        """
+        domain = state.collected_info.get("_selected_specialist") or \
+                 state.collected_info.get("_resume_specialist")
+        if not domain or domain not in self.specialists:
+            return state
+
+        specialist = self.specialists[domain]
+
+        # Build the task. Resumption uses the original task description +
+        # accumulated clarifications; fresh delegation uses the current message.
+        if state.active_delegation:
+            task_desc = state.active_delegation["original_task"]
+            clarifications = state.active_delegation.get("clarifications_collected", {})
+        else:
+            task_desc = state.messages[-1].content if state.messages else ""
+            clarifications = {}
+
+        domain_memories = await self._scope_context_for_specialist(specialist, state)
+
+        task = SpecialistTask(
+            task_description=task_desc,
+            customer_id=state.customer_id,
+            conversation_id=state.conversation_id,
+            business_context=state.business_context,
+            domain_memories=domain_memories,
+            prior_clarifications=clarifications,
+        )
+
+        # Execute with hard timeout. Any failure mode → fallback flag.
+        try:
+            result = await asyncio.wait_for(
+                specialist.execute(task),
+                timeout=self._specialist_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Specialist {domain} timed out after {self._specialist_timeout}s")
+            state.collected_info["_specialist_fallback"] = True
+            state.active_delegation = None
+            return state
+        except Exception as e:
+            logger.error(f"Specialist {domain} raised: {e}")
+            state.collected_info["_specialist_fallback"] = True
+            state.active_delegation = None
+            return state
+
+        # Dispatch on what the specialist gave us
+        if result.status == DelegationStatus.FAILED:
+            logger.info(f"Specialist {domain} returned FAILED: {result.error}")
+            state.collected_info["_specialist_fallback"] = True
+            state.active_delegation = None
+            return state
+
+        if result.status == DelegationStatus.NEEDS_CLARIFICATION:
+            # Persist delegation state so next turn can resume
+            state.active_delegation = {
+                "specialist_domain": domain,
+                "original_task": task_desc,
+                "pending_question": result.clarification_question,
+                "clarifications_collected": clarifications,
+            }
+            state.messages.append(AIMessage(content=result.clarification_question))
+            return state
+
+        # COMPLETED — but confidence gate first
+        if result.confidence < 0.4:
+            logger.info(f"Specialist {domain} low confidence ({result.confidence:.2f}); falling back")
+            if result.content:
+                state.collected_info["specialist_hint"] = result.content
+            state.collected_info["_specialist_fallback"] = True
+            state.active_delegation = None
+            return state
+
+        # Weave the result into Sarah's voice — don't just dump raw output
+        woven = await self._weave_specialist_result(result, state.business_context, domain)
+        state.messages.append(AIMessage(content=woven))
+        state.active_delegation = None
+        return state
+
+    async def _scope_context_for_specialist(self, specialist, state: ConversationState) -> List[Dict]:
+        """Retrieve memory entries relevant to this specialist's domain only.
+
+        Customer isolation is already handled by the Mem0 collection name
+        (customer_{id}_memory). This is the second layer: domain isolation.
+        A finance specialist doesn't need social media learnings.
+        """
+        last_message = state.messages[-1].content if state.messages else ""
+        query = f"{specialist.domain} {last_message}"
+        raw = await self.memory.search_business_knowledge(query, limit=10)
+
+        allowed = set(specialist.memory_categories)
+        return [
+            m for m in raw
+            if m.get("metadata", {}).get("category") in allowed
+        ]
+
+    async def _weave_specialist_result(self, result, business_context, domain: str) -> str:
+        """Reformulate a specialist's output in the EA's conversational voice.
+
+        The customer never knows a "specialist agent" exists — Sarah just got
+        very good at social media.
+        """
+        if not self.llm:
+            # Graceful degradation: return the content unreformulated
+            return result.content or "Done."
+
+        data_note = ""
+        if result.structured_data:
+            data_note = f"\n\nData: {json.dumps(result.structured_data)}"
+
+        try:
+            response = await self.llm.ainvoke([HumanMessage(content=(
+                f"You are Sarah, Executive Assistant for {business_context.business_name or 'this business'}. "
+                f"Your {domain.replace('_', ' ')} work just finished. Present this to the customer "
+                f"conversationally — warm, concise, no mention of 'specialists' or 'agents'.\n\n"
+                f"Result: {result.content}{data_note}"
+            ))])
+            return response.content
+        except Exception as e:
+            logger.error(f"Failed to weave specialist result: {e}")
+            return result.content or "Done."
+
     async def handle_customer_interaction(
         self, 
         message: str, 
@@ -1319,7 +1621,19 @@ The key difference: automation tools give you software to configure. I give you 
         try:
             # Get business context
             business_context = await self.memory.get_business_context()
-            
+
+            # Hydrate multi-turn delegation state from Redis. If a specialist
+            # asked a clarifying question last turn, active_delegation carries
+            # the pending domain + original task so this turn can resume.
+            # Redis being down shouldn't abort the interaction — the graph can
+            # still run, we just lose multi-turn resumption for this message.
+            active_delegation = None
+            try:
+                prev_context = await self.memory.get_conversation_context(conversation_id)
+                active_delegation = prev_context.get("active_delegation") if prev_context else None
+            except Exception as e:
+                logger.warning(f"Could not hydrate delegation state (proceeding fresh): {e}")
+
             # Create enhanced conversation state
             state = ConversationState(
                 messages=[HumanMessage(content=message)],
@@ -1327,7 +1641,8 @@ The key difference: automation tools give you software to configure. I give you 
                 customer_id=self.customer_id,
                 conversation_id=conversation_id,
                 current_intent=ConversationIntent.UNKNOWN,
-                conversation_phase=ConversationPhase.INITIAL_CONTACT
+                conversation_phase=ConversationPhase.INITIAL_CONTACT,
+                active_delegation=active_delegation,
             )
             
             # Run through sophisticated LangGraph conversation flow
@@ -1355,7 +1670,8 @@ The key difference: automation tools give you software to configure. I give you 
                     "workflow_created": result.get("workflow_created", False),
                     "intent": result.get("current_intent", {}).value if hasattr(result.get("current_intent", {}), "value") else str(result.get("current_intent", "unknown")),
                     "confidence": result.get("confidence_score", 0.0),
-                    "conversation_depth": result.get("conversation_depth", 0)
+                    "conversation_depth": result.get("conversation_depth", 0),
+                    "active_delegation": result.get("active_delegation"),
                 })
             else:
                 # Handle ConversationState object
@@ -1377,7 +1693,8 @@ The key difference: automation tools give you software to configure. I give you 
                     "workflow_created": result.workflow_created,
                     "intent": result.current_intent.value,
                     "confidence": result.confidence_score,
-                    "conversation_depth": result.conversation_depth
+                    "conversation_depth": result.conversation_depth,
+                    "active_delegation": result.active_delegation,
                 })
             
             logger.info(f"Enhanced EA handled interaction for customer {self.customer_id} via {channel.value}")
