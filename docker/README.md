@@ -21,7 +21,7 @@ docker-compose up -d
 docker-compose down
 ```
 
-### CI/CD (`docker-compose.ci.yml`)
+### CI/CD (`../docker-compose.ci.yml`)
 Minimal services for continuous integration testing:
 - Lightweight test database
 - In-memory cache
@@ -29,10 +29,10 @@ Minimal services for continuous integration testing:
 
 **Usage**:
 ```bash
-docker-compose -f docker/docker-compose.ci.yml up --build
+docker compose -f docker-compose.ci.yml up --build
 ```
 
-### Production (`docker-compose.production.yml`)
+### Production (`../docker-compose.production.yml`)
 Production-ready configuration with:
 - Resource limits
 - Health checks
@@ -42,7 +42,7 @@ Production-ready configuration with:
 
 **Usage**:
 ```bash
-docker-compose -f docker/docker-compose.production.yml up -d
+docker compose -f docker-compose.production.yml up -d
 ```
 
 ### Monitoring (`docker-compose.monitoring.yml`)
@@ -68,10 +68,10 @@ docker-compose up
 docker-compose -f docker-compose.yml -f docker/docker-compose.monitoring.yml up
 
 # CI testing
-docker-compose -f docker/docker-compose.ci.yml up --build
+docker compose -f docker-compose.ci.yml up --build
 
 # Production deployment
-docker-compose -f docker/docker-compose.production.yml up -d
+docker compose -f docker-compose.production.yml up -d
 ```
 
 ## Environment Files

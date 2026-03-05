@@ -19,9 +19,6 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
 from src.security.advanced_isolation_tester import AdvancedIsolationTester
 from src.security.gdpr_compliance_manager import GDPRComplianceManager
 from src.security.security_monitor import SecurityMonitor

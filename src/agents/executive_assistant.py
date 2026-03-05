@@ -33,16 +33,6 @@ from psycopg2.extras import RealDictCursor
 import requests
 import re
 
-# AI/ML Memory Integration
-try:
-    from .memory.ea_memory_integration import EAMemoryIntegration
-    from .ai_ml.business_learning_engine import BusinessLearningEngine
-    from .ai_ml.workflow_template_matcher import WorkflowTemplateMatcher
-    AI_ML_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"AI/ML memory features not available: {e}")
-    AI_ML_AVAILABLE = False
-
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
