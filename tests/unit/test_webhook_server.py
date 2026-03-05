@@ -151,6 +151,29 @@ class TestIncomingMessageFlow:
         sent_body = provider.send_text.call_args.kwargs["body"]
         assert sent_body == "I'm having trouble processing that. Give me a moment."
 
+    def test_send_failure_still_returns_200(self):
+        """Provider send error must not propagate — Twilio would retry on 5xx."""
+        incoming = IncomingMessage(
+            provider_message_id="SM_in_2",
+            from_number="+15551234567",
+            to_number="+14155238886",
+            body="hi",
+        )
+        mgr, provider = _manager_with_mock_provider(parse_result=[incoming])
+        provider.send_text = AsyncMock(side_effect=Exception("network down"))
+        ea = _ea_handler(response="reply text")
+        app = build_app(manager=mgr, ea_handler=ea)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/webhook/whatsapp/cust_a", content=b"x",
+            headers={"X-Twilio-Signature": "sig"},
+        )
+
+        assert resp.status_code == 200
+        assert ea.call_count == 1  # EA ran successfully
+        assert provider.send_text.call_count == 1  # send was attempted
+
 
 class TestStatusCallbackFlow:
     def test_status_update_stored_ea_not_called(self):

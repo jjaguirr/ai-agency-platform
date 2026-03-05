@@ -103,6 +103,14 @@ class TestTwilioSignatureValidation:
         )
         assert result is True
 
+    def test_non_utf8_body_rejected(self):
+        # Malformed body bytes (invalid UTF-8) — must not crash, must reject.
+        result = self._provider().validate_signature(
+            url=self.WEBHOOK_URL, body=b"\xff\xfe\x00\x01",
+            headers={"X-Twilio-Signature": "anysig"},
+        )
+        assert result is False
+
 
 # --- Webhook parsing tests ------------------------------------------------
 
