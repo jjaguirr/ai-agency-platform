@@ -222,3 +222,103 @@ def explain(workflow: N8nWorkflow, customization: list[str]) -> str:
         lines.extend(f"- {note}" for note in customization)
 
     return "\n".join(lines)
+
+
+# --- result union -----------------------------------------------------------
+
+class Generated(BaseModel):
+    workflow: N8nWorkflow
+    explanation: str
+    customization_required: list[str]
+
+
+class NeedsClarification(BaseModel):
+    questions: list[str]
+    partial: ParsedProcess
+
+
+class UseTemplate(BaseModel):
+    # Emitted by WorkflowCreator's template fast-path, not by generate().
+    template_id: str
+    confidence: float
+
+
+GenerationResult = Generated | NeedsClarification | UseTemplate
+
+
+# --- parse: description -> ParsedProcess (LLM) ------------------------------
+
+_CONFIDENCE_THRESHOLD = 0.6
+
+
+def _build_parse_prompt(
+    description: str,
+    insights: dict,
+    hint: dict | None,
+) -> str:
+    parts = [
+        "Extract the workflow structure from this customer process description.",
+        "",
+        f"Customer said: {description}",
+    ]
+
+    tools = insights.get("tools_mentioned") or []
+    if tools:
+        parts.append(f"Tools the customer has mentioned: {', '.join(tools)}")
+
+    if hint is not None:
+        parts.append("")
+        parts.append(
+            f"Likely skeleton (use as a starting shape, override where the "
+            f"description differs): {hint}"
+        )
+
+    parts.extend([
+        "",
+        "Populate `gaps` with anything you had to guess. If the description "
+        "is vague, gaps should be long and confidence near zero.",
+    ])
+    return "\n".join(parts)
+
+
+async def parse(
+    description: str,
+    business_insights: dict,
+    template_hint: dict | None,
+    llm,
+) -> ParsedProcess:
+    """Single structured-output LLM call. Caller supplies the model."""
+    prompt = _build_parse_prompt(description, business_insights, template_hint)
+    structured = llm.with_structured_output(ParsedProcess)
+    return await structured.ainvoke(prompt)
+
+
+# --- generate: orchestrator -------------------------------------------------
+
+async def generate(
+    description: str,
+    *,
+    business_insights: dict | None = None,
+    template_hint: dict | None = None,
+    llm,
+) -> Generated | NeedsClarification:
+    """
+    Stateless. One call, one result. On NeedsClarification the EA stashes
+    the partial, merges the customer's answer into a new description, and
+    calls again.
+    """
+    parsed = await parse(description, business_insights or {}, template_hint, llm)
+
+    if parsed.gaps or parsed.confidence < _CONFIDENCE_THRESHOLD:
+        questions = parsed.gaps or [
+            "Can you walk me through the process step by step?"
+        ]
+        return NeedsClarification(questions=questions, partial=parsed)
+
+    workflow, customization = assemble(parsed)
+    explanation = explain(workflow, customization)
+    return Generated(
+        workflow=workflow,
+        explanation=explanation,
+        customization_required=customization,
+    )
