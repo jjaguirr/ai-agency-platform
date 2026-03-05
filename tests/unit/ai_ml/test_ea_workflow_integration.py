@@ -58,7 +58,10 @@ class TestCreateWorkflowNodeGenerated:
     async def test_high_confidence_sets_workflow_created(self, ea, state):
         ea.llm = FakeLLM(returns=ParsedProcess(
             trigger=TriggerSpec(kind="schedule", cron="0 17 * * 5"),
-            steps=[StepSpec(action="export appointments", service="calendly")],
+            steps=[
+                StepSpec(action="export appointments", service="calendly"),
+                StepSpec(action="notify team", service="slack"),
+            ],
             confidence=0.9,
             gaps=[],
         ))
@@ -69,7 +72,10 @@ class TestCreateWorkflowNodeGenerated:
     async def test_explanation_appended_to_messages(self, ea, state):
         ea.llm = FakeLLM(returns=ParsedProcess(
             trigger=TriggerSpec(kind="schedule", cron="0 17 * * 5"),
-            steps=[StepSpec(action="export appointments", service="calendly")],
+            steps=[
+                StepSpec(action="export appointments", service="calendly"),
+                StepSpec(action="notify team", service="slack"),
+            ],
             confidence=0.9,
             gaps=[],
         ))
@@ -84,7 +90,10 @@ class TestCreateWorkflowNodeGenerated:
     async def test_workflow_json_stashed_in_collected_info(self, ea, state):
         ea.llm = FakeLLM(returns=ParsedProcess(
             trigger=TriggerSpec(kind="schedule", cron="0 17 * * 5"),
-            steps=[StepSpec(action="export", service="calendly")],
+            steps=[
+                StepSpec(action="export", service="calendly"),
+                StepSpec(action="ping", service="slack"),
+            ],
             confidence=0.9,
             gaps=[],
         ))
@@ -92,7 +101,7 @@ class TestCreateWorkflowNodeGenerated:
         wf = result_state.collected_info.get("generated_workflow")
         assert wf is not None
         assert "nodes" in wf
-        assert len(wf["nodes"]) == 2  # trigger + 1 step
+        assert len(wf["nodes"]) == 3  # trigger + 2 steps
 
 
 # --- _create_workflow_node: NeedsClarification path -------------------------

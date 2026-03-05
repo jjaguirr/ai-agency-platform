@@ -8,7 +8,7 @@ LangGraph owns the clarification loop.
 """
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # --- parsed process: LLM structured-output schema ---------------------------
@@ -35,6 +35,21 @@ class ParsedProcess(BaseModel):
     steps: list[StepSpec]
     confidence: float = Field(ge=0.0, le=1.0)
     gaps: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_semantics(self) -> "ParsedProcess":
+        # LLM structured output guarantees shape, not sense. Catch the cases
+        # that would otherwise crash assemble() or silently produce garbage.
+        if self.trigger.kind == "schedule" and not self.trigger.cron:
+            raise ValueError("schedule trigger requires cron")
+        n = len(self.steps)
+        for i, step in enumerate(self.steps):
+            for j in step.inputs_from:
+                if not (0 <= j < n) or j == i:
+                    raise ValueError(
+                        f"step {i} inputs_from references invalid step {j}"
+                    )
+        return self
 
 
 # --- assembly: ParsedProcess -> N8nWorkflow ---------------------------------
@@ -309,7 +324,12 @@ async def generate(
     """
     parsed = await parse(description, business_insights or {}, template_hint, llm)
 
-    if parsed.gaps or parsed.confidence < _CONFIDENCE_THRESHOLD:
+    # Overconfidence check: model extracted ≤1 step but claims high
+    # confidence. Real processes have multiple steps; this is almost
+    # certainly under-parsing ("automate my marketing" → 1 vague step).
+    suspicious = parsed.confidence > 0.7 and len(parsed.steps) <= 1
+
+    if parsed.gaps or parsed.confidence < _CONFIDENCE_THRESHOLD or suspicious:
         questions = parsed.gaps or [
             "Can you walk me through the process step by step?"
         ]
