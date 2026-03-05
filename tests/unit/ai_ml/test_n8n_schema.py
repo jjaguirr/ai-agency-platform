@@ -211,3 +211,24 @@ class TestSerialization:
         rebuilt = N8nWorkflow.model_validate(dumped)
         assert rebuilt.name == wf.name
         assert len(rebuilt.nodes) == 3
+
+
+# --- lifted templates as fixtures -------------------------------------------
+
+class TestLiftedTemplates:
+    """The hand-authored n8n templates must pass our own validator."""
+
+    def test_report_generation_template_validates(self):
+        import json
+        from pathlib import Path
+
+        path = Path(__file__).parents[3] / "templates" / "n8n" / "report_generation.json"
+        data = json.loads(path.read_text())
+        wf = N8nWorkflow.model_validate(data)
+
+        assert wf.nodes[0].type == "n8n-nodes-base.scheduleTrigger"
+        node_types = {n.type for n in wf.nodes}
+        assert "n8n-nodes-base.emailSend" in node_types
+        # every non-trigger node is wired — validator already enforces reachability,
+        # here we sanity-check the connection count matches a linear chain
+        assert len(wf.connections) == len(wf.nodes) - 1
