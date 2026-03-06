@@ -480,6 +480,95 @@ class TestExecuteSummaries:
         assert result.summary_for_ea
 
 
+# --- Income classification (sign-flip defense) ------------------------------
+
+class TestIncomeClassification:
+    """The income/expense classifier decides the SIGN of every figure in a
+    cash-flow summary. A misclassification is a 2× error in the net.
+    These tests pin the payment-method and ambiguous-deposit traps."""
+
+    async def _cashflow(self, specialist, retail_ctx, memories):
+        task = SpecialistTask(
+            description="what's my cash flow looking like?",
+            customer_id="c",
+            business_context=retail_ctx,
+            domain_memories=memories,
+        )
+        return await specialist.execute_task(task)
+
+    @pytest.mark.asyncio
+    async def test_paid_by_payment_method_is_expense(self, specialist, retail_ctx):
+        """'paid by credit card' names a payment instrument, not a payer.
+        Naive substring match on 'paid by' would count this as income —
+        a $1,000 swing on the net."""
+        result = await self._cashflow(specialist, retail_ctx, [
+            {"content": "Paid by credit card: $500 for supplies", "score": 0.9},
+        ])
+        p = result.payload
+        assert p["income"] == 0.0
+        assert p["expenses"] == 500.0
+        assert p["net"] == -500.0
+
+    @pytest.mark.asyncio
+    async def test_paid_by_external_party_is_income(self, specialist, retail_ctx):
+        """Contrast: 'paid by client' IS an inflow. The discriminator is
+        what follows 'paid by' — a party vs an instrument."""
+        result = await self._cashflow(specialist, retail_ctx, [
+            {"content": "Invoice paid by client: $5,000 on Feb 1", "score": 0.9},
+        ])
+        p = result.payload
+        assert p["income"] == 5000.0
+        assert p["expenses"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_bare_deposit_is_expense(self, specialist, retail_ctx):
+        """'deposit to landlord' is a security deposit — an outflow.
+        Bare 'deposit' is ambiguous; conservative default is expense."""
+        result = await self._cashflow(specialist, retail_ctx, [
+            {"content": "Made a $1,000 deposit to landlord for the lease", "score": 0.85},
+        ])
+        p = result.payload
+        assert p["income"] == 0.0
+        assert p["expenses"] == 1000.0
+        assert p["category_totals"] == {"rent": 1000.0}
+
+    @pytest.mark.asyncio
+    async def test_directional_deposit_is_income(self, specialist, retail_ctx):
+        """'deposit from customer' has direction — that's explicit inflow."""
+        result = await self._cashflow(specialist, retail_ctx, [
+            {"content": "Deposit from wholesale customer: $2,500", "score": 0.9},
+        ])
+        p = result.payload
+        assert p["income"] == 2500.0
+        assert p["expenses"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_got_paid_is_income(self, specialist, retail_ctx):
+        """'got paid' is unambiguous inflow phrasing."""
+        result = await self._cashflow(specialist, retail_ctx, [
+            {"content": "Got paid $3,000 for the March project", "score": 0.9},
+        ])
+        p = result.payload
+        assert p["income"] == 3000.0
+        assert p["expenses"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_mixed_corpus_correct_net(self, specialist, retail_ctx):
+        """End-to-end: a realistic mix of income, expenses with payment-method
+        mentions, and an ambiguous deposit. The net must be correct."""
+        result = await self._cashflow(specialist, retail_ctx, [
+            {"content": "Invoice paid by client: $4,000", "score": 0.9},      # income
+            {"content": "Paid by card: $250 for office supplies", "score": 0.8},  # expense (trap)
+            {"content": "Security deposit $1,500 for new office", "score": 0.8},  # expense (trap)
+            {"content": "Payment from retainer client: $2,000", "score": 0.9},    # income
+            {"content": "Payroll $3,000 this month", "score": 0.85},          # expense
+        ])
+        p = result.payload
+        assert p["income"] == 6000.0    # 4000 + 2000
+        assert p["expenses"] == 4750.0  # 250 + 1500 + 3000
+        assert p["net"] == 1250.0
+
+
 # --- Parsing boundaries -----------------------------------------------------
 
 class TestParsingBoundaries:
