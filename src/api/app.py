@@ -56,9 +56,17 @@ def create_app(
     return app
 
 
-# Module-level app for `uvicorn src.api.app:app`.
-# Built lazily on first access so importing this module for tests doesn't
-# accidentally construct a real EA pool.
+# --- Production entrypoint -------------------------------------------------
+#
+# `uvicorn src.api.app:app` resolves `app` via PEP 562 __getattr__ below.
+# The name is deliberately NOT bound at module scope — __getattr__ only fires
+# for missing attributes, and we want the heavy default wiring (EA import
+# chain, redis client) to happen lazily so `from src.api.app import create_app`
+# in tests stays fast.
+
+_app_cache: FastAPI | None = None
+
+
 def _build_default_app() -> FastAPI:
     import redis.asyncio as aioredis
 
@@ -73,14 +81,10 @@ def _build_default_app() -> FastAPI:
     )
 
 
-app: FastAPI | None = None
-
-
-def __getattr__(name: str):
-    # PEP 562: lazy module attribute. `uvicorn src.api.app:app` triggers this.
+def __getattr__(name: str) -> Any:
     if name == "app":
-        global app
-        if app is None:
-            app = _build_default_app()
-        return app
+        global _app_cache
+        if _app_cache is None:
+            _app_cache = _build_default_app()
+        return _app_cache
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
