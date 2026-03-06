@@ -93,9 +93,13 @@ class TestAssessOutOfDomain:
         "What's the weather tomorrow?",
         "Can you help me draft a contract?",
     ])
-    def test_low_confidence(self, specialist, retail_ctx, msg):
+    def test_below_routing_threshold(self, specialist, retail_ctx, msg):
+        """Must stay below the registry threshold (0.6), not just 'lowish'.
+        A score of 0.55 would pass a < 0.5 check but still route — the old
+        bound was cargo-culted from test_social_media_specialist.py and
+        doesn't match the actual gate."""
         a = specialist.assess_task(msg, retail_ctx)
-        assert a.confidence < 0.5, f"expected low confidence on: {msg!r}"
+        assert a.confidence < 0.6, f"expected below threshold on: {msg!r}"
 
 
 # --- Assessment: business context influence ---------------------------------
@@ -107,8 +111,12 @@ class TestAssessContextAware:
         with_pain = BusinessContext(
             business_name="X", pain_points=["expense tracking is a mess"]
         )
-        assert specialist.assess_task(msg, with_pain).confidence > \
-               specialist.assess_task(msg, no_pain).confidence
+        base = specialist.assess_task(msg, no_pain).confidence
+        boosted = specialist.assess_task(msg, with_pain).confidence
+        # A relative > check passes on a +0.001 boost. The impl applies
+        # +0.15; floor at 0.1 catches an accidental nerf without pinning
+        # the exact weight.
+        assert boosted - base >= 0.1
 
 
 # --- Execution: expense tracking --------------------------------------------
@@ -129,8 +137,12 @@ class TestExecuteExpenseTracking:
         assert result.domain == "finance"
         assert result.payload["amount"] == 2400.0
         assert result.payload["vendor"] == "Acme Corp"
-        assert result.payload["due_date"] is not None
-        assert result.payload["category"] is not None
+        # due_date: pin the extracted text, not just existence — a parser
+        # returning "true" or trailing junk should fail.
+        assert "March 15" in result.payload["due_date"]
+        # category: no hint in "Acme Corp" → must fall through to the default,
+        # not accidentally match a category substring.
+        assert result.payload["category"] == "operations"
         assert result.summary_for_ea
         assert result.confidence > 0.5
 
@@ -226,6 +238,10 @@ class TestExecuteClarification:
         assert result.clarification_question
         q = result.clarification_question.lower()
         assert "vendor" in q or "who" in q or "from" in q
+        # Already-parsed amount must survive into the clarification
+        # payload — if it's dropped, the multi-turn follow-up has to
+        # re-parse from scratch and the customer repeats themselves.
+        assert result.payload.get("amount") == 500.0
 
     @pytest.mark.asyncio
     async def test_multi_turn_resolves_missing_amount(self, specialist, retail_ctx):
