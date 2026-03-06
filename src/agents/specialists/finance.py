@@ -122,8 +122,26 @@ _DATE_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Income signals in memory content — "invoice paid by client", "payment from", etc.
-_INCOME_HINTS = ["paid by", "received from", "payment from", "revenue", "income", "deposit"]
+# Income signals in memory content. Regex, not substrings — because
+# misclassification here is a SIGN error: a $500 expense mis-tagged as
+# income swings the reported net by $1,000. Small-business ledgers are
+# expense-dominated, so the default is expense and these patterns are
+# the burden of proof for income.
+#
+# The key guard: "paid by <party>" is inflow, but "paid by <instrument>"
+# (credit card, check, wire) is expense metadata. Negative lookahead on
+# payment-method nouns distinguishes the two. Similarly "deposit" alone
+# is ambiguous (security deposit = outflow), so we require direction.
+_PAYMENT_METHODS_RE = r"(?:credit|debit|card|check|cash|wire|ach|bank\s+transfer|venmo|paypal|zelle)\b"
+_INCOME_PATTERNS = [
+    re.compile(rf"\bpaid by\s+(?!{_PAYMENT_METHODS_RE})\w", re.IGNORECASE),
+    re.compile(r"\breceived from\b", re.IGNORECASE),
+    re.compile(r"\bpayment from\b", re.IGNORECASE),
+    re.compile(r"\bgot paid\b", re.IGNORECASE),
+    re.compile(r"\brevenue\b", re.IGNORECASE),
+    re.compile(r"\bincome\b", re.IGNORECASE),
+    re.compile(r"\bdeposit\s+(?:from|received)\b", re.IGNORECASE),
+]
 
 
 class FinanceSpecialist(SpecialistAgent):
@@ -284,7 +302,7 @@ class FinanceSpecialist(SpecialistAgent):
             amt = self._extract_amount(content)
             if amt is None:
                 continue
-            is_income = any(h in content.lower() for h in _INCOME_HINTS)
+            is_income = any(p.search(content) for p in _INCOME_PATTERNS)
             cat = self._categorize(content.lower()) if not is_income else "income"
             entries.append({"amount": amt, "category": cat, "is_income": is_income,
                             "raw": content})
