@@ -121,17 +121,16 @@ testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*", "*Tests"]
 python_functions = ["test_*"]
+# Only plugin-agnostic flags here. Coverage and timeout are opt-in so the
+# suite runs even when dev extras aren't installed. CI invokes:
+#   pytest --cov --cov-fail-under=80 --timeout=30
+# Coverage config lives in [tool.coverage.*] below — activated by --cov.
 addopts = [
     "--strict-markers",
     "--strict-config",
     "--verbose",
     "--tb=short",
-    "--cov=src",
-    "--cov-report=term-missing",
-    "--cov-report=html:htmlcov",
-    "--cov-fail-under=80",
     "--durations=10",
-    "--timeout=30",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
