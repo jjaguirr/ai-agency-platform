@@ -178,6 +178,9 @@ class TestExecuteExpenseTracking:
     async def test_falls_back_to_operations_when_category_unclear(
         self, specialist, retail_ctx
     ):
+        """No category hint in vendor or description → the default, not a
+        guess. A categorizer that returned 'marketing' for everything would
+        pass a truthiness check here; an exact match catches that."""
         task = SpecialistTask(
             description="Track $300 from Unknown Vendor",
             customer_id="c",
@@ -186,8 +189,7 @@ class TestExecuteExpenseTracking:
         )
         result = await specialist.execute_task(task)
         assert result.status == SpecialistStatus.COMPLETED
-        # Some category is assigned — not None, not empty
-        assert result.payload["category"]
+        assert result.payload["category"] == "operations"
 
 
 # --- Execution: clarification flow ------------------------------------------
@@ -360,18 +362,19 @@ class TestRoutingOverlap:
         reg.register(FinanceSpecialist())
         return reg
 
-    def test_instagram_cost_question_not_routed_to_finance(
+    def test_instagram_cost_question_routes_to_social(
         self, registry, retail_ctx
     ):
         """'How much does Instagram advertising cost?' — 'cost' is a finance
-        word but the question is about platform pricing, not the customer's
-        own expenses. Social media owns platform knowledge."""
+        word but the question is about platform pricing. Social media scores
+        ~0.65 (platform + tool boost); finance scores ~0.45 (cost + context)
+        and stays below threshold. If both dropped below 0.6 the old
+        conditional-assert would pass silently — this version won't."""
         match = registry.route(
             "How much does Instagram advertising cost?", retail_ctx
         )
-        # Either social media wins, or neither clears threshold. NOT finance.
-        if match is not None:
-            assert match.specialist.domain != "finance"
+        assert match is not None
+        assert match.specialist.domain == "social_media"
 
     def test_cash_flow_routes_to_finance(self, registry, retail_ctx):
         """Unambiguously finance — social media must score < 0.5 here
@@ -403,17 +406,18 @@ class TestRoutingOverlap:
         assert match is not None
         assert match.specialist.domain == "social_media"
 
-    def test_facebook_roi_deterministic(self, registry, retail_ctx):
-        """'What's my ROI on the Facebook campaign?' — genuinely ambiguous.
-        We don't assert WHICH specialist wins, only that routing is
-        deterministic and doesn't misfire as strategic-to-EA (this is an
-        operational data question, not advisory)."""
-        m1 = registry.route("What's my ROI on the Facebook campaign?", retail_ctx)
-        m2 = registry.route("What's my ROI on the Facebook campaign?", retail_ctx)
-        # Deterministic
-        assert (m1 is None) == (m2 is None)
-        if m1 is not None:
-            assert m1.specialist.domain == m2.specialist.domain
+    def test_facebook_roi_routes_to_social(self, registry, retail_ctx):
+        """'What's my ROI on the Facebook campaign?' — semantically
+        ambiguous, but the keyword arithmetic is not: Facebook (+0.45) plus
+        the customer's Instagram in current_tools (+0.2) gives social 0.65.
+        Finance's 'roi' (+0.2) + context (+0.25) lands at 0.45, below
+        threshold. Pinning the winner documents the weight regime; if
+        someone rebalances keywords, this tells them what moved."""
+        match = registry.route(
+            "What's my ROI on the Facebook campaign?", retail_ctx
+        )
+        assert match is not None
+        assert match.specialist.domain == "social_media"
 
     def test_expense_tracking_routes_to_finance_not_social(
         self, registry, retail_ctx
