@@ -56,6 +56,21 @@ class TestTokenRoundTrip:
         with pytest.raises(InvalidTokenError):
             decode_token(bad)
 
+    @pytest.mark.parametrize("bad_cid", ["", "   ", None, 123, []])
+    def test_token_with_degenerate_customer_id_rejected(self, jwt_secret, bad_cid):
+        """
+        decode_token must reject tokens where customer_id is present but
+        not a usable tenant identifier. This is the last-line defense if
+        create_token is ever called from a path that bypasses the
+        ProvisionRequest schema (CLI tool, admin endpoint, test fixture).
+        Without this check, customer_id="" becomes a shared EA registry
+        key → tenant isolation breaks silently.
+        """
+        bad = jwt.encode({"customer_id": bad_cid, "exp": time.time() + 60},
+                         jwt_secret, algorithm="HS256")
+        with pytest.raises(InvalidTokenError):
+            decode_token(bad)
+
 
 # --- FastAPI dependency ---------------------------------------------------
 

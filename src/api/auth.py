@@ -57,8 +57,13 @@ def decode_token(token: str) -> dict[str, Any]:
     except JWTError as e:
         raise InvalidTokenError(str(e)) from e
 
-    if "customer_id" not in claims:
-        raise InvalidTokenError("token missing customer_id claim")
+    cid = claims.get("customer_id")
+    # Key presence alone isn't enough: a token with customer_id="" would
+    # pass `in` but hand an empty string to the EA registry, where it
+    # becomes a shared cache key — tenant isolation broken. Reject
+    # anything that isn't a non-empty string.
+    if not isinstance(cid, str) or not cid.strip():
+        raise InvalidTokenError("token missing or empty customer_id claim")
 
     return claims
 
