@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Protocol, TYPE_CHECKING
 
 from src.agents.base.specialist import (
     SpecialistAgent,
@@ -33,16 +33,32 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# --- External seam ----------------------------------------------------------
+
+class StockPriceClient(Protocol):
+    """Contract for live-quote providers. The specialist depends on this,
+    never on a transport library. Concrete clients (FinnhubClient, etc.)
+    live outside this module and conform by structure — no inheritance.
+
+    Contract: never raise. Transport/auth failures return {}, unknown
+    tickers are simply absent from the result. The specialist treats
+    missing prices as degradation, not error."""
+
+    async def fetch(self, tickers: List[str]) -> Dict[str, float]:
+        ...
+
+
 # --- Assessment vocabulary --------------------------------------------------
 
 # Unambiguous signals — phrases with a single meaning. One of these alone
 # is enough to route regardless of context.
-_UNAMBIGUOUS_PHRASES = ["cash flow", "invoice", "payroll"]
+_UNAMBIGUOUS_PHRASES = ["cash flow", "invoice", "payroll", "portfolio", "stock holdings"]
 # Strong signals: explicit finance actions or artefacts. These need at
 # least one additional signal (or context boost) to clear the threshold.
 _STRONG_PHRASES = [
     "expense", "spending", "spend", "spent",
     "revenue", "profit", "budget",
+    "shares", "valuation",
 ]
 # Verbs that mean "record a transaction" — these dominate platform keywords
 # when both appear ("track $500 spent on Facebook ads" → finance, not social).
@@ -52,7 +68,8 @@ _TRACK_VERBS = ["track", "log", "record", "paid", "pay for"]
 _WEAK_PHRASES = [
     "cost", "money", "income", "receipt", "bill", "payment",
     "tax", "deduction", "balance", "prices", "loan", "accountant",
-    "bookkeep", "roi", "lease", "equipment",
+    "bookkeep", "roi", "lease", "equipment", "stock",
+    "holdings", "ticker",
 ]
 
 # Advisory / business-judgment — same pattern as social media, tuned for
@@ -71,6 +88,8 @@ _STRATEGIC_PATTERNS = [
     r"\blease or buy\b",
     r"\bhir(e|ing) an? (accountant|bookkeeper)\b",
     r"\bwhat('s| is) my roi\b",
+    r"\bshould i sell\b",
+    r"\bshould i buy\b",
 ]
 
 # Finance tooling in customer's stack — confidence boost when present.
@@ -146,6 +165,9 @@ _INCOME_PATTERNS = [
 
 class FinanceSpecialist(SpecialistAgent):
 
+    def __init__(self, stock_client: Optional[StockPriceClient] = None):
+        self._stock_client = stock_client
+
     @property
     def domain(self) -> str:
         return "finance"
@@ -211,6 +233,8 @@ class FinanceSpecialist(SpecialistAgent):
         text = task.description.lower()
 
         # Route to the right handler based on intent.
+        if self._is_portfolio_query(text):
+            return await self._handle_portfolio_valuation(task)
         if self._is_summary_query(text):
             return self._handle_summary(task)
         return self._handle_expense_entry(task)
@@ -226,6 +250,13 @@ class FinanceSpecialist(SpecialistAgent):
             "spending looking",
         ]
         return any(cue in text for cue in summary_cues)
+
+    def _is_portfolio_query(self, text: str) -> bool:
+        portfolio_cues = [
+            "portfolio", "my holdings", "stock holdings",
+            "my shares", "my stocks", "valuation on",
+        ]
+        return any(cue in text for cue in portfolio_cues)
 
     # --- Expense entry ------------------------------------------------------
 
@@ -379,6 +410,123 @@ class FinanceSpecialist(SpecialistAgent):
             confidence=0.7,
             summary_for_ea=summary,
         )
+
+    # --- Portfolio valuation ------------------------------------------------
+
+    # "100 shares of AAPL", "50 MSFT", "bought 200 GOOGL" — 2-5 caps for
+    # the ticker to avoid matching "I", "A", etc. Single-char tickers (F, T)
+    # won't match; acceptable tradeoff for precision.
+    _HOLDING_RE = re.compile(
+        r"(?:bought|own|hold|have|picked up)?\s*"
+        r"(\d[\d,]*)\s+"
+        r"(?:shares?\s+of\s+)?"
+        r"([A-Z]{2,5})\b"
+    )
+
+    async def _handle_portfolio_valuation(self, task: SpecialistTask) -> SpecialistResult:
+        memories = task.domain_memories or []
+        holdings = self._parse_holdings(memories)
+
+        # No holdings on record → empty portfolio, not an error.
+        if not holdings:
+            return SpecialistResult(
+                status=SpecialistStatus.COMPLETED,
+                domain=self.domain,
+                payload={
+                    "positions": [],
+                    "total_value": 0.0,
+                    "quotes_unavailable": False,
+                    "unpriced_tickers": [],
+                    "memories_consulted": len(memories),
+                },
+                confidence=0.7,
+                summary_for_ea=(
+                    "I don't have any stock holdings on record — let me know what "
+                    "positions you hold and I'll track them going forward."
+                ),
+            )
+
+        tickers = [h["ticker"] for h in holdings]
+
+        # Fetch via the seam. No client or empty response → degrade.
+        quotes: Dict[str, float] = {}
+        if self._stock_client is not None:
+            quotes = await self._stock_client.fetch(tickers)
+
+        # Build positions — price is None when quote is missing.
+        positions: List[Dict[str, Any]] = []
+        unpriced: List[str] = []
+        total_value = 0.0
+        for h in holdings:
+            price = quotes.get(h["ticker"])
+            value = price * h["shares"] if price is not None else None
+            positions.append({
+                "ticker": h["ticker"],
+                "shares": h["shares"],
+                "price": price,
+                "value": value,
+            })
+            if price is None:
+                unpriced.append(h["ticker"])
+            else:
+                total_value += value
+
+        # Classify the quote situation for payload schema + summary wording.
+        all_unpriced = len(unpriced) == len(holdings)
+        any_unpriced = len(unpriced) > 0
+
+        if all_unpriced:
+            payload_total: Optional[float] = None
+            holdings_str = ", ".join(f"{p['shares']} {p['ticker']}" for p in positions)
+            summary = (
+                f"I can see your holdings ({holdings_str}) "
+                "but I don't have live prices right now — can't give you a valuation."
+            )
+        elif any_unpriced:
+            payload_total = total_value
+            priced_count = len(holdings) - len(unpriced)
+            summary = (
+                f"Partial valuation: ${total_value:,.2f} across {priced_count} "
+                f"priced position{'s' if priced_count != 1 else ''} "
+                f"(no quote for {', '.join(unpriced)})."
+            )
+        else:
+            payload_total = total_value
+            summary = (
+                f"Portfolio worth ${total_value:,.2f} across "
+                f"{len(positions)} position{'s' if len(positions) != 1 else ''}."
+            )
+
+        return SpecialistResult(
+            status=SpecialistStatus.COMPLETED,
+            domain=self.domain,
+            payload={
+                "positions": positions,
+                "total_value": payload_total,
+                "quotes_unavailable": all_unpriced,
+                "unpriced_tickers": unpriced,
+                "memories_consulted": len(memories),
+            },
+            confidence=0.8 if not any_unpriced else 0.6,
+            summary_for_ea=summary,
+        )
+
+    def _parse_holdings(self, memories: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Extract (ticker, shares) pairs from memory content. Non-holding
+        memories (rent, expenses) won't match the regex and are ignored."""
+        holdings: List[Dict[str, Any]] = []
+        for mem in memories:
+            content = mem.get("content", "")
+            m = self._HOLDING_RE.search(content)
+            if not m:
+                continue
+            shares_raw, ticker = m.group(1), m.group(2)
+            try:
+                shares = int(shares_raw.replace(",", ""))
+            except ValueError:
+                continue
+            holdings.append({"ticker": ticker, "shares": shares})
+        return holdings
 
     # --- Extraction helpers -------------------------------------------------
 
