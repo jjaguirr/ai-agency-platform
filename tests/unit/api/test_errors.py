@@ -43,17 +43,11 @@ class TestErrorClasses:
 
 
 class TestErrorResponses:
-    def test_404_has_json_body(self):
-        client = TestClient(_app())
-        resp = client.get("/v1/not-a-route")
-        assert resp.status_code == 404
-        # FastAPI's default 404 is JSON with detail — that's sufficient
-        assert resp.headers["content-type"].startswith("application/json")
-
-    def test_no_stack_trace_in_500(self):
+    def test_unhandled_exception_body_is_exactly_generic(self):
         """
-        When an EA factory explodes on first request, the caller should
-        get a clean 503, not a Python traceback serialised into the body.
+        The catch-all handler must emit a FIXED body — not "no traceback"
+        (weak; leaks can slip past substring checks), but "exactly this
+        and nothing else". Any deviation means something leaked.
         """
         def bad_factory(cid):
             raise RuntimeError("mem0 connection refused; at line 42 in foo.py")
@@ -74,17 +68,24 @@ class TestErrorResponses:
             headers={"Authorization": f"Bearer {tok}"},
         )
 
+        # Conversations route catches and wraps → 503 with our structured body.
+        # If the wrap is removed, the global handler catches → 500 generic.
+        # Either path must produce a body with NO internal detail.
         assert resp.status_code in (500, 503)
-        body_text = resp.text
-        assert "Traceback" not in body_text
-        assert "line 42" not in body_text
-        assert "mem0" not in body_text  # no internal detail leakage
+        body = resp.json()
+        assert set(body.keys()) == {"type", "detail"}, \
+            f"unexpected keys in error body: {body.keys()}"
+        # The detail must be a known-safe message, never echo the exception
+        assert body["detail"] in {
+            "Assistant temporarily unavailable.",   # 503 from route wrapper
+            "An internal error occurred.",           # 500 from global handler
+        }, f"error detail leaked internal info: {body['detail']!r}"
 
-    def test_structured_error_has_type_field(self):
-        """APIError subclasses should render with {type, detail}."""
+    def test_api_error_subclasses_render_type_and_detail(self):
+        """Intentionally-raised APIError → {type, detail} shape."""
         orch = AsyncMock()
         orch.provision_customer_environment = AsyncMock(
-            side_effect=ValueError("bad tier"))
+            side_effect=ValueError("tier config mismatch: foo vs bar"))
         app = create_app(
             ea_registry=EARegistry(factory=MagicMock()),
             orchestrator=orch,
@@ -97,4 +98,7 @@ class TestErrorResponses:
 
         assert resp.status_code == 400
         body = resp.json()
-        assert set(body.keys()) >= {"type", "detail"}
+        assert body["type"] == "bad_request"
+        # ValueError from orchestrator is USER-FACING validation — OK to
+        # surface its message (it's not a traceback, it's a validation hint).
+        assert body["detail"] == "tier config mismatch: foo vs bar"

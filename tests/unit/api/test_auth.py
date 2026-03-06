@@ -97,11 +97,13 @@ class TestAuthDependency:
         resp = client.get("/whoami", headers={"Authorization": f"Bearer {tok}"})
         assert resp.status_code == 401
 
-    def test_401_body_is_structured_not_traceback(self):
+    def test_401_body_is_fixed_message(self):
+        """
+        Invalid tokens get a fixed detail string. We don't echo jose's
+        JWTError message — it can include token fragments or algorithm
+        hints. Exact-match beats substring-check for leak detection.
+        """
         client = TestClient(_mini_app())
         resp = client.get("/whoami", headers={"Authorization": "Bearer garbage"})
         assert resp.status_code == 401
-        body = resp.json()
-        # Should carry a detail field, not a python traceback
-        assert "detail" in body
-        assert "Traceback" not in str(body)
+        assert resp.json() == {"detail": "Invalid or expired token"}

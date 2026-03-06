@@ -50,10 +50,11 @@ class EARegistry:
             # Double-check: another task may have built while we waited
             if customer_id in self._instances:
                 return self._instances[customer_id]
-            # Factory is sync (EA.__init__ does blocking I/O internally).
-            # For now, call directly; if this becomes a latency problem
-            # push to an executor.
-            ea = self._factory(customer_id)
+            # Factory is sync and does blocking I/O (EA.__init__ connects
+            # to Redis + mem0, compiles LangGraph). Run it off-loop so a
+            # slow build for customer A doesn't stall requests for B.
+            loop = asyncio.get_running_loop()
+            ea = await loop.run_in_executor(None, self._factory, customer_id)
             self._instances[customer_id] = ea
             return ea
 

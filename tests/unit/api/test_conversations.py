@@ -96,6 +96,35 @@ class TestConversationHappyPath:
 
 
 class TestConversationAuth:
+    def test_token_customer_id_scopes_ea_lookup(self, mock_ea):
+        """
+        The EA instance the request is routed to MUST be keyed by the
+        customer_id in the token — not by a request body field, not by
+        a default. This is the tenant isolation boundary.
+        """
+        requested_customers: list[str] = []
+
+        def tracking_factory(cid):
+            requested_customers.append(cid)
+            return mock_ea
+
+        app = create_app(
+            ea_registry=EARegistry(factory=tracking_factory),
+            orchestrator=AsyncMock(),
+            whatsapp_manager=MagicMock(),
+            redis_client=AsyncMock(),
+        )
+        client = TestClient(app)
+        tok = create_token("cust_from_token")
+
+        client.post(
+            "/v1/conversations/message",
+            json={"message": "hi", "channel": "chat"},
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+
+        assert requested_customers == ["cust_from_token"]
+
     def test_no_token_returns_401(self, mock_ea):
         app = _app_with_ea(mock_ea)
         client = TestClient(app)
@@ -184,7 +213,9 @@ class TestConversationDegradedMode:
 
         assert resp.status_code == 503
         body = resp.json()
-        assert "type" in body
-        assert "detail" in body
-        assert "Traceback" not in str(body)
-        assert "redis gone" not in str(body)  # no internal error leakage
+        # Exact-match the body shape and detail. Substring blacklists
+        # ("Traceback not in", "redis not in") miss novel leaks.
+        assert body == {
+            "type": "service_unavailable",
+            "detail": "Assistant temporarily unavailable.",
+        }

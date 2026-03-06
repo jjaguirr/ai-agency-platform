@@ -73,39 +73,83 @@ class TestEARegistryConcurrency:
         assert all(r is results[0] for r in results)
         assert factory_sync.call_count == 1
 
-    async def test_concurrent_gets_different_customers_dont_block(self):
+    async def test_different_customers_build_in_parallel(self):
         """
-        Locking must be per-customer, not global. Two customers arriving
-        simultaneously should both get served without one waiting for
-        the other's EA to finish building.
+        Per-customer locking means cust_b's EA can build while cust_a's
+        is still building. If the registry used a global lock, or called
+        the factory on the event loop thread, cust_b would serialize
+        behind cust_a.
+
+        Signal design: cust_a sets `a_returned` IMMEDIATELY before
+        returning; cust_b checks that flag. An Event.wait(timeout) that
+        times out doesn't set the event — we can't use that as the
+        "a is done" signal or the test becomes tautological.
         """
         import threading
-        build_order: list[str] = []
-        customer_a_started = threading.Event()
+
+        a_entered = threading.Event()
+        a_returned = threading.Event()
+        a_may_finish = threading.Event()
+        b_ran_while_a_still_inside = threading.Event()
 
         def factory(cid):
-            build_order.append(f"start:{cid}")
             if cid == "cust_a":
-                customer_a_started.set()
-                # Hold the lock long enough that a global lock would
-                # observably serialize cust_b behind us.
-                import time as _t; _t.sleep(0.05)
-            build_order.append(f"end:{cid}")
+                a_entered.set()
+                a_may_finish.wait(timeout=2.0)
+                a_returned.set()  # <-- signal we're about to return
+            else:  # cust_b
+                if a_entered.is_set() and not a_returned.is_set():
+                    b_ran_while_a_still_inside.set()
             return MagicMock(customer_id=cid)
 
         registry = EARegistry(factory=factory)
 
+        async def get_b_after_a_starts():
+            while not a_entered.is_set():
+                await asyncio.sleep(0.001)
+            return await registry.get("cust_b")
+
+        async def release_a_once_b_has_run():
+            for _ in range(200):
+                if b_ran_while_a_still_inside.is_set():
+                    break
+                await asyncio.sleep(0.005)
+            a_may_finish.set()
+
         await asyncio.gather(
             registry.get("cust_a"),
-            registry.get("cust_b"),
+            get_b_after_a_starts(),
+            release_a_once_b_has_run(),
         )
 
-        # If locking were global, cust_b's start would strictly follow
-        # cust_a's end. With per-customer locking, both can proceed.
-        # We assert both were built — the ordering assertion is loosened
-        # because asyncio scheduling under sync factories can vary.
-        assert "start:cust_a" in build_order
-        assert "start:cust_b" in build_order
+        assert b_ran_while_a_still_inside.is_set(), (
+            "cust_b should have entered its factory while cust_a was still "
+            "building — either the lock is global or the factory blocks the loop"
+        )
+
+    async def test_factory_exception_does_not_poison_lock(self):
+        """
+        If the first build attempt raises, a subsequent get() for the
+        same customer should retry — not deadlock on a held lock, not
+        return a cached exception.
+        """
+        attempt = {"n": 0}
+
+        def flaky_factory(cid):
+            attempt["n"] += 1
+            if attempt["n"] == 1:
+                raise ConnectionError("mem0 unavailable")
+            return MagicMock(customer_id=cid)
+
+        registry = EARegistry(factory=flaky_factory)
+
+        with pytest.raises(Exception):
+            await registry.get("cust_retry")
+
+        # Second attempt should succeed — lock released, no poisoned cache
+        ea = await registry.get("cust_retry")
+        assert ea.customer_id == "cust_retry"
+        assert attempt["n"] == 2
 
 
 class TestEARegistryManagement:
