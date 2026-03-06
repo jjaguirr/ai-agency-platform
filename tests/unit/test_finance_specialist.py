@@ -12,6 +12,7 @@ Two things this file pins down:
    sure finance doesn't over-claim.
 """
 import pytest
+from unittest.mock import AsyncMock
 
 from src.agents.specialists.finance import FinanceSpecialist
 from src.agents.specialists.social_media import SocialMediaSpecialist
@@ -459,3 +460,114 @@ class TestFrameworkCompatibility:
 
     def test_domain_identifier_is_stable(self, specialist):
         assert specialist.domain == "finance"
+
+
+# --- Assessment: stock queries ----------------------------------------------
+
+class TestAssessStockQuery:
+    @pytest.mark.parametrize("msg", [
+        "What's the stock price of AAPL?",
+        "Check the share price for MSFT",
+    ])
+    def test_stock_phrases_clear_threshold_alone(self, specialist, retail_ctx, msg):
+        """'stock price' / 'share price' are anchor-tier — same argument
+        as 'cash flow': bigrams with zero cross-domain meaning. Must
+        clear 0.6 without help from context or other keywords."""
+        a = specialist.assess_task(msg, retail_ctx)
+        assert a.confidence >= 0.6, f"expected routable on: {msg!r}"
+        assert not a.is_strategic
+
+    def test_bare_ticker_does_not_route(self, specialist, retail_ctx):
+        """'What's AAPL at?' — ticker but no stock phrase → 0.0, falls
+        to EA. This is a regression guard: bare-ticker regex at the
+        routing layer would false-positive on ROI, CEO, API, ASAP.
+        Passes at RED because it pins the *absence* of a feature."""
+        a = specialist.assess_task("What's AAPL at?", retail_ctx)
+        assert a.confidence < 0.6
+
+
+# --- Execution: stock quotes ------------------------------------------------
+
+class TestExecuteStockQuote:
+    @pytest.mark.asyncio
+    async def test_returns_price_for_known_ticker(self, retail_ctx):
+        """Phrase + ticker + configured client → COMPLETED with the
+        price wired through. Also verifies the extracted ticker is what
+        actually gets passed to the client — if parsing grabs 'APL' or
+        'AAPL?' the assert_awaited_once_with catches it."""
+        stock = AsyncMock()
+        stock.quote.return_value = 150.23
+        specialist = FinanceSpecialist(stock_api=stock)
+
+        task = SpecialistTask(
+            description="What's the stock price of AAPL?",
+            customer_id="c",
+            business_context=retail_ctx,
+            domain_memories=[],
+        )
+        result = await specialist.execute_task(task)
+
+        assert result.status == SpecialistStatus.COMPLETED
+        assert result.domain == "finance"
+        assert result.payload["ticker"] == "AAPL"
+        assert result.payload["price"] == 150.23
+        stock.quote.assert_awaited_once_with("AAPL")
+
+    @pytest.mark.asyncio
+    async def test_fails_when_client_not_configured(self, specialist, retail_ctx):
+        """Default FinanceSpecialist() has stock_api=None. Stock query →
+        FAILED with a not-configured error, not an AttributeError on
+        NoneType."""
+        task = SpecialistTask(
+            description="What's the stock price of AAPL?",
+            customer_id="c",
+            business_context=retail_ctx,
+            domain_memories=[],
+        )
+        result = await specialist.execute_task(task)
+
+        assert result.status == SpecialistStatus.FAILED
+        assert result.error
+        assert "configured" in result.error.lower() or \
+               "wired" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_asks_for_ticker_when_missing(self, retail_ctx):
+        """'What's the stock price right now?' — phrase but no ticker.
+        Ask, don't guess. Client must not be called."""
+        stock = AsyncMock()
+        specialist = FinanceSpecialist(stock_api=stock)
+
+        task = SpecialistTask(
+            description="What's the stock price right now?",
+            customer_id="c",
+            business_context=retail_ctx,
+            domain_memories=[],
+        )
+        result = await specialist.execute_task(task)
+
+        assert result.status == SpecialistStatus.NEEDS_CLARIFICATION
+        assert result.clarification_question
+        q = result.clarification_question.lower()
+        assert "ticker" in q or "which" in q or "symbol" in q
+        stock.quote.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_wraps_client_exception_as_failed(self, retail_ctx):
+        """Client raises (timeout, bad ticker, 500) → FAILED with the
+        error surfaced. An unhandled exception bubbling to the EA would
+        blow up the delegation loop."""
+        stock = AsyncMock()
+        stock.quote.side_effect = RuntimeError("upstream timeout")
+        specialist = FinanceSpecialist(stock_api=stock)
+
+        task = SpecialistTask(
+            description="What's the stock price of AAPL?",
+            customer_id="c",
+            business_context=retail_ctx,
+            domain_memories=[],
+        )
+        result = await specialist.execute_task(task)
+
+        assert result.status == SpecialistStatus.FAILED
+        assert "upstream timeout" in result.error
