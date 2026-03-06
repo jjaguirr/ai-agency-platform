@@ -101,8 +101,11 @@ class TestAssessContextAware:
         no_tools = BusinessContext(business_name="X", current_tools=[])
         with_tools = BusinessContext(business_name="X", current_tools=["Instagram", "Facebook"])
 
-        assert specialist.assess_task(msg, with_tools).confidence > \
-               specialist.assess_task(msg, no_tools).confidence
+        base = specialist.assess_task(msg, no_tools).confidence
+        boosted = specialist.assess_task(msg, with_tools).confidence
+        # Bare > passes on a +0.001 boost. Impl applies +0.2; floor at
+        # 0.1 catches an accidental nerf without pinning the exact weight.
+        assert boosted - base >= 0.1
 
 
 # --- Execution: completed ---------------------------------------------------
