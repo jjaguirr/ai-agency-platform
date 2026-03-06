@@ -11,8 +11,15 @@ from typing import Any, Callable, Optional
 
 from fastapi import FastAPI
 
+from fastapi.exceptions import RequestValidationError
+
 from .ea_registry import EARegistry
-from .errors import APIError, handle_api_error, handle_unexpected
+from .errors import (
+    APIError,
+    handle_api_error,
+    handle_unexpected,
+    handle_validation_error,
+)
 from .routes import conversations, health, provisioning, webhooks
 
 logger = logging.getLogger(__name__)
@@ -52,8 +59,11 @@ def create_app(
     app.state.whatsapp_manager = whatsapp_manager
     app.state.redis_client = redis_client
 
-    # Structured error handling. APIError → {type, detail}. Everything
-    # else → generic 500, logged, no leakage.
+    # Structured error handling. All paths converge on {type, detail}.
+    # Order: specific-first so the Exception catch-all doesn't shadow
+    # more precise matches (Starlette walks the MRO; Exception wins
+    # if registered first and nothing narrower matches).
+    app.add_exception_handler(RequestValidationError, handle_validation_error)
     app.add_exception_handler(APIError, handle_api_error)
     app.add_exception_handler(Exception, handle_unexpected)
 

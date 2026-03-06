@@ -119,3 +119,104 @@ class TestErrorResponses:
         assert resp.status_code == 404
         # And the body would be our generic "internal error" — it shouldn't be.
         assert resp.json().get("type") != "internal_error"
+
+
+class TestValidationErrorShape:
+    """
+    Schema validation failures (Pydantic → FastAPI's RequestValidationError)
+    must conform to the same {type, detail} shape as every other error the
+    API returns — and must NOT leak the regex pattern or echo the input
+    value. Without a custom handler, FastAPI's default 422 body exposes
+    both (plus a `ctx` dict with the raw pattern).
+    """
+
+    @pytest.fixture
+    def client(self):
+        return TestClient(_app())
+
+    def test_422_body_has_type_and_detail_shape(self, client):
+        """Missing required field → 422 in our standard shape."""
+        resp = client.post(
+            "/v1/customers/provision",
+            json={"tier": "not-a-real-tier"},  # Literal violation
+        )
+        assert resp.status_code == 422
+        body = resp.json()
+        # Exact keys — not FastAPI's default {"detail": [{...}]} with
+        # nested loc/msg/input/ctx. Our shape or nothing.
+        assert set(body.keys()) == {"type", "detail"}
+        assert body["type"] == "validation_error"
+        assert isinstance(body["detail"], str)
+
+    def test_422_does_not_leak_regex_pattern(self, client):
+        """
+        Injection attempt hits the customer_id pattern constraint.
+        FastAPI's default would include `"pattern": "^[a-z0-9]..."`
+        in the response — tells an attacker exactly what to craft next.
+        Our handler must strip that.
+        """
+        resp = client.post(
+            "/v1/customers/provision",
+            json={"tier": "basic", "customer_id": "../../etc/passwd"},
+        )
+        assert resp.status_code == 422
+        body_str = str(resp.json())
+        # No fragment of the pattern should appear
+        assert "[a-z0-9]" not in body_str
+        assert "pattern" not in body_str.lower()
+        assert "{2,47}" not in body_str
+
+    def test_422_does_not_echo_input_value(self, client):
+        """
+        Pydantic v2 defaults include `"input": <rejected-value>` in the
+        error. That means our "injection blocked" test would pass the
+        422 status check while the response still contains the attack
+        payload. Not a leak per se (client sent it), but it violates
+        the "fixed, controlled error messages" policy.
+
+        Test input needs to FAIL the regex (so 422 fires) while being
+        distinctive enough to grep for in the response. Uppercase fails
+        the pattern; the marker string is unlikely to collide with any
+        legitimate error text.
+        """
+        marker = "MarkerXYZ9q7w-unlikely-collision"
+        resp = client.post(
+            "/v1/customers/provision",
+            json={"tier": "basic", "customer_id": marker},
+        )
+        assert resp.status_code == 422
+        assert marker not in str(resp.json())
+
+    def test_422_still_tells_client_which_field(self, client):
+        """
+        Not leaking internals doesn't mean being unhelpfully opaque.
+        The client should learn WHICH field failed so they can fix
+        their request — just not the regex or their own echoed input.
+        """
+        resp = client.post(
+            "/v1/customers/provision",
+            json={"tier": "basic", "customer_id": "../../etc/passwd"},
+        )
+        assert resp.status_code == 422
+        assert "customer_id" in resp.json()["detail"]
+
+    @pytest.fixture
+    def auth_headers(self):
+        return {"Authorization": f"Bearer {create_token('cust_val')}"}
+
+    def test_422_shape_consistent_across_routes(self, client, auth_headers):
+        """
+        Conversations route has its own schema (MessageRequest). Its
+        validation errors must have the same shape — the handler is
+        global, not per-route.
+        """
+        resp = client.post(
+            "/v1/conversations/message",
+            json={"message": "hi", "channel": "smoke-signals"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 422
+        body = resp.json()
+        assert set(body.keys()) == {"type", "detail"}
+        assert body["type"] == "validation_error"
+        assert "channel" in body["detail"]
