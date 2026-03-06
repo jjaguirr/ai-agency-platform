@@ -3,6 +3,7 @@ Test-Driven Development for Mem0 Memory Layer Integration
 Tests per-customer isolation, performance, and business memory operations
 """
 
+import os
 import pytest
 import asyncio
 import json
@@ -10,6 +11,15 @@ import uuid
 import time
 from datetime import datetime
 from typing import Dict, List, Any
+
+# mem0_manager hard-imports mem0, asyncpg, redis at module level.
+pytest.importorskip("mem0")
+pytest.importorskip("asyncpg")
+
+pytestmark = pytest.mark.skipif(
+    not os.getenv("RUN_INTEGRATION_TESTS"),
+    reason="requires live mem0/Redis/Postgres; set RUN_INTEGRATION_TESTS=1",
+)
 
 from src.memory.mem0_manager import EAMemoryManager, OptimizedMemoryRouter, maintain_conversation_continuity
 from src.memory.isolation_validator import MemoryIsolationValidator

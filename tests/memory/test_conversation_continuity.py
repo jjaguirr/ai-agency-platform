@@ -5,11 +5,21 @@ Tests the specific Phase-1 requirement for conversation continuity across
 communication channels while maintaining business context and learning state.
 """
 
+import os
 import pytest
 import asyncio
 import uuid
 from datetime import datetime
 from typing import Dict, List, Any
+
+# mem0_manager hard-imports mem0, asyncpg, redis at module level.
+pytest.importorskip("mem0")
+pytest.importorskip("asyncpg")
+
+pytestmark = pytest.mark.skipif(
+    not os.getenv("RUN_INTEGRATION_TESTS"),
+    reason="requires live mem0/Redis/Postgres; set RUN_INTEGRATION_TESTS=1",
+)
 
 from src.agents.memory.ea_memory_integration import EAMemoryIntegration, ConversationContext
 from src.memory.mem0_manager import maintain_conversation_continuity
