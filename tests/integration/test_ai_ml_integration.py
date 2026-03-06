@@ -13,9 +13,23 @@ This demonstrates the full AI/ML capabilities integrated with the EA system.
 
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime
 from typing import Dict, List, Any
+
+import pytest
+
+# Heavy transitive deps (mem0 → sentence-transformers → torch). Skip collection
+# if not installed rather than crashing the whole run.
+pytest.importorskip("mem0")
+pytest.importorskip("sentence_transformers")
+
+# Integration tests need live Redis/Postgres/Neo4j. Gate on env flag.
+pytestmark = pytest.mark.skipif(
+    not os.getenv("RUN_INTEGRATION_TESTS"),
+    reason="requires live services; set RUN_INTEGRATION_TESTS=1",
+)
 
 # Configure logging for test output
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
