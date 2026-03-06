@@ -10,8 +10,11 @@ import os
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-# Ensure JWT_SECRET is set before any app module imports
-os.environ.setdefault("JWT_SECRET", "test-secret-do-not-use-in-prod")
+# Ensure JWT_SECRET is set before any app module imports.
+# Must meet the 32-char minimum enforced in auth._secret().
+os.environ.setdefault(
+    "JWT_SECRET", "test-secret-do-not-use-in-prod-32-chars-min-xxxxxxxx"
+)
 
 
 @pytest.fixture

@@ -4,6 +4,7 @@ Liveness + readiness probes.
 /healthz — load-balancer liveness check. Always 200 if process is running.
 /readyz  — orchestrator readiness check. 503 if any dependency is down.
 """
+import asyncio
 import logging
 
 from fastapi import APIRouter, Request
@@ -26,12 +27,18 @@ async def readyz(request: Request):
     ready = True
 
     # --- Redis ping ---
+    # Bounded: a half-open Redis connection (reachable but unresponsive)
+    # would otherwise hang for socket-timeout, holding a worker while the
+    # orchestrator's probe deadline (typically 3-5s) expires anyway.
     redis_client = request.app.state.redis_client
     try:
-        await redis_client.ping()
+        await asyncio.wait_for(redis_client.ping(), timeout=2.0)
         checks["redis"] = "ok"
-    except Exception as e:
-        checks["redis"] = f"error: {type(e).__name__}"
+    except asyncio.TimeoutError:
+        checks["redis"] = "timeout"
+        ready = False
+    except Exception:
+        checks["redis"] = "unreachable"
         ready = False
 
     # --- EA importable ---

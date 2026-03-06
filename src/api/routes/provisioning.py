@@ -38,9 +38,19 @@ async def provision_customer(req: ProvisionRequest, request: Request):
             customer_id=customer_id,
             tier=req.tier,
         )
-    except ValueError as e:
-        # Orchestrator validates tier/config — bad input from caller.
-        raise BadRequestError(detail=str(e))
+    except ValueError:
+        # Orchestrator rejected our input. We DON'T echo str(e) — the
+        # orchestrator wasn't written with a "ValueError messages are
+        # safe for clients" contract. It could leak internal paths,
+        # image tags, config details. Log the detail server-side;
+        # client gets a fixed message.
+        logger.warning(
+            "Orchestrator rejected provision request for customer=%s tier=%s",
+            customer_id, req.tier, exc_info=True,
+        )
+        raise BadRequestError(
+            detail="Provisioning request rejected. Check tier and parameters.",
+        )
     except RuntimeError:
         # Deployment failure — Docker down, ports exhausted, etc.
         logger.exception("Provisioning failed for customer=%s", customer_id)

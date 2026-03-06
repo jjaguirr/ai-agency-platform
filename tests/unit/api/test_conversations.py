@@ -94,6 +94,30 @@ class TestConversationHappyPath:
 
         assert resp.json()["conversation_id"]  # non-empty
 
+    def test_whitespace_conversation_id_normalized(self, mock_ea, auth_headers):
+        """
+        "   " must not become a Redis key. The schema normalizes
+        whitespace-only to None → route generates a fresh UUID.
+        """
+        app = _app_with_ea(mock_ea)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/v1/conversations/message",
+            json={"message": "hi", "channel": "chat",
+                  "conversation_id": "   "},
+            headers=auth_headers,
+        )
+
+        conv_id = resp.json()["conversation_id"]
+        assert conv_id.strip() == conv_id  # no surrounding whitespace
+        assert len(conv_id) > 0
+        # EA should have received the clean ID, not whitespace
+        ea_conv_id = mock_ea.handle_customer_interaction.call_args.kwargs[
+            "conversation_id"]
+        assert ea_conv_id == conv_id
+        assert ea_conv_id.strip() == ea_conv_id
+
 
 class TestConversationAuth:
     def test_token_customer_id_scopes_ea_lookup(self, mock_ea):

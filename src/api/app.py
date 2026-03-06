@@ -6,7 +6,8 @@ Two entrypoints:
   create_default_app()    — reads env, builds real deps, for `uvicorn src.api.app:app`
 """
 import logging
-from typing import Any
+from contextlib import AbstractAsyncContextManager
+from typing import Any, Callable, Optional
 
 from fastapi import FastAPI
 
@@ -16,6 +17,8 @@ from .routes import conversations, health, provisioning, webhooks
 
 logger = logging.getLogger(__name__)
 
+Lifespan = Callable[[FastAPI], AbstractAsyncContextManager[None]]
+
 
 def create_app(
     *,
@@ -23,6 +26,7 @@ def create_app(
     orchestrator: Any,
     whatsapp_manager: Any,
     redis_client: Any,
+    lifespan: Optional[Lifespan] = None,
 ) -> FastAPI:
     """
     Build the API with all dependencies injected.
@@ -30,10 +34,16 @@ def create_app(
     Dependencies are stored on app.state and pulled by route handlers via
     request.app.state.<dep>. No module-level singletons — keeps tests
     hermetic.
+
+    `lifespan` is passed straight to FastAPI's constructor (the documented
+    mechanism) rather than patching router internals after construction.
+    Tests omit it; production supplies one that initialises the port
+    allocator and closes Redis on shutdown.
     """
     app = FastAPI(
         title="AI Agency Platform API",
         version="1.0.0",
+        lifespan=lifespan,
     )
 
     # State container — routes pull deps from here
@@ -99,13 +109,6 @@ def create_default_app() -> FastAPI:  # pragma: no cover
     allocator = PortAllocator()
     orchestrator = InfrastructureOrchestrator(port_allocator=allocator)
 
-    app = create_app(
-        ea_registry=ea_registry,
-        orchestrator=orchestrator,
-        whatsapp_manager=wa_manager,
-        redis_client=redis_client,
-    )
-
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         try:
@@ -115,5 +118,10 @@ def create_default_app() -> FastAPI:  # pragma: no cover
         yield
         await redis_client.aclose()
 
-    app.router.lifespan_context = lifespan
-    return app
+    return create_app(
+        ea_registry=ea_registry,
+        orchestrator=orchestrator,
+        whatsapp_manager=wa_manager,
+        redis_client=redis_client,
+        lifespan=lifespan,
+    )

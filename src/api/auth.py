@@ -15,6 +15,10 @@ from jose import JWTError, jwt
 
 _ALGORITHM = "HS256"
 _DEFAULT_TTL_SECONDS = 60 * 60 * 24 * 30  # 30 days
+# HS256 needs a secret with sufficient entropy. 32 bytes (256 bits) is the
+# matching strength; we enforce a floor so `JWT_SECRET=dev` can't slip
+# into production. Weak secrets make brute-forcing token signatures viable.
+_MIN_SECRET_LEN = 32
 
 
 def _secret() -> str:
@@ -22,6 +26,11 @@ def _secret() -> str:
     if not secret:
         raise RuntimeError(
             "JWT_SECRET not set. Export it before starting the server."
+        )
+    if len(secret) < _MIN_SECRET_LEN:
+        raise RuntimeError(
+            f"JWT_SECRET must be at least {_MIN_SECRET_LEN} characters. "
+            f"Generate one with: python -c 'import secrets; print(secrets.token_hex(32))'"
         )
     return secret
 

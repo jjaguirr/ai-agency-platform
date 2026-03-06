@@ -7,18 +7,35 @@ the schema layer independent of agent internals.
 """
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ConversationChannel: PHONE | WHATSAPP | EMAIL | CHAT → lowercase wire format
 Channel = Literal["phone", "whatsapp", "email", "chat"]
 Tier = Literal["basic", "professional", "enterprise"]
 
+# Customer ID flows into Docker network/container names, volume paths, and
+# Redis keys via InfrastructureOrchestrator. Shell metacharacters, path
+# separators, or unbounded length are injection vectors. Docker object
+# names are typically [a-zA-Z0-9_.-], max ~63 chars. We're stricter:
+# lowercase alnum + underscore + hyphen, 3-48 chars.
+_CUSTOMER_ID_PATTERN = r"^[a-z0-9][a-z0-9_-]{2,47}$"
+
 
 class MessageRequest(BaseModel):
     message: str = Field(min_length=1)
     channel: Channel
     conversation_id: Optional[str] = None
+
+    @field_validator("conversation_id")
+    @classmethod
+    def _strip_conversation_id(cls, v: Optional[str]) -> Optional[str]:
+        # "   " should not become a Redis key. Normalize whitespace-only
+        # to None so the route generates a fresh UUID.
+        if v is None:
+            return None
+        v = v.strip()
+        return v or None
 
 
 class MessageResponse(BaseModel):
@@ -27,7 +44,12 @@ class MessageResponse(BaseModel):
 
 
 class ProvisionRequest(BaseModel):
-    customer_id: Optional[str] = None
+    customer_id: Optional[str] = Field(
+        default=None,
+        pattern=_CUSTOMER_ID_PATTERN,
+        description="Lowercase alphanumeric, underscore, hyphen; 3-48 chars. "
+                    "Omit to auto-generate.",
+    )
     tier: Tier = "professional"
 
 

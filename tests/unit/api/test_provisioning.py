@@ -88,13 +88,53 @@ class TestProvisioningValidation:
 
         assert resp.status_code == 422
 
+    @pytest.mark.parametrize("bad_id", [
+        "../../../etc/passwd",       # path traversal
+        "cust; rm -rf /",            # shell metachar
+        "Cust_Upper",                # uppercase
+        "ab",                        # too short
+        "x" * 100,                   # too long
+        "-starts-with-dash",         # leading special
+        "has spaces in it",          # whitespace
+    ])
+    def test_malicious_customer_id_rejected(self, mock_orchestrator, bad_id):
+        """
+        customer_id flows into Docker network/container names and volume
+        paths. Anything outside [a-z0-9_-]{3,48} must be rejected before
+        it reaches the orchestrator.
+        """
+        client = TestClient(_app(mock_orchestrator))
+
+        resp = client.post(
+            "/v1/customers/provision",
+            json={"tier": "basic", "customer_id": bad_id},
+        )
+
+        assert resp.status_code == 422
+        # Orchestrator must NOT have been called with the bad input
+        mock_orchestrator.provision_customer_environment.assert_not_called()
+
+    def test_valid_customer_id_accepted(self, mock_orchestrator):
+        client = TestClient(_app(mock_orchestrator))
+
+        resp = client.post(
+            "/v1/customers/provision",
+            json={"tier": "basic", "customer_id": "acme-corp_2026"},
+        )
+
+        assert resp.status_code == 201
+
 
 class TestProvisioningErrors:
-    def test_orchestrator_value_error_returns_400(self):
-        """Orchestrator raises ValueError for bad input — map to 400."""
+    def test_orchestrator_value_error_returns_400_without_leak(self):
+        """
+        Orchestrator raises ValueError for bad input — map to 400.
+        We do NOT echo the orchestrator's message: it wasn't written
+        with a "safe for clients" contract and could carry internals.
+        """
         orch = AsyncMock()
         orch.provision_customer_environment = AsyncMock(
-            side_effect=ValueError("Invalid configuration"))
+            side_effect=ValueError("docker network customer-x-network exists at /var/lib/docker"))
         client = TestClient(_app(orch))
 
         resp = client.post("/v1/customers/provision",
@@ -102,8 +142,9 @@ class TestProvisioningErrors:
 
         assert resp.status_code == 400
         body = resp.json()
-        assert "type" in body
-        assert "detail" in body
+        assert body["type"] == "bad_request"
+        assert "/var/lib/docker" not in body["detail"]
+        assert body["detail"] == "Provisioning request rejected. Check tier and parameters."
 
     def test_orchestrator_runtime_error_returns_503(self):
         """Deployment failure (Docker down, etc.) — map to 503."""

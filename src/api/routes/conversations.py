@@ -11,6 +11,7 @@ and returns a fallback string — those are 200s. We only map to 503 when
 the EA's handle_customer_interaction *raises*, which means an infrastructure
 dependency is hard-down.
 """
+import asyncio
 import logging
 import uuid
 
@@ -34,6 +35,11 @@ _CHANNEL_MAP = {
     "chat": ConversationChannel.CHAT,
 }
 
+# EA has an internal specialist_timeout (15s) but the overall LangGraph
+# run has no bound. A hung LLM endpoint or half-open mem0 connection would
+# otherwise hold this request — and its worker — indefinitely.
+_EA_CALL_TIMEOUT = 60.0
+
 
 @router.post("/message", response_model=MessageResponse)
 async def post_message(
@@ -46,10 +52,21 @@ async def post_message(
 
     try:
         ea = await ea_registry.get(customer_id)
-        response_text = await ea.handle_customer_interaction(
-            message=req.message,
-            channel=_CHANNEL_MAP[req.channel],
-            conversation_id=conversation_id,
+        response_text = await asyncio.wait_for(
+            ea.handle_customer_interaction(
+                message=req.message,
+                channel=_CHANNEL_MAP[req.channel],
+                conversation_id=conversation_id,
+            ),
+            timeout=_EA_CALL_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        logger.error(
+            "EA timed out for customer=%s conv=%s after %.0fs",
+            customer_id, conversation_id, _EA_CALL_TIMEOUT,
+        )
+        raise ServiceUnavailableError(
+            detail="Assistant temporarily unavailable.",
         )
     except Exception:
         # EA blew up entirely — not a degraded specialist, an actual

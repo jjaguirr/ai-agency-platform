@@ -84,8 +84,10 @@ class TestErrorResponses:
     def test_api_error_subclasses_render_type_and_detail(self):
         """Intentionally-raised APIError → {type, detail} shape."""
         orch = AsyncMock()
+        # Orchestrator's ValueError message could contain internals
+        # (image tags, paths). We must NOT echo it.
         orch.provision_customer_environment = AsyncMock(
-            side_effect=ValueError("tier config mismatch: foo vs bar"))
+            side_effect=ValueError("docker image /internal/path:v3 bad"))
         app = create_app(
             ea_registry=EARegistry(factory=MagicMock()),
             orchestrator=orch,
@@ -99,6 +101,21 @@ class TestErrorResponses:
         assert resp.status_code == 400
         body = resp.json()
         assert body["type"] == "bad_request"
-        # ValueError from orchestrator is USER-FACING validation — OK to
-        # surface its message (it's not a traceback, it's a validation hint).
-        assert body["detail"] == "tier config mismatch: foo vs bar"
+        # Fixed safe message — orchestrator internals don't leak
+        assert body["detail"] == "Provisioning request rejected. Check tier and parameters."
+        assert "/internal/path" not in str(body)
+
+    def test_global_handler_does_not_swallow_http_exception(self):
+        """
+        Regression guard: our catch-all Exception handler must NOT
+        intercept FastAPI's own HTTPException (404, 405, etc.). If it
+        does, every missing route becomes a 500 "internal error".
+        """
+        client = TestClient(_app(), raise_server_exceptions=False)
+
+        resp = client.get("/v1/definitely-not-a-route")
+
+        # If our Exception handler caught HTTPException, this would be 500.
+        assert resp.status_code == 404
+        # And the body would be our generic "internal error" — it shouldn't be.
+        assert resp.json().get("type") != "internal_error"
