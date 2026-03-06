@@ -35,10 +35,14 @@ logger = logging.getLogger(__name__)
 
 # --- Assessment vocabulary --------------------------------------------------
 
-# Strong signals: explicit finance actions or artefacts.
+# Unambiguous signals — phrases with a single meaning. One of these alone
+# is enough to route regardless of context.
+_UNAMBIGUOUS_PHRASES = ["cash flow", "invoice", "payroll"]
+# Strong signals: explicit finance actions or artefacts. These need at
+# least one additional signal (or context boost) to clear the threshold.
 _STRONG_PHRASES = [
-    "cash flow", "invoice", "expense", "spending", "spend", "spent",
-    "revenue", "profit", "payroll", "budget",
+    "expense", "spending", "spend", "spent",
+    "revenue", "profit", "budget",
 ]
 # Verbs that mean "record a transaction" — these dominate platform keywords
 # when both appear ("track $500 spent on Facebook ads" → finance, not social).
@@ -134,6 +138,12 @@ class FinanceSpecialist(SpecialistAgent):
         text = task_description.lower()
 
         confidence = 0.0
+
+        # Unambiguous phrases — one hit is enough to route.
+        for phrase in _UNAMBIGUOUS_PHRASES:
+            if phrase in text:
+                confidence += 0.6
+                break  # one is sufficient; don't stack
 
         # Strong finance signals
         for phrase in _STRONG_PHRASES:
