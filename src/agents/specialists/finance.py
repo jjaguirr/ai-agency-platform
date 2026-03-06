@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Dict, List, Optional, Protocol, Tuple, TYPE_CHECKING
 
 from src.agents.base.specialist import (
     SpecialistAgent,
@@ -29,11 +29,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# --- External seams ---------------------------------------------------------
+
+class StockQuoteClient(Protocol):
+    """Injected via FinanceSpecialist(stock_api=...). Tests mock this;
+    production wires a real HTTP client. Expand the return shape when a
+    real integration needs more than a bare price."""
+    async def quote(self, ticker: str) -> float: ...
+
+
 # --- Scoring vocabulary -----------------------------------------------------
 
-# "cash flow" is uniquely finance — no overlap with any other domain.
-# Weighted high enough to clear the 0.6 threshold on its own.
-_ANCHOR_PHRASES = ["cash flow"]  # +0.65
+# Stock phrases double as anchor-tier scoring AND execute-mode dispatch.
+# Same justification as "cash flow": bigrams with zero cross-domain meaning.
+_STOCK_PHRASES = ["stock price", "share price"]
+
+# Anchors clear the 0.6 threshold on their own.
+_ANCHOR_PHRASES = ["cash flow", *_STOCK_PHRASES]  # +0.65
 
 _STRONG_PHRASES = [
     "invoice", "expense", "revenue", "profit", "p&l",
@@ -88,8 +100,15 @@ _VENDOR_RE = re.compile(
 )
 _DUE_DATE_RE = re.compile(r"\bdue\s+([A-Za-z0-9 ,]+?)(?:$|[.,;]|\s+for\b)")
 
+# Ticker: 2-5 uppercase letters. Only applied after a stock-phrase match
+# so false positives (ROI, CEO, API) don't matter at the routing layer.
+_TICKER_RE = re.compile(r"\b[A-Z]{2,5}\b")
+
 
 class FinanceSpecialist(SpecialistAgent):
+
+    def __init__(self, stock_api: Optional[StockQuoteClient] = None) -> None:
+        self._stock = stock_api
 
     @property
     def domain(self) -> str:
@@ -139,6 +158,9 @@ class FinanceSpecialist(SpecialistAgent):
 
         if "cash flow" in low:
             return self._cash_flow_summary(task)
+
+        if self._is_stock_query(low):
+            return await self._stock_quote(task, full_text)
 
         if self._is_spend_query(low):
             return self._spend_summary(task, low)
@@ -257,6 +279,55 @@ class FinanceSpecialist(SpecialistAgent):
             confidence=0.75,
             summary_for_ea=summary,
         )
+
+    # --- Mode: stock quote --------------------------------------------------
+
+    def _is_stock_query(self, low_text: str) -> bool:
+        return any(phrase in low_text for phrase in _STOCK_PHRASES)
+
+    async def _stock_quote(self, task: SpecialistTask, full_text: str) -> SpecialistResult:
+        # Ticker extraction needs original case — tickers are uppercase.
+        ticker = self._extract_ticker(full_text)
+        if ticker is None:
+            return SpecialistResult(
+                status=SpecialistStatus.NEEDS_CLARIFICATION,
+                domain=self.domain,
+                payload={},
+                confidence=0.3,
+                clarification_question="Which ticker symbol?",
+            )
+
+        if self._stock is None:
+            return SpecialistResult(
+                status=SpecialistStatus.FAILED,
+                domain=self.domain,
+                payload={"ticker": ticker},
+                confidence=0.0,
+                error="stock API not configured",
+            )
+
+        try:
+            price = await self._stock.quote(ticker)
+        except Exception as e:
+            return SpecialistResult(
+                status=SpecialistStatus.FAILED,
+                domain=self.domain,
+                payload={"ticker": ticker},
+                confidence=0.0,
+                error=str(e),
+            )
+
+        return SpecialistResult(
+            status=SpecialistStatus.COMPLETED,
+            domain=self.domain,
+            payload={"ticker": ticker, "price": price},
+            confidence=0.8,
+            summary_for_ea=f"{ticker} is trading at ${price:,.2f}.",
+        )
+
+    def _extract_ticker(self, text: str) -> Optional[str]:
+        m = _TICKER_RE.search(text)
+        return m.group(0) if m else None
 
     # --- Parsing helpers ----------------------------------------------------
 
