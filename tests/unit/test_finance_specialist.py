@@ -115,6 +115,39 @@ class TestAssessOutOfDomain:
         assert a.confidence < 0.5, f"expected low confidence on: {msg!r}"
 
 
+# --- Assessment: lexical floor (no context boost) ---------------------------
+
+class TestAssessLexicalFloor:
+    """Routing must work for a customer with no finance tooling or pain
+    points — otherwise the specialist only routes for customers the EA
+    already knows are finance-interested, which defeats the point."""
+
+    @pytest.fixture
+    def bare_ctx(self):
+        return BusinessContext(business_name="Unknown Co")
+
+    @pytest.mark.parametrize("msg", [
+        "track this invoice: $2,400 from Acme Corp",
+        "what's my cash flow looking like?",
+        "log a payroll expense: $2,000",
+    ])
+    def test_unambiguous_phrases_route_without_context(self, specialist, bare_ctx, msg):
+        """These contain domain terms that have no non-finance meaning.
+        One should be enough to clear the threshold."""
+        a = specialist.assess_task(msg, bare_ctx)
+        assert a.confidence >= 0.6, (
+            f"{msg!r} scored {a.confidence:.2f} with zero context — "
+            "unambiguous finance phrases should route on their own"
+        )
+        assert not a.is_strategic
+
+    def test_softer_phrases_need_context(self, specialist, bare_ctx):
+        """'spend' alone is common in non-finance contexts. It's fine for
+        this to fall short without context — documents the boundary."""
+        a = specialist.assess_task("what did I spend recently?", bare_ctx)
+        assert a.confidence < 0.6
+
+
 # --- Assessment: context influences confidence ------------------------------
 
 class TestAssessContextAware:
@@ -127,6 +160,15 @@ class TestAssessContextAware:
         )
         assert specialist.assess_task(msg, with_pain).confidence > \
                specialist.assess_task(msg, no_pain).confidence
+
+    def test_confidence_capped_at_point_nine(self, specialist, retail_ctx):
+        """Stacking every signal shouldn't yield certainty — the cap
+        leaves room for the EA to second-guess."""
+        a = specialist.assess_task(
+            "track this invoice expense $5,000 cash flow payment",
+            retail_ctx,
+        )
+        assert a.confidence == 0.9
 
 
 # --- Routing overlap with social media --------------------------------------
@@ -178,26 +220,14 @@ class TestRoutingOverlap:
         assert match is not None
         assert match.specialist.domain == "finance"
 
-    def test_roi_question_not_misrouted_to_finance(self, registry_with_both, retail_ctx):
-        """ROI on a campaign is cross-domain. The spec says it 'could go either
-        way' — we can't constrain social_media's confidence (framework is
-        immutable per task rules). What we CAN guarantee: finance flags it
-        strategic (ROI is advisory, not an expense to track) so finance
-        never claims it. If social claims it, that's social's call."""
-        match = registry_with_both.route(
-            "what's my ROI on the Facebook campaign?", retail_ctx
-        )
-        # Either None (EA handles) or social_media. Never finance.
-        if match is not None:
-            assert match.specialist.domain != "finance"
-
     def test_roi_question_finance_self_assessment(self, specialist, retail_ctx):
-        """Directly verify: finance recognizes ROI as in-domain but strategic."""
+        """ROI on a campaign is cross-domain; the spec says it 'could go
+        either way'. Finance's contract: recognize it as in-domain but
+        flag it strategic so finance never claims it via the registry.
+        Whether social_media claims it is social_media's decision."""
         a = specialist.assess_task("what's my ROI on the Facebook campaign?", retail_ctx)
-        # In domain enough to flag...
-        assert a.confidence >= 0.4
-        # ...but advisory — EA keeps.
-        assert a.is_strategic
+        assert a.confidence >= 0.4   # in domain enough to trip the strategic gate
+        assert a.is_strategic         # advisory — EA keeps
 
     def test_both_registered_no_framework_changes(self, registry_with_both):
         """Validation criterion: adding finance required zero changes to
@@ -222,14 +252,14 @@ class TestExecuteExpenseTracking:
 
         assert result.status == SpecialistStatus.COMPLETED
         assert result.domain == "finance"
-        # Structured payload per spec
+        # Structured payload per spec — exact values, not just presence
         assert result.payload["amount"] == 2400.0
         assert "acme" in result.payload["vendor"].lower()
-        assert result.payload["category"] is not None
-        assert "march" in result.payload.get("due_date", "").lower() or \
-               "03" in result.payload.get("due_date", "") or \
-               "3/15" in result.payload.get("due_date", "")
-        assert result.summary_for_ea
+        assert result.payload["category"] == "operations"  # no category keyword → default
+        assert result.payload["due_date"] == "March 15"
+        # Summary echoes the amount and vendor
+        assert "$2,400.00" in result.summary_for_ea
+        assert "Acme" in result.summary_for_ea
 
     @pytest.mark.asyncio
     async def test_categorizes_rent(self, specialist, retail_ctx):
@@ -282,16 +312,18 @@ class TestExecuteExpenseTracking:
 
     @pytest.mark.asyncio
     async def test_unknown_category_falls_back_to_operations(self, specialist, retail_ctx):
+        """Input deliberately avoids every category keyword so we actually
+        exercise the default, not an operations rule match."""
         task = SpecialistTask(
-            description="track $80 for miscellaneous supplies",
+            description="track $80 paid to Widgets Unlimited",
             customer_id="c",
             business_context=retail_ctx,
             domain_memories=[],
         )
         result = await specialist.execute_task(task)
         assert result.status == SpecialistStatus.COMPLETED
-        # Defaults to a sane bucket, not None
-        assert result.payload["category"] in ("operations", "other")
+        assert result.payload["category"] == "operations"
+        assert result.payload["vendor"] == "Widgets Unlimited"
 
 
 # --- Execution: clarification flow ------------------------------------------
@@ -309,9 +341,7 @@ class TestExecuteClarification:
         result = await specialist.execute_task(task)
 
         assert result.status == SpecialistStatus.NEEDS_CLARIFICATION
-        assert result.clarification_question
-        assert "amount" in result.clarification_question.lower() or \
-               "how much" in result.clarification_question.lower()
+        assert result.clarification_question == "How much was the amount?"
 
     @pytest.mark.asyncio
     async def test_asks_when_vendor_missing(self, specialist, retail_ctx):
@@ -324,9 +354,13 @@ class TestExecuteClarification:
         result = await specialist.execute_task(task)
 
         assert result.status == SpecialistStatus.NEEDS_CLARIFICATION
-        assert result.clarification_question
         q = result.clarification_question.lower()
-        assert "vendor" in q or "who" in q or "paid to" in q or "what was" in q
+        # Must ask for both the payee AND make clear a name is wanted —
+        # not accept any question containing "who" somewhere.
+        assert "who" in q
+        assert "vendor" in q or "payee" in q
+        # Partial state preserved so the follow-up doesn't re-ask for amount
+        assert result.payload["amount"] == 350.0
 
     @pytest.mark.asyncio
     async def test_resolves_missing_amount_via_prior_turns(self, specialist, retail_ctx):
@@ -388,13 +422,16 @@ class TestExecuteSummaries:
         result = await specialist.execute_task(task)
 
         assert result.status == SpecialistStatus.COMPLETED
-        # Should have aggregated marketing spend, excluded rent
-        assert "category_totals" in result.payload or "total" in result.payload
-        assert result.summary_for_ea
-        # Summary should mention marketing and a dollar figure
-        summary = result.summary_for_ea.lower()
-        assert "marketing" in summary
-        assert "$" in result.summary_for_ea
+        # Exact arithmetic: $500 + $120 = $620. Rent ($1,200) MUST be excluded.
+        p = result.payload
+        assert p["total"] == 620.0
+        assert p["entry_count"] == 2
+        assert p["category_totals"] == {"marketing": 620.0}
+        assert "rent" not in p["category_totals"]
+        assert p["memories_consulted"] == 3  # looked at all three, filtered one
+        # Summary reports the computed figure, not just any dollar sign
+        assert "$620.00" in result.summary_for_ea
+        assert "marketing" in result.summary_for_ea.lower()
 
     @pytest.mark.asyncio
     async def test_cash_flow_query_produces_summary(self, specialist, retail_ctx):
@@ -411,11 +448,15 @@ class TestExecuteSummaries:
         result = await specialist.execute_task(task)
 
         assert result.status == SpecialistStatus.COMPLETED
-        assert result.summary_for_ea
-        # Payload has income/expense breakdown
+        # Exact arithmetic. 'paid by client' → income; rent + subscriptions → expenses.
         p = result.payload
-        assert "income" in p or "inflow" in p
-        assert "expenses" in p or "outflow" in p
+        assert p["income"] == 5000.0
+        assert p["expenses"] == 1400.0  # 1200 + 200
+        assert p["net"] == 3600.0
+        # Category breakdown on the expense side only
+        assert p["category_totals"] == {"rent": 1200.0, "software": 200.0}
+        # Summary reports the net, not just any figure
+        assert "$3,600.00" in result.summary_for_ea
 
     @pytest.mark.asyncio
     async def test_empty_memories_still_completes_summary(self, specialist, retail_ctx):
@@ -430,25 +471,46 @@ class TestExecuteSummaries:
         result = await specialist.execute_task(task)
 
         assert result.status == SpecialistStatus.COMPLETED
-        assert result.summary_for_ea  # still gives EA something to say
-        assert result.payload.get("memories_consulted", -1) == 0
+        # Zeros, not missing keys — schema stays stable regardless of data
+        assert result.payload["income"] == 0.0
+        assert result.payload["expenses"] == 0.0
+        assert result.payload["net"] == 0.0
+        assert result.payload["memories_consulted"] == 0
+        # Still gives EA a sentence to relay (not empty string)
+        assert result.summary_for_ea
 
 
-# --- Isolation --------------------------------------------------------------
+# --- Parsing boundaries -----------------------------------------------------
 
-class TestIsolation:
+class TestParsingBoundaries:
+    """Document parser edge cases so behavior is intentional, not accidental."""
+
     @pytest.mark.asyncio
-    async def test_no_direct_memory_access(self, specialist, retail_ctx):
-        """Same isolation boundary as social media: specialist only sees
-        what SpecialistTask carries."""
+    async def test_dollar_sign_required_for_amount(self, specialist, retail_ctx):
+        """Amounts must be $-prefixed. '350' alone is not parsed — prevents
+        false positives on dates, counts, percentages. Deliberate constraint."""
         task = SpecialistTask(
-            description="track $100 for office supplies",
+            description="track the 350 from Acme Corp",
+            customer_id="c",
+            business_context=retail_ctx,
+            domain_memories=[],
+        )
+        result = await specialist.execute_task(task)
+        # No amount recognized → asks for it
+        assert result.status == SpecialistStatus.NEEDS_CLARIFICATION
+        assert result.clarification_question == "How much was the amount?"
+
+    @pytest.mark.asyncio
+    async def test_first_amount_wins_when_multiple_present(self, specialist, retail_ctx):
+        """Multiple dollar figures: parser takes the first. If this needs
+        to change (e.g. 'two items: $100 and $200'), update both test
+        and implementation intentionally."""
+        task = SpecialistTask(
+            description="track $150 to Acme Corp (was quoted $200 originally)",
             customer_id="c",
             business_context=retail_ctx,
             domain_memories=[],
         )
         result = await specialist.execute_task(task)
         assert result.status == SpecialistStatus.COMPLETED
-        # Specialist has no memory_client attribute, no way to fetch beyond task
-        assert not hasattr(specialist, "memory_client")
-        assert not hasattr(specialist, "memory")
+        assert result.payload["amount"] == 150.0  # first match, not 200
