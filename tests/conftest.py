@@ -147,79 +147,57 @@ def consulting_business_context():
 
 @pytest_asyncio.fixture
 async def real_ea():
-    """Real ExecutiveAssistant with test configuration and proper cleanup."""
+    """Real ExecutiveAssistant with test configuration — mocked storage backends."""
     import uuid
-    customer_id = f"test_customer_{uuid.uuid4().hex[:8]}"  # Unique customer ID
-    
-    # Create EA with test mode settings
+    from unittest.mock import MagicMock
+    customer_id = f"test_customer_{uuid.uuid4().hex[:8]}"
+
     ea = ExecutiveAssistant(
         customer_id=customer_id,
         mcp_server_url="test://localhost"
     )
-    
-    # Override with test Redis DB
-    ea.memory.redis_client = redis.Redis(
-        host='localhost',
-        port=6379,
-        db=15,  # Test database
-        decode_responses=True
-    )
-    
+
+    # Mock Redis so tests don't need a live server
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = None
+    mock_redis.set.return_value = True
+    mock_redis.delete.return_value = True
+    mock_redis.flushdb.return_value = True
+    ea.memory.redis_client = mock_redis
+
     yield ea
-    
-    # Cleanup after test
-    try:
-        ea.memory.redis_client.flushdb()
-        if hasattr(ea.memory, 'db_connection'):
-            with ea.memory.db_connection.cursor() as cursor:
-                cursor.execute("DELETE FROM customer_business_context WHERE customer_id = %s", (customer_id,))
-                ea.memory.db_connection.commit()
-    except Exception as e:
-        print(f"Cleanup warning: {e}")
 
 
 @pytest_asyncio.fixture
 async def ea_with_business_context(jewelry_business_context):
-    """Real EA with pre-loaded business context - simplified fixture chain."""
+    """Real EA with pre-loaded business context — mocked storage backends."""
     import uuid
-    # Create unique customer ID to avoid test pollution  
+    from unittest.mock import MagicMock, AsyncMock
     customer_id = f"test_business_{uuid.uuid4().hex[:8]}"
-    
-    # Create EA directly instead of through fixture chain
+
     ea = ExecutiveAssistant(
         customer_id=customer_id,
         mcp_server_url="test://localhost"
     )
-    
-    # Override with test Redis DB
-    import redis
-    ea.memory.redis_client = redis.Redis(
-        host='localhost',
-        port=6379, 
-        db=15,  # Test database
-        decode_responses=True
-    )
-    
-    # Store business context using real memory system
+
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = None
+    mock_redis.set.return_value = True
+    mock_redis.delete.return_value = True
+    mock_redis.flushdb.return_value = True
+    ea.memory.redis_client = mock_redis
+
+    # Mock async memory methods so context storage doesn't hit real backends
+    ea.memory.store_business_context = AsyncMock()
+    ea.memory.store_business_knowledge = AsyncMock()
+
     await ea.memory.store_business_context(jewelry_business_context)
-    
-    # Store some business knowledge
     await ea.memory.store_business_knowledge(
         f"Customer runs {jewelry_business_context.business_name}, specializing in {jewelry_business_context.industry}",
         {"category": "business_info", "priority": "high"}
     )
-    
+
     yield ea
-    
-    # Cleanup after test
-    try:
-        ea.memory.redis_client.flushdb()
-        if hasattr(ea.memory, 'db_connection'):
-            with ea.memory.db_connection.cursor() as cursor:
-                cursor.execute("DELETE FROM customer_business_context WHERE customer_id = %s", (customer_id,))
-                ea.memory.db_connection.commit()
-    except Exception as e:
-        print(f"Cleanup warning: {e}")
 
 
 # === AnyAgent Evaluation Fixtures ===

@@ -1,12 +1,21 @@
 """
 Modern Executive Assistant Core Tests
 Combines traditional TDD with 2024 AI agent testing frameworks
+
+These tests instantiate a real EA and need LLM + database services.
+Run with: pytest -m integration
 """
 
+import os
 import pytest
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from typing import Dict, List, Any
+
+pytestmark = pytest.mark.skipif(
+    not os.environ.get("OPENAI_API_KEY"),
+    reason="Requires live services (LLM, Redis, Postgres)",
+)
 
 # AI Agent Testing Frameworks (mock implementations)
 # from any_agent.evaluation import LlmJudge, AgentJudge
@@ -91,7 +100,7 @@ class TestEABasicConversation:
         response = await ea.handle_customer_interaction(urgent_message, ConversationChannel.PHONE)
         
         # Then: Structured evaluation with custom schema
-        judge = LlmJudge(
+        judge = MockLlmJudge(
             model_id="gpt-4o-mini",
             output_type=EAResponseQuality
         )
@@ -291,7 +300,7 @@ class TestEAAutomationIdentification:
             "Time savings not mentioned in prioritization"
         
         # Structured evaluation of prioritization logic
-        judge = LlmJudge(model_id="gpt-4o-mini")
+        judge = MockLlmJudge(model_id="gpt-4o-mini")
         prioritization_eval = judge.run(
             context=priority_response,
             question="Did the assistant correctly prioritize the 10-hour weekly invoicing task as the highest impact automation opportunity?"
@@ -336,7 +345,7 @@ class TestEAROICommunication:
         assert len(found_roi_terms) >= 3, f"Insufficient ROI communication: {found_roi_terms}"
         
         # AI evaluation of ROI communication quality
-        judge = LlmJudge(model_id="gpt-4o-mini")
+        judge = MockLlmJudge(model_id="gpt-4o-mini")
         roi_evaluation = judge.run(
             context=f"Business problem: {problem}\nEA response: {response}",
             question="Did the assistant calculate specific time savings (5 hours/week), cost savings ($750/week = $3000/month), and communicate clear ROI for social media automation?"
@@ -361,7 +370,7 @@ class TestEAROICommunication:
         assert len(found_steps) >= 2, f"Insufficient step-by-step guidance: {found_steps}"
         
         # Evaluation for implementation quality
-        judge = LlmJudge(
+        judge = MockLlmJudge(
             model_id="gpt-4o-mini", 
             output_type=EAResponseQuality
         )
