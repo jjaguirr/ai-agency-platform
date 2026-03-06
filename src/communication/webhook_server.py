@@ -1,346 +1,141 @@
 """
-WhatsApp Webhook Server
-FastAPI server to handle Twilio WhatsApp Business webhooks
+FastAPI webhook server for WhatsApp — provider-agnostic.
+
+Each customer's WhatsApp number is configured (in the provider console) to
+POST webhooks to /webhook/whatsapp/{customer_id}. The server:
+  1. Resolves the customer's channel via WhatsAppManager
+  2. Validates the webhook signature via the provider (403 on failure)
+  3. Parses events via the provider (IncomingMessage | StatusUpdate)
+  4. Routes IncomingMessage → EA handler → sends reply
+  5. Routes StatusUpdate → store update
+  6. Returns 200 to acknowledge receipt
 """
-
-import asyncio
-import json
 import logging
-import os
-from typing import Dict, Any, Optional
-from urllib.parse import parse_qs
+from dataclasses import asdict
+from typing import Awaitable, Callable
 
-import uvicorn
-from fastapi import FastAPI, Request, HTTPException, Depends, BackgroundTasks
-from fastapi.security import HTTPBearer
-from fastapi.responses import PlainTextResponse
+from fastapi import FastAPI, HTTPException, Request, Response
 
-from .whatsapp_channel import WhatsAppChannel
-from ..agents.executive_assistant import ExecutiveAssistant
+from .whatsapp import IncomingMessage, StatusUpdate
+from .whatsapp_manager import WhatsAppManager
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
-app = FastAPI(
-    title="WhatsApp Business Webhook Server",
-    description="Handles Twilio WhatsApp Business API webhooks for AI Agency Platform",
-    version="1.0.0"
-)
+# EA handler signature: (message, conversation_id) -> response text
+# The real wiring uses ExecutiveAssistant.handle_customer_interaction;
+# tests inject a mock.
+EAHandler = Callable[..., Awaitable[str]]
 
-# Security
-security = HTTPBearer()
+_FALLBACK_REPLY = "I'm having trouble processing that. Give me a moment."
 
-# Customer routing - maps phone numbers to customer IDs
-CUSTOMER_ROUTING: Dict[str, str] = {}
 
-# WhatsApp channels cache
-whatsapp_channels: Dict[str, WhatsAppChannel] = {}
+def build_app(*, manager: WhatsAppManager, ea_handler: EAHandler) -> FastAPI:
+    """
+    Build the webhook FastAPI app with injected dependencies.
 
-class WhatsAppWebhookServer:
-    """WhatsApp webhook server for handling Twilio webhooks"""
-    
-    def __init__(self):
-        self.active_channels: Dict[str, WhatsAppChannel] = {}
-        self.default_config = {
-            'twilio_account_sid': os.getenv('TWILIO_ACCOUNT_SID'),
-            'twilio_auth_token': os.getenv('TWILIO_AUTH_TOKEN'),
-            'whatsapp_number': os.getenv('TWILIO_WHATSAPP_NUMBER', 'whatsapp:+14155238886'),
-            'webhook_auth_token': os.getenv('TWILIO_WEBHOOK_AUTH_TOKEN')
+    `manager`: resolves customer_id → WhatsAppChannel
+    `ea_handler`: async callable(message: str, conversation_id: str) -> str
+    """
+    app = FastAPI(title="WhatsApp Webhook Server", version="2.0.0")
+
+    @app.get("/health")
+    async def health():
+        return {
+            "status": "healthy",
+            "service": "whatsapp-webhook-server",
         }
-    
-    async def get_or_create_channel(self, customer_id: str) -> WhatsAppChannel:
-        """Get existing channel or create new one for customer"""
-        if customer_id not in self.active_channels:
-            channel = WhatsAppChannel(customer_id, self.default_config)
-            await channel.initialize()
-            self.active_channels[customer_id] = channel
-        
-        return self.active_channels[customer_id]
-    
-    def route_phone_to_customer(self, phone_number: str) -> str:
-        """Route phone number to customer ID"""
-        # Remove whatsapp: prefix and clean phone number
-        clean_number = phone_number.replace('whatsapp:', '').replace('+', '').replace(' ', '')
-        
-        # Check customer routing table
-        if clean_number in CUSTOMER_ROUTING:
-            return CUSTOMER_ROUTING[clean_number]
-        
-        # For demo purposes, create customer ID from phone number
-        # In production, this would lookup in customer database
-        customer_id = f"customer-{clean_number[-4:]}"
-        CUSTOMER_ROUTING[clean_number] = customer_id
-        
-        logger.info(f"Routed phone {phone_number} to customer {customer_id}")
-        return customer_id
-    
-    async def process_webhook_async(self, webhook_data: Dict[str, Any]):
-        """Process webhook in background"""
-        try:
-            from_number = webhook_data.get('From', '')
-            customer_id = self.route_phone_to_customer(from_number)
-            
-            # Get or create WhatsApp channel for this customer
-            channel = await self.get_or_create_channel(customer_id)
-            
-            # Process the webhook
-            response = await channel.handle_webhook(webhook_data)
-            
-            logger.info(f"Processed webhook for customer {customer_id}: {response[:100]}...")
-            
-        except Exception as e:
-            logger.error(f"Error processing webhook asynchronously: {e}")
 
-# Initialize server
-webhook_server = WhatsAppWebhookServer()
+    @app.post("/webhook/whatsapp/{customer_id}")
+    async def handle_webhook(customer_id: str, request: Request):
+        channel = await manager.get_channel(customer_id)
+        if channel is None:
+            raise HTTPException(status_code=404, detail="Unknown customer")
 
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "service": "whatsapp-webhook-server",
-        "active_channels": len(webhook_server.active_channels),
-        "environment": os.getenv("ENVIRONMENT", "development")
-    }
-
-@app.post("/webhook/whatsapp")
-async def handle_whatsapp_webhook(
-    request: Request, 
-    background_tasks: BackgroundTasks
-):
-    """
-    Handle incoming WhatsApp webhooks from Twilio
-    
-    This endpoint receives webhooks from Twilio WhatsApp Business API
-    and routes them to the appropriate customer's Executive Assistant
-    """
-    try:
-        # Get request body
         body = await request.body()
-        
-        # Parse form data (Twilio sends form-encoded data)
-        content_type = request.headers.get('content-type', '')
-        if 'application/x-www-form-urlencoded' in content_type:
-            # Parse form data
-            form_data = parse_qs(body.decode('utf-8'))
-            webhook_data = {k: v[0] if v else '' for k, v in form_data.items()}
-        else:
-            # Try to parse as JSON
-            try:
-                webhook_data = json.loads(body.decode('utf-8'))
-            except:
-                webhook_data = {}
-        
-        # Validate webhook signature (optional but recommended)
-        signature = request.headers.get('x-twilio-signature', '')
-        if signature:
-            # For production, validate signature
-            # webhook_server.validate_signature(body.decode('utf-8'), signature)
-            pass
-        
-        # Log incoming webhook for debugging
-        logger.info(f"Received WhatsApp webhook: {webhook_data.get('From', 'unknown')} -> {webhook_data.get('Body', 'no body')[:100]}")
-        
-        # Route to customer based on phone number
-        from_number = webhook_data.get('From', '')
-        if not from_number:
-            raise HTTPException(status_code=400, detail="Missing 'From' field in webhook")
-        
-        customer_id = webhook_server.route_phone_to_customer(from_number)
-        
-        # Get or create WhatsApp channel for this customer
-        channel = await webhook_server.get_or_create_channel(customer_id)
-        
-        # Process webhook synchronously for immediate response
-        try:
-            response = await channel.handle_webhook(webhook_data)
-            
-            # Also process asynchronously for any additional background work
-            background_tasks.add_task(webhook_server.process_webhook_async, webhook_data)
-            
-            logger.info(f"WhatsApp webhook processed for customer {customer_id}")
-            
-            return PlainTextResponse(
-                content="Webhook processed successfully",
-                status_code=200
-            )
-            
-        except Exception as e:
-            logger.error(f"Error processing webhook for customer {customer_id}: {e}")
-            
-            # Send error response to user
-            try:
-                await channel.send_message(
-                    from_number.replace('whatsapp:', ''),
-                    "I apologize, but I encountered an issue processing your message. Let me get back to you in just a moment."
-                )
-            except:
-                pass  # Fail silently
-            
-            return PlainTextResponse(
-                content="Webhook processed with errors",
-                status_code=200  # Still return 200 to Twilio
-            )
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error in webhook handler: {e}")
-        return PlainTextResponse(
-            content="Internal server error",
-            status_code=500
+        headers = dict(request.headers)
+        # Validate against the configured public webhook URL. Behind a proxy
+        # or load balancer, request.url reconstructs the INTERNAL address,
+        # which won't match what the provider signed. Fall back to request
+        # URL only if no canonical URL is configured (bare dev setup).
+        url = channel.webhook_url or str(request.url)
+
+        # Signature validation MUST happen before parsing the body.
+        if not channel.provider.validate_signature(url=url, body=body, headers=headers):
+            logger.warning("Invalid webhook signature for customer=%s", customer_id)
+            raise HTTPException(status_code=403, detail="Invalid signature")
+
+        events = channel.provider.parse_webhook(
+            body, request.headers.get("content-type", "")
         )
 
-@app.post("/webhook/whatsapp/status")
-async def handle_message_status(request: Request):
-    """Handle message status updates from Twilio"""
-    try:
-        body = await request.body()
-        
-        # Parse form data
-        content_type = request.headers.get('content-type', '')
-        if 'application/x-www-form-urlencoded' in content_type:
-            form_data = parse_qs(body.decode('utf-8'))
-            status_data = {k: v[0] if v else '' for k, v in form_data.items()}
-        else:
-            status_data = json.loads(body.decode('utf-8'))
-        
-        # Log status update
-        message_sid = status_data.get('MessageSid', 'unknown')
-        message_status = status_data.get('MessageStatus', 'unknown')
-        to_number = status_data.get('To', '')
-        
-        logger.info(f"Message status update: {message_sid} -> {message_status} for {to_number}")
-        
-        # Update message status in database if needed
-        # This could be implemented to track delivery status
-        
-        return PlainTextResponse("Status updated", status_code=200)
-        
-    except Exception as e:
-        logger.error(f"Error handling status update: {e}")
-        return PlainTextResponse("Error processing status", status_code=200)
+        for event in events:
+            if isinstance(event, IncomingMessage):
+                await _handle_incoming(channel, event, ea_handler)
+            elif isinstance(event, StatusUpdate):
+                await channel.handle_status_callback(event)
 
-@app.get("/customers/{customer_id}/whatsapp/health")
-async def customer_whatsapp_health(customer_id: str):
-    """Get WhatsApp channel health for specific customer"""
-    try:
-        if customer_id in webhook_server.active_channels:
-            channel = webhook_server.active_channels[customer_id]
-            health = await channel.health_check()
-            return health
-        else:
-            return {
-                "customer_id": customer_id,
-                "status": "not_initialized",
-                "message": "WhatsApp channel not active for this customer"
-            }
-    except Exception as e:
-        logger.error(f"Error getting customer WhatsApp health: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return Response(status_code=200)
 
-@app.get("/customers/{customer_id}/whatsapp/conversations")
-async def get_customer_conversations(
-    customer_id: str, 
-    phone_number: str = None,
-    limit: int = 50
-):
-    """Get conversation history for customer"""
-    try:
-        if customer_id not in webhook_server.active_channels:
-            channel = await webhook_server.get_or_create_channel(customer_id)
-        else:
-            channel = webhook_server.active_channels[customer_id]
-        
-        if phone_number:
-            history = await channel.get_conversation_history(phone_number, limit)
-            return {"conversations": history}
-        else:
-            return {"message": "phone_number parameter required"}
-    
-    except Exception as e:
-        logger.error(f"Error getting conversations: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return app
 
-@app.post("/customers/{customer_id}/whatsapp/send")
-async def send_whatsapp_message(
-    customer_id: str,
-    request: Request
-):
-    """Send WhatsApp message via API"""
-    try:
-        data = await request.json()
-        to_number = data.get('to')
-        content = data.get('message')
-        
-        if not to_number or not content:
-            raise HTTPException(status_code=400, detail="Both 'to' and 'message' are required")
-        
-        # Get or create channel
-        channel = await webhook_server.get_or_create_channel(customer_id)
-        
-        # Send message
-        message_id = await channel.send_message(to_number, content, **data)
-        
-        return {
-            "message_id": message_id,
-            "status": "sent",
-            "to": to_number,
-            "customer_id": customer_id
-        }
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error sending message: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/admin/customer-routing")
-async def update_customer_routing(request: Request):
-    """Update customer routing table"""
-    try:
-        data = await request.json()
-        phone_number = data.get('phone_number', '').replace('whatsapp:', '').replace('+', '')
-        customer_id = data.get('customer_id')
-        
-        if not phone_number or not customer_id:
-            raise HTTPException(status_code=400, detail="phone_number and customer_id required")
-        
-        CUSTOMER_ROUTING[phone_number] = customer_id
-        
-        return {
-            "message": "Customer routing updated",
-            "phone_number": phone_number,
-            "customer_id": customer_id
-        }
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error updating customer routing: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/admin/customer-routing")
-async def get_customer_routing():
-    """Get current customer routing table"""
-    return {"routing": CUSTOMER_ROUTING}
-
-# Development server configuration
-if __name__ == "__main__":
-    port = int(os.getenv("WEBHOOK_PORT", 8000))
-    host = os.getenv("WEBHOOK_HOST", "0.0.0.0")
-    
-    logger.info(f"Starting WhatsApp webhook server on {host}:{port}")
-    logger.info("Configured for Twilio WhatsApp Business API")
-    logger.info(f"Twilio Account SID: {webhook_server.default_config.get('twilio_account_sid', 'Not configured')[:10]}...")
-    
-    uvicorn.run(
-        "webhook_server:app",
-        host=host,
-        port=port,
-        reload=True,
-        log_level="info"
+async def _handle_incoming(channel, event: IncomingMessage,
+                           ea_handler: EAHandler) -> None:
+    """Process one incoming message: EA → reply. Errors get a fallback reply."""
+    base_msg = await channel.handle_incoming_message(asdict(event))
+    await channel.store.record_inbound(
+        customer_id=channel.customer_id,
+        conversation_id=base_msg.conversation_id,
+        msg=event,
     )
+    try:
+        response_text = await ea_handler(
+            message=base_msg.content,
+            conversation_id=base_msg.conversation_id,
+        )
+    except Exception:
+        logger.exception(
+            "EA handler failed for customer=%s msg=%s",
+            channel.customer_id, event.provider_message_id,
+        )
+        response_text = _FALLBACK_REPLY
+
+    try:
+        await channel.send_message(base_msg.from_number, response_text)
+    except Exception:
+        logger.exception(
+            "Failed to send reply for customer=%s to=%s",
+            channel.customer_id, base_msg.from_number,
+        )
+
+
+# --- Production entrypoint ------------------------------------------------
+
+def create_default_app() -> FastAPI:
+    """
+    Build app with real dependencies from environment.
+    Used by uvicorn: `uvicorn src.communication.webhook_server:app`
+    """
+    from .whatsapp import WhatsAppConfig
+    from ..agents.executive_assistant import ConversationChannel, ExecutiveAssistant
+
+    mgr = WhatsAppManager()
+    # Register default customer from env (for single-tenant dev setup)
+    default_cfg = WhatsAppConfig.from_env()
+    if default_cfg.from_number and default_cfg.credentials.get("account_sid"):
+        mgr.register_customer("default", default_cfg)
+
+    # One EA instance per process; multi-tenant EA routing is manager's concern later
+    ea_instances: dict[str, ExecutiveAssistant] = {}
+
+    async def ea_handler(message: str, conversation_id: str) -> str:
+        if "default" not in ea_instances:
+            ea_instances["default"] = ExecutiveAssistant(customer_id="default")
+        ea = ea_instances["default"]
+        return await ea.handle_customer_interaction(
+            message=message,
+            channel=ConversationChannel.WHATSAPP,
+            conversation_id=conversation_id,
+        )
+
+    return build_app(manager=mgr, ea_handler=ea_handler)
