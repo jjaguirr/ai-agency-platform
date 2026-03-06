@@ -14,7 +14,7 @@ from typing import Any
 from fastapi import FastAPI
 
 from .dependencies import EAPool
-from .routes import conversations, health
+from .routes import conversations, health, provisioning
 
 
 def create_app(
@@ -47,6 +47,7 @@ def create_app(
 
     app.include_router(health.router)
     app.include_router(conversations.router)
+    app.include_router(provisioning.router)
 
     return app
 

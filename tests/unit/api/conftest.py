@@ -67,19 +67,22 @@ def mock_orchestrator():
     """
     Infrastructure orchestrator stub.
 
-    `provision_customer_environment` returns a minimal CustomerEnvironment-shaped
-    object. Tests can override the mock's return_value or side_effect.
+    `provision_customer_environment` echoes back a CustomerEnvironment-shaped
+    object carrying the customer_id and tier it was called with. Tests that
+    need different behaviour (failure, status=failed, ID normalization) can
+    override `.return_value` or `.side_effect`.
     """
     orch = MagicMock()
 
-    env = MagicMock()
-    env.customer_id = "cust_new"
-    env.tier = "professional"
-    env.status = MagicMock(value="healthy")
-    env.created_at = MagicMock()
-    env.created_at.isoformat = MagicMock(return_value="2026-03-06T00:00:00")
+    async def _provision(*, customer_id: str, tier: str = "professional", **_):
+        env = MagicMock()
+        env.customer_id = customer_id
+        env.tier = tier
+        env.status = MagicMock(value="healthy")
+        env.created_at = MagicMock(isoformat=MagicMock(return_value="2026-03-06T00:00:00"))
+        return env
 
-    orch.provision_customer_environment = AsyncMock(return_value=env)
+    orch.provision_customer_environment = AsyncMock(side_effect=_provision)
     return orch
 
 
