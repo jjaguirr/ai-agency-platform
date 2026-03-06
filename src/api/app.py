@@ -93,7 +93,16 @@ def create_default_app() -> FastAPI:  # pragma: no cover
     redis_client = aioredis.from_url(redis_cfg.url)
 
     # --- EA registry ---
-    ea_registry = EARegistry(factory=lambda cid: ExecutiveAssistant(customer_id=cid))
+    # Size-bound caps worst-case EA memory at max × sizeof(one EA).
+    # 128 is a reasonable per-worker default; scale horizontally or
+    # raise this after profiling if you see thrash (evictions logged
+    # at INFO). Env-configurable so ops don't need a code change.
+    import os as _os
+    ea_max = int(_os.environ.get("EA_REGISTRY_MAX_SIZE", "128"))
+    ea_registry = EARegistry(
+        factory=lambda cid: ExecutiveAssistant(customer_id=cid),
+        max_size=ea_max,
+    )
 
     # --- WhatsApp manager ---
     wa_manager = WhatsAppManager()
