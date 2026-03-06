@@ -42,9 +42,13 @@ def create_app(
     app.state.redis = redis_client
     app.state.orchestrator = orchestrator
     app.state.whatsapp_manager = whatsapp_manager
-    app.state.jwt_secret = jwt_secret or os.environ.get(
-        "API_JWT_SECRET", "dev-secret-change-me"
-    )
+    secret = jwt_secret or os.environ.get("API_JWT_SECRET")
+    if not secret:
+        raise RuntimeError(
+            "JWT secret not configured. Set API_JWT_SECRET or pass "
+            "jwt_secret= to create_app()."
+        )
+    app.state.jwt_secret = secret
 
     register_exception_handlers(app)
 
