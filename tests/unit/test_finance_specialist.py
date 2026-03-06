@@ -603,3 +603,224 @@ class TestParsingBoundaries:
         result = await specialist.execute_task(task)
         assert result.status == SpecialistStatus.COMPLETED
         assert result.payload["amount"] == 150.0  # first match, not 200
+
+
+# --- Portfolio valuation via StockPriceClient seam --------------------------
+
+class StubStockClient:
+    """Test double conforming to StockPriceClient by shape only — no
+    inheritance, no import of the protocol. Structural typing proves
+    the seam works without coupling the stub to finance.py."""
+
+    def __init__(self, prices: dict[str, float] | None = None, call_log: list | None = None):
+        self._prices = prices or {}
+        self._calls = call_log  # optional spy
+
+    async def fetch(self, tickers: list[str]) -> dict[str, float]:
+        if self._calls is not None:
+            self._calls.append(list(tickers))
+        return {t: self._prices[t] for t in tickers if t in self._prices}
+
+
+class TestPortfolioAssessment:
+    """'What's my portfolio worth?' must route to finance on lexical
+    signals alone — portfolio/holdings are unambiguous finance terms."""
+
+    @pytest.fixture
+    def bare_ctx(self):
+        return BusinessContext(business_name="Unknown Co")
+
+    @pytest.mark.parametrize("msg", [
+        "what's my portfolio worth right now?",
+        "how are my stock holdings doing?",
+        "give me a valuation on my shares",
+    ])
+    def test_portfolio_queries_route(self, bare_ctx, msg):
+        fs = FinanceSpecialist()
+        a = fs.assess_task(msg, bare_ctx)
+        assert a.confidence >= 0.6, f"{msg!r} scored {a.confidence:.2f}"
+        assert not a.is_strategic
+
+    def test_should_i_sell_is_strategic(self, retail_ctx):
+        """'should I sell my AAPL?' is advisory — EA keeps it.
+
+        Uses retail_ctx (consistent with TestAssessStrategic) — a customer
+        who owns stocks will have finance context signals. The guarantee:
+        even at high confidence, the strategic flag keeps finance from
+        claiming sell/buy decisions."""
+        fs = FinanceSpecialist()
+        a = fs.assess_task("should I sell my AAPL shares?", retail_ctx)
+        assert a.confidence >= 0.4
+        assert a.is_strategic
+
+
+class TestPortfolioValuation:
+    """Holdings come from domain_memories (customer data, EA-fetched).
+    Prices come from the injected client (public data, specialist-fetched).
+    The seam is the constructor — specialist never sees httpx."""
+
+    @pytest.fixture
+    def holdings_memories(self):
+        return [
+            {"content": "Bought 100 shares of AAPL at $150 back in January", "score": 0.95},
+            {"content": "Picked up 50 MSFT last quarter", "score": 0.9},
+            {"content": "Office rent $1,200 paid Feb 1", "score": 0.7},  # noise — must be ignored
+        ]
+
+    @pytest.mark.asyncio
+    async def test_valuation_arithmetic(self, retail_ctx, holdings_memories):
+        """Holdings × quotes = valuation. Non-holdings memories ignored."""
+        client = StubStockClient({"AAPL": 200.0, "MSFT": 400.0})
+        fs = FinanceSpecialist(stock_client=client)
+
+        task = SpecialistTask(
+            description="what's my portfolio worth?",
+            customer_id="c",
+            business_context=retail_ctx,
+            domain_memories=holdings_memories,
+        )
+        result = await fs.execute_task(task)
+
+        assert result.status == SpecialistStatus.COMPLETED
+        p = result.payload
+        # 100 × $200 + 50 × $400 = $40,000
+        assert p["total_value"] == 40000.0
+        assert p["positions"] == [
+            {"ticker": "AAPL", "shares": 100, "price": 200.0, "value": 20000.0},
+            {"ticker": "MSFT", "shares": 50, "price": 400.0, "value": 20000.0},
+        ]
+        assert p["memories_consulted"] == 3  # looked at all, parsed 2 holdings
+        # Summary states the total, not just "here's your portfolio"
+        assert "$40,000.00" in result.summary_for_ea
+
+    @pytest.mark.asyncio
+    async def test_fetches_only_parsed_tickers(self, retail_ctx, holdings_memories):
+        """Seam contract: specialist passes exactly the tickers it parsed,
+        nothing more. No wildcard fetches, no hard-coded universe."""
+        calls = []
+        client = StubStockClient({"AAPL": 200.0, "MSFT": 400.0}, call_log=calls)
+        fs = FinanceSpecialist(stock_client=client)
+
+        await fs.execute_task(SpecialistTask(
+            description="what's my portfolio worth?",
+            customer_id="c",
+            business_context=retail_ctx,
+            domain_memories=holdings_memories,
+        ))
+
+        assert len(calls) == 1
+        assert sorted(calls[0]) == ["AAPL", "MSFT"]
+
+    @pytest.mark.asyncio
+    async def test_no_client_degrades_gracefully(self, retail_ctx, holdings_memories):
+        """stock_client=None (default) → return holdings WITHOUT prices.
+        Still COMPLETED — the customer gets their position list."""
+        fs = FinanceSpecialist()  # no client injected
+
+        result = await fs.execute_task(SpecialistTask(
+            description="what's my portfolio worth?",
+            customer_id="c",
+            business_context=retail_ctx,
+            domain_memories=holdings_memories,
+        ))
+
+        assert result.status == SpecialistStatus.COMPLETED
+        p = result.payload
+        assert p["total_value"] is None
+        assert p["quotes_unavailable"] is True
+        # Holdings still parsed and returned
+        positions = {pos["ticker"]: pos["shares"] for pos in p["positions"]}
+        assert positions == {"AAPL": 100, "MSFT": 50}
+        # Summary tells the customer WHY there's no valuation
+        assert "quote" in result.summary_for_ea.lower() or \
+               "price" in result.summary_for_ea.lower()
+
+    @pytest.mark.asyncio
+    async def test_client_returns_empty_degrades_gracefully(self, retail_ctx, holdings_memories):
+        """Seam contract says: raise nothing, return {} on failure.
+        Specialist must handle empty quotes (API down) same as no client."""
+        client = StubStockClient({})  # returns {} for any fetch
+        fs = FinanceSpecialist(stock_client=client)
+
+        result = await fs.execute_task(SpecialistTask(
+            description="what's my portfolio worth?",
+            customer_id="c",
+            business_context=retail_ctx,
+            domain_memories=holdings_memories,
+        ))
+
+        assert result.status == SpecialistStatus.COMPLETED
+        assert result.payload["total_value"] is None
+        assert result.payload["quotes_unavailable"] is True
+
+    @pytest.mark.asyncio
+    async def test_partial_quotes_still_reports_what_it_has(self, retail_ctx, holdings_memories):
+        """One ticker has a price, one doesn't (delisted? bad symbol?).
+        Report the priced positions, flag the unpriced ones."""
+        client = StubStockClient({"AAPL": 200.0})  # no MSFT price
+        fs = FinanceSpecialist(stock_client=client)
+
+        result = await fs.execute_task(SpecialistTask(
+            description="what's my portfolio worth?",
+            customer_id="c",
+            business_context=retail_ctx,
+            domain_memories=holdings_memories,
+        ))
+
+        assert result.status == SpecialistStatus.COMPLETED
+        p = result.payload
+        # Total reflects only what we could price
+        assert p["total_value"] == 20000.0  # just the 100 AAPL
+        assert p["unpriced_tickers"] == ["MSFT"]
+        # Positions list includes both, with price=None for the unpriced one
+        positions = {pos["ticker"]: pos for pos in p["positions"]}
+        assert positions["AAPL"]["price"] == 200.0
+        assert positions["MSFT"]["price"] is None
+
+    @pytest.mark.asyncio
+    async def test_no_holdings_in_memories(self, retail_ctx):
+        """Portfolio query but no holdings on record → completed with
+        empty positions, not NEEDS_CLARIFICATION (customer might just
+        not have told us yet)."""
+        client = StubStockClient({"AAPL": 200.0})
+        fs = FinanceSpecialist(stock_client=client)
+
+        result = await fs.execute_task(SpecialistTask(
+            description="what's my portfolio worth?",
+            customer_id="c",
+            business_context=retail_ctx,
+            domain_memories=[
+                {"content": "Office rent $1,200", "score": 0.7},  # no holdings
+            ],
+        ))
+
+        assert result.status == SpecialistStatus.COMPLETED
+        assert result.payload["positions"] == []
+        assert result.payload["total_value"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_cash_flow_query_does_not_hit_client(self, retail_ctx):
+        """Isolation: non-portfolio queries don't touch the stock client.
+        Proves _is_portfolio_query gating works."""
+        calls = []
+        client = StubStockClient({}, call_log=calls)
+        fs = FinanceSpecialist(stock_client=client)
+
+        await fs.execute_task(SpecialistTask(
+            description="what's my cash flow looking like?",
+            customer_id="c",
+            business_context=retail_ctx,
+            domain_memories=[],
+        ))
+
+        assert calls == []  # client never invoked
+
+    def test_no_httpx_import_in_finance(self):
+        """Architectural assertion: finance.py depends on the contract,
+        not the transport. grep for httpx → find nothing."""
+        import src.agents.specialists.finance as finance_module
+        import inspect
+        source = inspect.getsource(finance_module)
+        assert "httpx" not in source
+        assert "aiohttp" not in source
+        assert "requests" not in source
