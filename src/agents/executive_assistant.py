@@ -47,6 +47,15 @@ except ImportError as e:
     logger.warning(f"AI/ML memory features not available: {e}")
     AI_ML_AVAILABLE = False
 
+# Specialist delegation (Phase 2)
+from .base.specialist import (
+    DelegationRegistry,
+    SpecialistTask,
+    SpecialistResult,
+    SpecialistStatus,
+)
+from .specialists.social_media import SocialMediaSpecialist
+
 # Competitive Positioning System
 try:
     from .competitive_positioning import competitive_positioning
@@ -152,6 +161,11 @@ class ConversationState:
     business_areas_discovered: List[str] = field(default_factory=list)
     pain_points_identified: List[str] = field(default_factory=list)
     automation_opportunities_found: List[str] = field(default_factory=list)
+
+    # Delegation state. active_delegation persists across turns (via Redis)
+    # when a specialist is mid-clarification.
+    delegation_target: Optional[str] = None
+    active_delegation: Optional[Dict[str, Any]] = None
 
 class ExecutiveAssistantMemory:
     """Enhanced multi-layer memory system with AI/ML business learning capabilities"""
@@ -578,6 +592,10 @@ class ExecutiveAssistant:
         # Initialize systems
         self.memory = ExecutiveAssistantMemory(customer_id)
         self.workflow_creator = WorkflowCreator(customer_id)
+
+        self.delegation_registry = DelegationRegistry(confidence_threshold=0.6)
+        self.delegation_registry.register(SocialMediaSpecialist())
+        self.specialist_timeout = 15.0
         
         # Initialize LLM for sophisticated conversation management
         if os.getenv("OPENAI_API_KEY"):
@@ -1140,17 +1158,26 @@ The key difference: automation tools give you software to configure. I give you 
         workflow.add_node("update_context", update_business_context)
         workflow.add_node("handle_general_assistance", self._handle_general_assistance)
         workflow.add_node("handle_clarification", self._handle_clarification)
-        
+        workflow.add_node("delegate_to_specialist", self._delegate_to_specialist)
+
         # Intent-based conditional routing functions
         def route_after_intent_classification(state: ConversationState) -> str:
             """Route conversation based on classified intent"""
             intent = state.current_intent
             confidence = state.confidence_score
-            
+
+            # Delegation gate first — a confident specialist claim stands in
+            # for LLM intent classification, so don't gate it on LLM confidence.
+            if state.active_delegation:
+                return "delegate_to_specialist"
+            last_msg = state.messages[-1].content if state.messages else ""
+            if self.delegation_registry.route(last_msg, state.business_context):
+                return "delegate_to_specialist"
+
             # Low confidence - need clarification
             if confidence < 0.4:
                 return "handle_clarification"
-            
+
             # Intent-based routing
             if intent == ConversationIntent.WORKFLOW_CREATION:
                 return "analyze_opportunities"
@@ -1204,9 +1231,10 @@ The key difference: automation tools give you software to configure. I give you 
             route_after_intent_classification,
             {
                 "business_discovery": "business_discovery",
-                "analyze_opportunities": "analyze_opportunities", 
+                "analyze_opportunities": "analyze_opportunities",
                 "handle_general_assistance": "handle_general_assistance",
-                "handle_clarification": "handle_clarification"
+                "handle_clarification": "handle_clarification",
+                "delegate_to_specialist": "delegate_to_specialist",
             }
         )
         
@@ -1234,10 +1262,119 @@ The key difference: automation tools give you software to configure. I give you 
         workflow.add_edge("create_workflow", "update_context")
         workflow.add_edge("handle_general_assistance", "update_context")
         workflow.add_edge("handle_clarification", "update_context")
+        workflow.add_edge("delegate_to_specialist", "update_context")
         workflow.add_edge("update_context", END)
         
         return workflow.compile()
     
+    async def _delegate_to_specialist(self, state: ConversationState) -> ConversationState:
+        """Hand a task to a specialist, weave the result into the EA's response.
+
+        Fresh delegation: router sent us, re-route to find which specialist.
+        Follow-up: active_delegation set from Redis, customer is replying to
+        a clarification — skip routing, carry prior_turns back to the same one.
+        """
+        last_message = state.messages[-1].content if state.messages else ""
+
+        if state.active_delegation:
+            domain = state.active_delegation["domain"]
+            original_task = state.active_delegation.get("original_task", last_message)
+            prior_turns = list(state.active_delegation.get("prior_turns", []))
+            prior_turns.append({"role": "customer", "content": last_message})
+            task_description = last_message
+        else:
+            # LangGraph conditional-edge routers can't mutate state, so the
+            # graph path arrives with delegation_target unset — re-route here.
+            if state.delegation_target:
+                domain = state.delegation_target
+            else:
+                match = self.delegation_registry.route(last_message, state.business_context)
+                domain = match.specialist.domain if match else None
+            original_task = last_message
+            prior_turns = []
+            task_description = last_message
+
+        specialist = self.delegation_registry.get(domain) if domain else None
+        if specialist is None:
+            logger.warning(f"Delegation target {domain!r} not registered — falling back")
+            state.active_delegation = None
+            return await self._handle_general_assistance(state)
+
+        # EA pre-fetches on the specialist's behalf — specialist never
+        # touches the memory client (isolation boundary).
+        try:
+            domain_memories = await self.memory.search_business_knowledge(
+                f"{specialist.domain} {original_task}", limit=5
+            )
+        except Exception as e:
+            logger.warning(f"Memory search failed during delegation, proceeding without: {e}")
+            domain_memories = []
+
+        task = SpecialistTask(
+            description=task_description,
+            customer_id=self.customer_id,
+            business_context=state.business_context,
+            domain_memories=domain_memories,
+            prior_turns=prior_turns,
+        )
+
+        result = await self.delegation_registry.execute(
+            specialist, task, timeout=self.specialist_timeout
+        )
+
+        if result.status == SpecialistStatus.FAILED:
+            logger.info(
+                f"Specialist {domain} failed ({result.error}) — EA handling directly"
+            )
+            state.active_delegation = None
+            return await self._handle_general_assistance(state)
+
+        if result.status == SpecialistStatus.NEEDS_CLARIFICATION:
+            # Persist the mid-flight delegation so the next turn resumes.
+            # prior_turns grows: what was already there + the new question.
+            state.active_delegation = {
+                "domain": domain,
+                "original_task": original_task,
+                "prior_turns": prior_turns + [
+                    {"role": "specialist", "content": result.clarification_question},
+                ],
+            }
+            state.messages.append(AIMessage(content=result.clarification_question))
+            return state
+
+        # COMPLETED: weave the specialist's structured result into the EA's
+        # conversational voice. When an LLM is available we let it phrase;
+        # otherwise we fall back to the specialist's summary_for_ea hint.
+        state.active_delegation = None
+        response = await self._synthesize_specialist_result(result, state.business_context)
+        state.messages.append(AIMessage(content=response))
+        return state
+
+    async def _synthesize_specialist_result(
+        self, result: SpecialistResult, context: BusinessContext
+    ) -> str:
+        """Turn a specialist's structured payload into an EA-voiced response.
+
+        The specialist provides summary_for_ea as a hint but the EA owns
+        phrasing. With an LLM we prompt it to speak as Sarah; without, the
+        hint IS the response (it's already prose).
+        """
+        if self.llm and result.summary_for_ea:
+            synthesis_prompt = (
+                f"You are Sarah, the Executive Assistant for {context.business_name or 'the customer'}. "
+                f"A specialist on your team just checked something for the customer. "
+                f"Relay this naturally in your own voice — warm, concise, no jargon:\n\n"
+                f"{result.summary_for_ea}\n\n"
+                f"Supporting data: {json.dumps(result.payload)}"
+            )
+            try:
+                llm_response = await self.llm.ainvoke([HumanMessage(content=synthesis_prompt)])
+                return llm_response.content
+            except Exception as e:
+                logger.warning(f"Synthesis LLM call failed, using specialist summary: {e}")
+
+        return result.summary_for_ea or f"I checked on that — here's what I found: {json.dumps(result.payload)}"
+
     async def _handle_general_assistance(self, state: ConversationState) -> ConversationState:
         """Handle general business assistance requests"""
         context = await self.memory.get_business_context()
@@ -1319,7 +1456,14 @@ The key difference: automation tools give you software to configure. I give you 
         try:
             # Get business context
             business_context = await self.memory.get_business_context()
-            
+
+            # Restore multi-turn delegation state from Redis. If the last
+            # turn ended with a specialist asking for clarification, this
+            # is where we pick that thread back up — before the graph runs,
+            # so the router can short-circuit straight to the specialist.
+            prior_ctx = await self.memory.get_conversation_context(conversation_id)
+            restored_delegation = prior_ctx.get("active_delegation") if prior_ctx else None
+
             # Create enhanced conversation state
             state = ConversationState(
                 messages=[HumanMessage(content=message)],
@@ -1327,7 +1471,8 @@ The key difference: automation tools give you software to configure. I give you 
                 customer_id=self.customer_id,
                 conversation_id=conversation_id,
                 current_intent=ConversationIntent.UNKNOWN,
-                conversation_phase=ConversationPhase.INITIAL_CONTACT
+                conversation_phase=ConversationPhase.INITIAL_CONTACT,
+                active_delegation=restored_delegation,
             )
             
             # Run through sophisticated LangGraph conversation flow
@@ -1355,7 +1500,8 @@ The key difference: automation tools give you software to configure. I give you 
                     "workflow_created": result.get("workflow_created", False),
                     "intent": result.get("current_intent", {}).value if hasattr(result.get("current_intent", {}), "value") else str(result.get("current_intent", "unknown")),
                     "confidence": result.get("confidence_score", 0.0),
-                    "conversation_depth": result.get("conversation_depth", 0)
+                    "conversation_depth": result.get("conversation_depth", 0),
+                    "active_delegation": result.get("active_delegation"),
                 })
             else:
                 # Handle ConversationState object
@@ -1377,7 +1523,8 @@ The key difference: automation tools give you software to configure. I give you 
                     "workflow_created": result.workflow_created,
                     "intent": result.current_intent.value,
                     "confidence": result.confidence_score,
-                    "conversation_depth": result.conversation_depth
+                    "conversation_depth": result.conversation_depth,
+                    "active_delegation": result.active_delegation,
                 })
             
             logger.info(f"Enhanced EA handled interaction for customer {self.customer_id} via {channel.value}")
