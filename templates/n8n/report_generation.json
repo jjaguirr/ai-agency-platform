@@ -1,0 +1,93 @@
+{
+  "name": "Weekly Business Report",
+  "nodes": [
+    {
+      "id": "schedule",
+      "name": "Every Monday 8am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300],
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "cronExpression", "expression": "0 8 * * 1"}]
+        }
+      }
+    },
+    {
+      "id": "fetch",
+      "name": "Fetch Metrics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [450, 300],
+      "parameters": {
+        "method": "GET",
+        "url": "{{CONFIGURE: metrics API endpoint}}",
+        "authentication": "none"
+      }
+    },
+    {
+      "id": "aggregate",
+      "name": "Aggregate Last 7 Days",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [650, 300],
+      "parameters": {
+        "mode": "manual",
+        "fields": {
+          "values": [
+            {"name": "period", "type": "string", "value": "7d"},
+            {"name": "summary", "type": "string", "value": "={{ JSON.stringify($input.all()) }}"}
+          ]
+        }
+      }
+    },
+    {
+      "id": "email",
+      "name": "Send Report Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [850, 300],
+      "parameters": {
+        "fromEmail": "{{CONFIGURE: sender email}}",
+        "toEmail": "{{CONFIGURE: recipient email}}",
+        "subject": "Weekly Business Report",
+        "emailType": "text",
+        "message": "={{ $json.summary }}"
+      }
+    },
+    {
+      "id": "store",
+      "name": "Archive To Drive",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1050, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "{{CONFIGURE: storage endpoint}}",
+        "authentication": "none",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {"name": "report", "value": "={{ $json.summary }}"}
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every Monday 8am": {
+      "main": [[{"node": "Fetch Metrics", "type": "main", "index": 0}]]
+    },
+    "Fetch Metrics": {
+      "main": [[{"node": "Aggregate Last 7 Days", "type": "main", "index": 0}]]
+    },
+    "Aggregate Last 7 Days": {
+      "main": [[{"node": "Send Report Email", "type": "main", "index": 0}]]
+    },
+    "Send Report Email": {
+      "main": [[{"node": "Archive To Drive", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {}
+}

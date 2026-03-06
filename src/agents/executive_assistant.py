@@ -47,6 +47,8 @@ except ImportError as e:
     logger.warning(f"AI/ML memory features not available: {e}")
     AI_ML_AVAILABLE = False
 
+from .ai_ml.workflow_generator import Generated, NeedsClarification, generate
+
 # Specialist delegation (Phase 2)
 from .base.specialist import (
     DelegationRegistry,
@@ -896,45 +898,9 @@ The key difference: automation tools give you software to configure. I give you 
             
             return state
         
-        async def create_workflow_node(state: ConversationState) -> ConversationState:
-            """Enhanced workflow creation with template support"""
-            if state.needs_workflow and not state.workflow_created:
-                last_message = state.messages[-1].content if state.messages else ""
-                process_description = last_message
-                
-                try:
-                    template_id = None
-                    customization_params = {}
-                    
-                    if state.workflow_templates_matched:
-                        template_info = state.workflow_templates_matched[0]
-                        if isinstance(template_info, str) and "template_id" in template_info:
-                            try:
-                                template_data = json.loads(template_info)
-                                template_id = template_data.get("template_id")
-                            except:
-                                template_id = "social_media_automation"
-                    
-                    if state.workflow_customization_params:
-                        customization_params = json.dumps(state.workflow_customization_params)
-                    else:
-                        customization_params = "{}"
-                    
-                    workflow_result = await create_workflow.ainvoke({
-                        "process_description": process_description,
-                        "template_id": template_id or "custom",
-                        "customization_params": customization_params
-                    })
-                    state.messages.append(AIMessage(content=workflow_result))
-                    state.workflow_created = True
-                    
-                except Exception as e:
-                    logger.error(f"Error creating workflow: {e}")
-                    error_message = f"I encountered an issue creating the workflow: {str(e)}. Let me try a different approach or gather more information to create the perfect automation for you."
-                    state.messages.append(AIMessage(content=error_message))
-                    state.workflow_created = False
-            
-            return state
+        # create_workflow_node: extracted to self._create_workflow_node so it's
+        # testable and can call generate() directly instead of going through
+        # the @tool string interface.
         
         async def update_business_context(state: ConversationState) -> ConversationState:
             """Enhanced business context update with intelligent extraction"""
@@ -1154,7 +1120,7 @@ The key difference: automation tools give you software to configure. I give you 
         workflow.add_node("intent_classification", intent_classification_node)
         workflow.add_node("business_discovery", business_discovery)
         workflow.add_node("analyze_opportunities", analyze_automation_opportunities)
-        workflow.add_node("create_workflow", create_workflow_node)
+        workflow.add_node("create_workflow", self._create_workflow_node)
         workflow.add_node("update_context", update_business_context)
         workflow.add_node("handle_general_assistance", self._handle_general_assistance)
         workflow.add_node("handle_clarification", self._handle_clarification)
@@ -1202,6 +1168,8 @@ The key difference: automation tools give you software to configure. I give you 
         
         def route_after_workflow_creation(state: ConversationState) -> str:
             """Route after workflow creation attempt"""
+            if state.requires_clarification:
+                return "handle_clarification"
             return "update_context"
         
         def route_after_business_discovery(state: ConversationState) -> str:
@@ -1258,8 +1226,15 @@ The key difference: automation tools give you software to configure. I give you 
             }
         )
         
-        # After workflow creation, always update context
-        workflow.add_edge("create_workflow", "update_context")
+        # After workflow creation: clarification loop or continue
+        workflow.add_conditional_edges(
+            "create_workflow",
+            route_after_workflow_creation,
+            {
+                "handle_clarification": "handle_clarification",
+                "update_context": "update_context",
+            }
+        )
         workflow.add_edge("handle_general_assistance", "update_context")
         workflow.add_edge("handle_clarification", "update_context")
         workflow.add_edge("delegate_to_specialist", "update_context")
@@ -1267,6 +1242,47 @@ The key difference: automation tools give you software to configure. I give you 
         
         return workflow.compile()
     
+    async def _create_workflow_node(self, state: ConversationState) -> ConversationState:
+        """
+        LangGraph node: generate an n8n workflow from the customer's last
+        message. On low confidence the generator returns targeted questions;
+        stash them for _handle_clarification and let the router take us there.
+        """
+        if not (state.needs_workflow and not state.workflow_created):
+            return state
+
+        if self.llm is None:
+            state.messages.append(AIMessage(
+                content="I'd love to build that for you, but workflow "
+                        "generation isn't available right now."
+            ))
+            return state
+
+        description = state.messages[-1].content if state.messages else ""
+
+        try:
+            result = await generate(description, llm=self.llm)
+        except Exception as e:
+            logger.error(f"Workflow generation failed: {e}")
+            state.messages.append(AIMessage(
+                content="I hit a snag building that workflow — can you "
+                        "describe the process a bit differently?"
+            ))
+            return state
+
+        if isinstance(result, NeedsClarification):
+            state.pending_questions = result.questions
+            state.collected_info["partial_parse"] = result.partial.model_dump()
+            state.requires_clarification = True
+            state.workflow_created = False
+        else:  # Generated
+            state.collected_info["generated_workflow"] = result.workflow.model_dump()
+            state.messages.append(AIMessage(content=result.explanation))
+            state.workflow_created = True
+            state.requires_clarification = False
+
+        return state
+
     async def _delegate_to_specialist(self, state: ConversationState) -> ConversationState:
         """Hand a task to a specialist, weave the result into the EA's response.
 
@@ -1411,6 +1427,19 @@ The key difference: automation tools give you software to configure. I give you 
     
     async def _handle_clarification(self, state: ConversationState) -> ConversationState:
         """Handle requests that need clarification"""
+        # If the workflow generator (or anything else) already produced
+        # targeted questions, ask those verbatim — don't have the LLM
+        # paraphrase them.
+        if state.pending_questions:
+            qs = "\n".join(f"- {q}" for q in state.pending_questions)
+            state.pending_questions = []
+            state.messages.append(AIMessage(
+                content=f"To build this right, I need a bit more detail:\n{qs}"
+            ))
+            state.current_intent = ConversationIntent.CLARIFICATION_NEEDED
+            state.requires_clarification = True
+            return state
+
         context = await self.memory.get_business_context()
         last_message = state.messages[-1].content if state.messages else ""
         
