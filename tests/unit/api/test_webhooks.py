@@ -110,24 +110,48 @@ class TestWebhookAuth:
         )
         assert resp.status_code == 200
 
-    def test_signature_validated_against_configured_webhook_url(self, mock_ea_factory):
+    def test_signature_validated_against_configured_url_not_request_url(self, mock_ea_factory):
         """
         Behind a proxy, request.url is the internal address — Twilio signed
         the public URL. The channel's configured webhook_url must be used.
+
+        Use a webhook_base_url that DIFFERS from TestClient's http://testserver
+        so the assertion actually discriminates. (Previously both were
+        "testserver" so the test couldn't tell them apart.)
         """
-        mgr, provider = _manager_with_mock_provider(signature_valid=True)
+        cfg = WhatsAppConfig(
+            provider="twilio",
+            from_number="+14155238886",
+            credentials={"account_sid": "ACtest", "auth_token": "tok"},
+            webhook_base_url="https://public.example.com",  # NOT testserver
+        )
+        mgr = WhatsAppManager()
+        mgr.register_customer("cust_proxy", cfg)
+
+        mock_provider = Mock()
+        mock_provider.validate_signature = Mock(return_value=True)
+        mock_provider.parse_webhook = Mock(return_value=[])
+
+        original = mgr.get_channel
+
+        async def inject(cid):
+            ch = await original(cid)
+            if ch:
+                ch._provider = mock_provider
+            return ch
+
+        mgr.get_channel = inject
         client = _app_with(mgr, mock_ea_factory)
 
         client.post(
-            "/v1/webhooks/whatsapp/cust_wa",
+            "/v1/webhooks/whatsapp/cust_proxy",
             content=b"x",
             headers={"X-Twilio-Signature": "sig"},
         )
 
-        validate_call = provider.validate_signature.call_args
-        # The configured webhook_base_url is http://testserver — the channel
-        # builds the full URL from it. Must NOT be the TestClient's internal URL.
-        assert "testserver" in validate_call.kwargs["url"]
+        url = mock_provider.validate_signature.call_args.kwargs["url"]
+        assert url.startswith("https://public.example.com"), url
+        assert "testserver" not in url  # proves we did NOT use request.url
 
 
 # --- Incoming message flow -------------------------------------------------
@@ -206,6 +230,11 @@ class TestIncomingMessage:
         assert "boom" not in sent
 
     def test_send_failure_still_returns_200(self, mock_ea_factory):
+        """
+        The EA must have run BEFORE the send attempt. A short-circuit that
+        skips the EA on send-setup failure would also return 200 — so assert
+        on the call order, not just the status code.
+        """
         incoming = IncomingMessage(
             provider_message_id="SM_send_fail",
             from_number="+15551234567",
@@ -221,13 +250,23 @@ class TestIncomingMessage:
             content=b"x",
             headers={"X-Twilio-Signature": "sig"},
         )
+
         assert resp.status_code == 200
+        # EA was fetched and called — the send failure happened AFTER.
+        assert len(mock_ea_factory.created) == 1
+        _, ea = mock_ea_factory.created[0]
+        ea.handle_customer_interaction.assert_awaited_once()
+        # Send was attempted with the EA's response.
+        provider.send_text.assert_awaited_once()
+        assert provider.send_text.call_args.kwargs["body"] == "mock EA response"
 
 
 # --- Status callbacks ------------------------------------------------------
 
 class TestStatusCallback:
-    def test_status_update_stored_ea_not_called(self, mock_ea_factory):
+    def test_status_update_recorded_in_store_ea_untouched(self, mock_ea_factory):
+        import asyncio
+
         update = StatusUpdate(
             provider_message_id="SM_out_42",
             status=MessageStatus.DELIVERED,
@@ -242,4 +281,8 @@ class TestStatusCallback:
         )
 
         assert resp.status_code == 200
-        assert len(mock_ea_factory.created) == 0  # status updates bypass EA
+        # The status actually landed in the shared store — not just "didn't crash".
+        stored = asyncio.run(mgr.store.get_status("SM_out_42"))
+        assert stored == MessageStatus.DELIVERED
+        # And the EA pool was never touched.
+        assert len(mock_ea_factory.created) == 0

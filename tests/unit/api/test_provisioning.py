@@ -107,8 +107,9 @@ class TestProvisionFailure:
         resp = client.post("/v1/customers", json={"customer_id": "cust_fail"})
 
         assert resp.status_code == 503
-        body = resp.json()
-        assert "error" in body or "detail" in body
+        # The error envelope is ours — errors.py wraps HTTPException.detail
+        # as {"error": ...}. No `or` escape hatch for format drift.
+        assert resp.json() == {"error": "Provisioning failed"}
 
     def test_orchestrator_error_does_not_leak_internals(self, client, mock_orchestrator):
         mock_orchestrator.provision_customer_environment.side_effect = RuntimeError(

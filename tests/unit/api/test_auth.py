@@ -31,10 +31,13 @@ class TestCreateToken:
         payload = jwt.decode(token, SECRET, algorithms=["HS256"])
         assert payload["sub"] == "cust_abc"
 
-    def test_includes_expiry_claim(self):
+    def test_expiry_is_in_the_future(self):
+        import time
         token = create_token("cust_abc", secret=SECRET)
         payload = jwt.decode(token, SECRET, algorithms=["HS256"])
-        assert "exp" in payload
+        # Default TTL is 24h — exp must be ahead of now. A presence check
+        # alone would pass on exp=0.
+        assert payload["exp"] > time.time()
 
     def test_respects_expires_delta(self):
         short = create_token("c", secret=SECRET, expires_delta=timedelta(seconds=1))
@@ -72,10 +75,13 @@ class TestDecodeToken:
     def test_rejects_tampered_payload(self):
         token = create_token("cust_x", secret=SECRET)
         header, payload, sig = token.split(".")
-        # Flip one char in the payload; signature no longer matches
-        tampered = f"{header}.{payload[:-1]}X.{sig}"
+        # Swap two interior characters — guaranteed mutation regardless of
+        # what the original chars were. (Appending a fixed char risks a no-op
+        # if the original already ends with it.)
+        tampered_payload = payload[:2] + payload[3] + payload[2] + payload[4:]
+        assert tampered_payload != payload
         with pytest.raises(AuthError):
-            decode_token(tampered, secret=SECRET)
+            decode_token(f"{header}.{tampered_payload}.{sig}", secret=SECRET)
 
     def test_rejects_token_without_subject(self):
         # Craft a token that's validly signed but missing 'sub'

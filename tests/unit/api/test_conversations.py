@@ -58,17 +58,17 @@ class TestEAPool:
         assert ea_a.customer_id == "cust_a"
         assert ea_b.customer_id == "cust_b"
 
-    async def test_concurrent_gets_same_customer_create_exactly_one(self):
+    async def test_lock_serializes_creation_under_real_contention(self):
         """
-        N coroutines gather'd on get() for the same customer → exactly one
-        factory call.
+        Force genuine overlap: pre-acquire the pool's lock, launch N get()
+        tasks, let them all pass the fast-path check and queue on the lock,
+        THEN release. Without the double-check inside the lock, every queued
+        task would call the factory.
 
-        Note: with a sync factory (matching ExecutiveAssistant.__init__),
-        the first coroutine completes without yielding, so in today's code
-        the race can't actually happen. The lock is defensive: if the
-        factory ever becomes async, this test proves the lock serializes
-        creation. If someone removes the lock AND makes construction async,
-        this fails.
+        This is white-box (touches pool._lock) but it's the only way to
+        create contention with a sync factory — otherwise the first
+        coroutine completes before any other is scheduled, and the lock is
+        never contended.
         """
         call_count = 0
 
@@ -78,21 +78,41 @@ class TestEAPool:
             return MagicMock(customer_id=cid)
 
         pool = EAPool(ea_factory=factory)
-        results = await asyncio.gather(*[pool.get("cust_race") for _ in range(20)])
 
-        assert call_count == 1, f"Factory called {call_count}× — race detected"
+        # Hold the lock so all gets pile up behind it.
+        await pool._lock.acquire()
+        tasks = [asyncio.create_task(pool.get("cust_race")) for _ in range(10)]
+        # Yield so every task runs up to the lock acquire and suspends.
+        await asyncio.sleep(0)
+        # All 10 are now past the fast-path check (cache was empty) and
+        # waiting on the lock. Release it.
+        pool._lock.release()
+
+        results = await asyncio.gather(*tasks)
+
+        assert call_count == 1, (
+            f"Factory called {call_count}× — double-check inside lock failed"
+        )
         assert all(r is results[0] for r in results)
 
-    async def test_concurrent_gets_different_customers_dont_block_each_other(self):
+    async def test_uncontended_gathers_still_singleton(self):
         """
-        Weaker guarantee: different customers can proceed independently.
-        We don't require true parallelism here (CPython GIL + sync factory),
-        just that cust_a's creation doesn't prevent cust_b from completing.
+        Contract test: N concurrent gets → 1 instance. Without forced
+        contention this doesn't exercise the lock (sync factory completes
+        before other coroutines schedule), but it's the observable guarantee
+        the API relies on.
         """
-        pool = EAPool(ea_factory=lambda cid: MagicMock(customer_id=cid))
-        ea_a, ea_b = await asyncio.gather(pool.get("cust_a"), pool.get("cust_b"))
-        assert ea_a.customer_id == "cust_a"
-        assert ea_b.customer_id == "cust_b"
+        call_count = 0
+
+        def factory(cid):
+            nonlocal call_count
+            call_count += 1
+            return MagicMock(customer_id=cid)
+
+        pool = EAPool(ea_factory=factory)
+        results = await asyncio.gather(*[pool.get("cust_x") for _ in range(20)])
+        assert call_count == 1
+        assert len({id(r) for r in results}) == 1
 
     async def test_factory_exception_not_cached(self):
         """
@@ -117,9 +137,15 @@ class TestEAPool:
         assert ea.customer_id == "cust_flaky"
         assert len(attempts) == 2
 
-    def test_size_reports_cached_count(self):
+    async def test_size_tracks_cached_instances(self):
         pool = EAPool(ea_factory=lambda cid: MagicMock())
         assert pool.size() == 0
+        await pool.get("a")
+        assert pool.size() == 1
+        await pool.get("b")
+        assert pool.size() == 2
+        await pool.get("a")  # cached — no change
+        assert pool.size() == 2
 
 
 # --- Conversation endpoint -------------------------------------------------
@@ -206,36 +232,41 @@ class TestConversationEndpoint:
         )
         assert resp.status_code == 422
 
-    def test_ea_degraded_response_still_200(self, client, auth_header, mock_ea_factory):
+    def test_ea_degraded_response_passed_through_as_200(self, jwt_secret):
         """
         The EA never raises — it returns fallback text on internal failure.
-        The API must pass that through as 200, not infer a 500.
+        The API must pass that exact text through with 200, not pattern-match
+        on apology strings and infer an error.
+
+        Builds its own app because the conftest pool is already wired to the
+        happy-path factory and pools don't support factory swapping.
         """
-        # Override the factory to return an EA whose "degraded" response
-        # looks like an apology
+        from src.api.app import create_app
+        from src.api.auth import create_token
+
+        fallback = "I apologize, but I encountered an issue. Let me get back to you."
+
         def degraded_factory(cid):
             ea = MagicMock()
-            ea.handle_customer_interaction = AsyncMock(
-                return_value="I apologize, but I encountered an issue."
-            )
+            ea.handle_customer_interaction = AsyncMock(return_value=fallback)
             return ea
 
-        # Reach into the pool and swap the factory (before any get())
-        # The pool in conftest is already wired with mock_ea_factory;
-        # easier to just verify the pass-through semantics.
-        # Actually — the mock_ea_factory already returns a normal response,
-        # so this test verifies the contract: whatever the EA returns,
-        # the API returns 200 with that text.
+        app = create_app(
+            ea_pool=EAPool(ea_factory=degraded_factory),
+            jwt_secret=jwt_secret,
+        )
+        client = TestClient(app)
+        token = create_token("cust_degraded", secret=jwt_secret)
 
         resp = client.post(
             "/v1/conversations/message",
             json={"message": "trigger internal failure", "channel": "chat"},
-            headers=auth_header("cust_degraded"),
+            headers={"Authorization": f"Bearer {token}"},
         )
+
         assert resp.status_code == 200
-        # The exact text is whatever mock_ea_factory's EA returned —
-        # point is: no 500, no exception leaked.
-        assert "response" in resp.json()
+        # The degraded text comes through verbatim — no 500, no rewriting.
+        assert resp.json()["response"] == fallback
 
     def test_two_requests_same_customer_reuse_ea(self, client, auth_header, mock_ea_factory):
         """Sequential sanity check — the pool across HTTP calls."""

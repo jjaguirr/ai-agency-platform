@@ -114,6 +114,11 @@ class TestRealAppErrorHandling:
             headers=auth_header(),
         )
         assert resp.status_code == 422
-        # FastAPI's default validation body is fine — just verify it's JSON
-        # and mentions the problem field.
-        assert "message" in resp.text
+        # FastAPI's default: {"detail": [{"loc": [...], "msg": ..., "type": ...}]}.
+        # Substring-matching "message" against resp.text would also match
+        # e.g. the word "message" in an unrelated msg field. Check the
+        # structure: the missing field is named in a loc path.
+        detail = resp.json()["detail"]
+        assert isinstance(detail, list) and len(detail) > 0
+        locs = [tuple(err["loc"]) for err in detail]
+        assert any("message" in loc for loc in locs), locs
