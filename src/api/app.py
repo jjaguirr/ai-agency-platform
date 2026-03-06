@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import FastAPI
 
 from .dependencies import EAPool
+from .errors import register_exception_handlers
 from .routes import conversations, health, provisioning, webhooks
 
 
@@ -44,6 +45,8 @@ def create_app(
     app.state.jwt_secret = jwt_secret or os.environ.get(
         "API_JWT_SECRET", "dev-secret-change-me"
     )
+
+    register_exception_handlers(app)
 
     app.include_router(health.router)
     app.include_router(conversations.router)
