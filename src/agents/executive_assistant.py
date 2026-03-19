@@ -4,6 +4,7 @@ Sophisticated LangGraph conversation management with advanced business learning 
 """
 
 import asyncio
+import importlib
 import json
 import logging
 import os
@@ -56,20 +57,6 @@ from .base.specialist import (
     SpecialistResult,
     SpecialistStatus,
 )
-try:
-    from .specialists.social_media import SocialMediaSpecialist
-    _SOCIAL_MEDIA_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"Social media specialist not available: {e}")
-    _SOCIAL_MEDIA_AVAILABLE = False
-
-try:
-    from .specialists.finance import FinanceSpecialist
-    _FINANCE_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"Finance specialist not available: {e}")
-    _FINANCE_AVAILABLE = False
-
 # Competitive Positioning System
 try:
     from .competitive_positioning import competitive_positioning
@@ -607,11 +594,19 @@ class ExecutiveAssistant:
         self.memory = ExecutiveAssistantMemory(customer_id)
         self.workflow_creator = WorkflowCreator(customer_id)
 
+        # Imported here, not at module level — one broken specialist doesn't
+        # sink the EA or the others.
         self.delegation_registry = DelegationRegistry(confidence_threshold=0.6)
-        if _SOCIAL_MEDIA_AVAILABLE:
-            self.delegation_registry.register(SocialMediaSpecialist())
-        if _FINANCE_AVAILABLE:
-            self.delegation_registry.register(FinanceSpecialist())
+        for mod_name, cls_name in (
+            ("social_media", "SocialMediaSpecialist"),
+            ("finance", "FinanceSpecialist"),
+            ("scheduling", "SchedulingSpecialist"),
+        ):
+            try:
+                mod = importlib.import_module(f"src.agents.specialists.{mod_name}")
+                self.delegation_registry.register(getattr(mod, cls_name)())
+            except Exception as e:
+                logger.warning(f"Specialist {cls_name} unavailable: {e}")
         self.specialist_timeout = 15.0
 
         # In-memory conversation history. Populated by handle_customer_interaction,
