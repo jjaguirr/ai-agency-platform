@@ -306,17 +306,151 @@ class SchedulingSpecialist(SpecialistAgent):
             payload={}, confidence=0.0, error="Not implemented",
         )
 
-    async def _handle_reschedule(self, task):
-        return SpecialistResult(
-            status=SpecialistStatus.FAILED, domain=self.domain,
-            payload={}, confidence=0.0, error="Not implemented",
+    async def _handle_reschedule(self, task: SpecialistTask) -> SpecialistResult:
+        corpus = self._customer_corpus(task)
+        corpus_lower = corpus.lower()
+
+        events = await self._calendar_client.list_events(
+            datetime(2026, 1, 1), datetime(2099, 12, 31)
         )
 
-    async def _handle_cancel(self, task):
-        return SpecialistResult(
-            status=SpecialistStatus.FAILED, domain=self.domain,
-            payload={}, confidence=0.0, error="Not implemented",
+        if not events:
+            return SpecialistResult(
+                status=SpecialistStatus.NEEDS_CLARIFICATION,
+                domain=self.domain, payload={}, confidence=0.3,
+                clarification_question="I don't see any events on your calendar. Which meeting did you mean?",
+            )
+
+        candidates = self._match_events(events, corpus_lower)
+
+        if len(candidates) == 0:
+            candidates = events
+
+        if len(candidates) > 1:
+            names = ", ".join(f"'{e.title}' at {e.start.strftime('%I:%M %p')}" for e in candidates[:5])
+            return SpecialistResult(
+                status=SpecialistStatus.NEEDS_CLARIFICATION,
+                domain=self.domain, payload={}, confidence=0.4,
+                clarification_question=f"Which meeting should I move? I see: {names}",
+            )
+
+        target = candidates[0]
+
+        all_times = list(_TIME_RE.finditer(corpus))
+        if len(all_times) >= 2:
+            dest = all_times[-1]
+            hour, minute, ampm = _parse_time_match(dest)
+            if ampm == "pm" and hour < 12:
+                hour += 12
+            elif ampm == "am" and hour == 12:
+                hour = 0
+            duration = target.end - target.start
+            new_start = target.start.replace(hour=hour, minute=minute)
+            new_end = new_start + duration
+        elif len(all_times) == 1:
+            dest = all_times[0]
+            hour, minute, ampm = _parse_time_match(dest)
+            if ampm == "pm" and hour < 12:
+                hour += 12
+            elif ampm == "am" and hour == 12:
+                hour = 0
+            duration = target.end - target.start
+            new_start = target.start.replace(hour=hour, minute=minute)
+            new_end = new_start + duration
+        else:
+            new_start = target.start
+            new_end = target.end
+
+        await self._calendar_client.update_event(
+            target.id, start=new_start, end=new_end,
         )
+
+        return SpecialistResult(
+            status=SpecialistStatus.COMPLETED,
+            domain=self.domain,
+            payload={
+                "action": "rescheduled",
+                "event_id": target.id,
+                "original_start": target.start.isoformat(),
+                "new_start": new_start.isoformat(),
+                "new_end": new_end.isoformat(),
+            },
+            confidence=0.85,
+            summary_for_ea=f"Moved '{target.title}' to {new_start.strftime('%I:%M %p')}.",
+        )
+
+    async def _handle_cancel(self, task: SpecialistTask) -> SpecialistResult:
+        corpus = self._customer_corpus(task)
+        corpus_lower = corpus.lower()
+
+        events = await self._calendar_client.list_events(
+            datetime(2026, 1, 1), datetime(2099, 12, 31)
+        )
+
+        if not events:
+            return SpecialistResult(
+                status=SpecialistStatus.NEEDS_CLARIFICATION,
+                domain=self.domain, payload={}, confidence=0.3,
+                clarification_question="I don't see any events to cancel. Which meeting did you mean?",
+            )
+
+        candidates = self._match_events(events, corpus_lower)
+
+        if len(candidates) == 0:
+            candidates = events
+
+        if len(candidates) > 1:
+            names = ", ".join(f"'{e.title}' at {e.start.strftime('%I:%M %p')}" for e in candidates[:5])
+            return SpecialistResult(
+                status=SpecialistStatus.NEEDS_CLARIFICATION,
+                domain=self.domain, payload={}, confidence=0.4,
+                clarification_question=f"Which meeting do you want to cancel? {names}",
+            )
+
+        target = candidates[0]
+        await self._calendar_client.delete_event(target.id)
+
+        return SpecialistResult(
+            status=SpecialistStatus.COMPLETED,
+            domain=self.domain,
+            payload={
+                "action": "cancelled",
+                "event_id": target.id,
+                "title": target.title,
+            },
+            confidence=0.85,
+            summary_for_ea=f"Cancelled '{target.title}'.",
+        )
+
+    def _match_events(self, events: list, text: str) -> list:
+        """Match events by time reference or title/attendee keyword."""
+        matched = []
+
+        time_ref = _TIME_RE.search(text)
+        if time_ref:
+            hour, _, ampm = _parse_time_match(time_ref)
+            if ampm == "pm" and hour < 12:
+                hour += 12
+            elif ampm == "am" and hour == 12:
+                hour = 0
+            matched = [e for e in events if e.start.hour == hour]
+            if matched:
+                return matched
+
+        skip = {"the", "my", "a", "an", "with", "at", "to", "for", "on",
+                "cancel", "move", "reschedule", "meeting", "push", "back",
+                "change", "time", "delete", "remove", "pm", "am"}
+        words = [w for w in re.findall(r"\b\w+\b", text) if w not in skip and len(w) > 2]
+
+        for event in events:
+            title_lower = event.title.lower()
+            attendees_lower = " ".join(event.attendees).lower()
+            for word in words:
+                if word in title_lower or word in attendees_lower:
+                    matched.append(event)
+                    break
+
+        return matched
 
     async def _handle_create_event(self, task: SpecialistTask) -> SpecialistResult:
         corpus = self._customer_corpus(task)

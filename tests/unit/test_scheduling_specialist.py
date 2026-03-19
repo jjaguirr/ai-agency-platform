@@ -469,3 +469,124 @@ class TestExecuteCreateEvent:
 
         assert result.status == SpecialistStatus.COMPLETED
         assert result.payload["action"] == "created"
+
+
+# --- Reschedule -------------------------------------------------------------
+
+class TestExecuteReschedule:
+    @pytest.mark.asyncio
+    async def test_reschedules_single_match(self, office_ctx):
+        events = [
+            CalendarEvent(
+                id="evt-1", title="Team Sync",
+                start=datetime(2026, 3, 19, 15, 0),
+                end=datetime(2026, 3, 19, 16, 0),
+                attendees=["team@co.com"],
+            ),
+        ]
+        client = StubCalendarClient(events=events)
+        spec = SchedulingSpecialist(calendar_client=client)
+
+        task = SpecialistTask(
+            description="move my 3pm to 4pm",
+            customer_id="c",
+            business_context=office_ctx,
+            domain_memories=[],
+        )
+        result = await spec.execute_task(task)
+
+        assert result.status == SpecialistStatus.COMPLETED
+        assert result.payload["action"] == "rescheduled"
+        assert result.payload["event_id"] == "evt-1"
+        assert "16:00" in result.payload["new_start"]
+        assert any(c[0] == "update_event" for c in client.calls)
+
+    @pytest.mark.asyncio
+    async def test_asks_which_when_multiple_match(self, office_ctx):
+        events = [
+            CalendarEvent(
+                id="evt-1", title="Team Sync",
+                start=datetime(2026, 3, 19, 15, 0),
+                end=datetime(2026, 3, 19, 15, 30),
+                attendees=[],
+            ),
+            CalendarEvent(
+                id="evt-2", title="Client Call",
+                start=datetime(2026, 3, 19, 15, 30),
+                end=datetime(2026, 3, 19, 16, 0),
+                attendees=[],
+            ),
+        ]
+        client = StubCalendarClient(events=events)
+        spec = SchedulingSpecialist(calendar_client=client)
+
+        task = SpecialistTask(
+            description="move my 3pm meeting to tomorrow",
+            customer_id="c",
+            business_context=office_ctx,
+            domain_memories=[],
+        )
+        result = await spec.execute_task(task)
+
+        assert result.status == SpecialistStatus.NEEDS_CLARIFICATION
+        assert "which" in result.clarification_question.lower()
+
+
+# --- Cancel -----------------------------------------------------------------
+
+class TestExecuteCancel:
+    @pytest.mark.asyncio
+    async def test_cancels_single_match(self, office_ctx):
+        events = [
+            CalendarEvent(
+                id="evt-1", title="Meeting with Acme",
+                start=datetime(2026, 3, 19, 14, 0),
+                end=datetime(2026, 3, 19, 15, 0),
+                attendees=["acme@co.com"],
+            ),
+        ]
+        client = StubCalendarClient(events=events)
+        spec = SchedulingSpecialist(calendar_client=client)
+
+        task = SpecialistTask(
+            description="cancel the meeting with Acme",
+            customer_id="c",
+            business_context=office_ctx,
+            domain_memories=[],
+        )
+        result = await spec.execute_task(task)
+
+        assert result.status == SpecialistStatus.COMPLETED
+        assert result.payload["action"] == "cancelled"
+        assert result.payload["event_id"] == "evt-1"
+        assert any(c[0] == "delete_event" for c in client.calls)
+
+    @pytest.mark.asyncio
+    async def test_asks_which_when_multiple_match(self, office_ctx):
+        events = [
+            CalendarEvent(
+                id="evt-1", title="Acme Sync",
+                start=datetime(2026, 3, 19, 14, 0),
+                end=datetime(2026, 3, 19, 15, 0),
+                attendees=[],
+            ),
+            CalendarEvent(
+                id="evt-2", title="Acme Review",
+                start=datetime(2026, 3, 19, 16, 0),
+                end=datetime(2026, 3, 19, 17, 0),
+                attendees=[],
+            ),
+        ]
+        client = StubCalendarClient(events=events)
+        spec = SchedulingSpecialist(calendar_client=client)
+
+        task = SpecialistTask(
+            description="cancel my meeting with Acme",
+            customer_id="c",
+            business_context=office_ctx,
+            domain_memories=[],
+        )
+        result = await spec.execute_task(task)
+
+        assert result.status == SpecialistStatus.NEEDS_CLARIFICATION
+        assert "which" in result.clarification_question.lower()
