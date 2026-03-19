@@ -389,3 +389,83 @@ class TestExecuteDailyOverview:
         assert result.status == SpecialistStatus.COMPLETED
         assert result.payload["event_count"] == 0
         assert result.payload["events"] == []
+
+
+# --- Event creation ---------------------------------------------------------
+
+class TestExecuteCreateEvent:
+    @pytest.mark.asyncio
+    async def test_creates_event_with_full_details(self, office_ctx):
+        client = StubCalendarClient()
+        spec = SchedulingSpecialist(calendar_client=client)
+
+        task = SpecialistTask(
+            description="book a meeting with john@co.com tomorrow at 2pm for an hour",
+            customer_id="c",
+            business_context=office_ctx,
+            domain_memories=[],
+        )
+        result = await spec.execute_task(task)
+
+        assert result.status == SpecialistStatus.COMPLETED
+        assert result.payload["action"] == "created"
+        assert "event" in result.payload
+        assert result.payload["event"]["attendees"] == ["john@co.com"]
+        assert any(c[0] == "create_event" for c in client.calls)
+
+    @pytest.mark.asyncio
+    async def test_asks_for_time_when_missing(self, office_ctx):
+        client = StubCalendarClient()
+        spec = SchedulingSpecialist(calendar_client=client)
+
+        task = SpecialistTask(
+            description="schedule a meeting with the team",
+            customer_id="c",
+            business_context=office_ctx,
+            domain_memories=[],
+        )
+        result = await spec.execute_task(task)
+
+        assert result.status == SpecialistStatus.NEEDS_CLARIFICATION
+        assert "time" in result.clarification_question.lower() or \
+               "when" in result.clarification_question.lower()
+
+    @pytest.mark.asyncio
+    async def test_asks_for_attendees_when_meeting_with_but_no_email(self, office_ctx):
+        """'book a meeting with the team at 3pm' — no email found, ask who."""
+        client = StubCalendarClient()
+        spec = SchedulingSpecialist(calendar_client=client)
+
+        task = SpecialistTask(
+            description="book a meeting with the team tomorrow at 3pm",
+            customer_id="c",
+            business_context=office_ctx,
+            domain_memories=[],
+        )
+        result = await spec.execute_task(task)
+
+        assert result.status == SpecialistStatus.NEEDS_CLARIFICATION
+        assert "who" in result.clarification_question.lower() or \
+               "invite" in result.clarification_question.lower()
+
+    @pytest.mark.asyncio
+    async def test_resolves_time_via_prior_turns(self, office_ctx):
+        """Multi-turn: asked for time, customer provided it."""
+        client = StubCalendarClient()
+        spec = SchedulingSpecialist(calendar_client=client)
+
+        task = SpecialistTask(
+            description="tomorrow at 3pm for 30 minutes",
+            customer_id="c",
+            business_context=office_ctx,
+            domain_memories=[],
+            prior_turns=[
+                {"role": "customer", "content": "schedule a meeting with the team"},
+                {"role": "specialist", "content": "What day and time should I schedule this?"},
+                {"role": "customer", "content": "tomorrow at 3pm for 30 minutes"},
+            ],
+        )
+        result = await spec.execute_task(task)
+
+        assert result.status == SpecialistStatus.COMPLETED
+        assert result.payload["action"] == "created"

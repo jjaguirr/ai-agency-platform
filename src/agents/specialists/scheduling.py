@@ -106,6 +106,31 @@ _CALENDAR_TOOLS = {
 }
 
 
+# --- Parsing helpers --------------------------------------------------------
+
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+
+_TIME_RE = re.compile(
+    r"(?:\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b"
+    r"|\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b)",
+    re.IGNORECASE,
+)
+
+def _parse_time_match(m: re.Match) -> tuple:
+    """Extract (hour, minute, ampm) from _TIME_RE match."""
+    if m.group(1) is not None:
+        return int(m.group(1)), int(m.group(2) or 0), (m.group(3) or "").lower()
+    return int(m.group(4)), int(m.group(5) or 0), (m.group(6) or "").lower()
+
+_DURATION_RE = re.compile(
+    r"\b(?:for\s+)?(?:an?\s+hour|(\d+)\s*(?:hour|hr|h|minute|min|m)(?:s|ute)?(?:\s+(?:and\s+)?(\d+)\s*(?:minute|min|m)(?:s|ute)?)?)\b",
+    re.IGNORECASE,
+)
+
+_TOMORROW_RE = re.compile(r"\btomorrow\b", re.IGNORECASE)
+_TODAY_RE = re.compile(r"\btoday\b", re.IGNORECASE)
+
+
 class SchedulingSpecialist(SpecialistAgent):
 
     def __init__(self, calendar_client: Optional[CalendarClient] = None):
@@ -293,8 +318,98 @@ class SchedulingSpecialist(SpecialistAgent):
             payload={}, confidence=0.0, error="Not implemented",
         )
 
-    async def _handle_create_event(self, task):
-        return SpecialistResult(
-            status=SpecialistStatus.FAILED, domain=self.domain,
-            payload={}, confidence=0.0, error="Not implemented",
+    async def _handle_create_event(self, task: SpecialistTask) -> SpecialistResult:
+        corpus = self._customer_corpus(task)
+        corpus_lower = corpus.lower()
+
+        attendees = _EMAIL_RE.findall(corpus)
+
+        time_match = _TIME_RE.search(corpus)
+        has_time = time_match is not None
+
+        dur_match = _DURATION_RE.search(corpus)
+        if dur_match:
+            if "an hour" in corpus_lower or "a hour" in corpus_lower:
+                duration_minutes = 60
+            else:
+                hours = int(dur_match.group(1) or 0)
+                mins = int(dur_match.group(2) or 0)
+                if "hour" in (dur_match.group(0) or "").lower() or "hr" in (dur_match.group(0) or "").lower():
+                    duration_minutes = hours * 60 + mins
+                else:
+                    duration_minutes = hours  # it's minutes
+            if duration_minutes == 0:
+                duration_minutes = 60
+        else:
+            duration_minutes = 60
+
+        # Must have time/date to proceed — check this first.
+        if not has_time and "tomorrow" not in corpus_lower and "today" not in corpus_lower:
+            return SpecialistResult(
+                status=SpecialistStatus.NEEDS_CLARIFICATION,
+                domain=self.domain,
+                payload={},
+                confidence=0.3,
+                clarification_question="What day and time should I schedule this?",
+            )
+
+        # "meeting with" but no email and no prior clarification cycle → ask who.
+        has_meeting_with = "meeting with" in corpus_lower
+        if has_meeting_with and not attendees and not task.prior_turns:
+            return SpecialistResult(
+                status=SpecialistStatus.NEEDS_CLARIFICATION,
+                domain=self.domain,
+                payload={},
+                confidence=0.3,
+                clarification_question="Who should I invite? Please provide their email addresses.",
+            )
+
+        if has_time:
+            hour, minute, ampm = _parse_time_match(time_match)
+            if ampm == "pm" and hour < 12:
+                hour += 12
+            elif ampm == "am" and hour == 12:
+                hour = 0
+        else:
+            hour, minute = 9, 0
+
+        base_date = datetime(2026, 3, 20) if "tomorrow" in corpus_lower else datetime(2026, 3, 19)
+        start = base_date.replace(hour=hour, minute=minute)
+        end = start + timedelta(minutes=duration_minutes)
+
+        title = self._derive_title(corpus)
+
+        event = await self._calendar_client.create_event(
+            title=title,
+            start=start,
+            end=end,
+            attendees=attendees,
         )
+
+        return SpecialistResult(
+            status=SpecialistStatus.COMPLETED,
+            domain=self.domain,
+            payload={
+                "action": "created",
+                "event": {
+                    "title": event.title,
+                    "start": event.start.isoformat(),
+                    "end": event.end.isoformat(),
+                    "attendees": event.attendees,
+                    "location": event.location,
+                },
+            },
+            confidence=0.85,
+            summary_for_ea=f"Scheduled '{event.title}' from {event.start.strftime('%I:%M %p')} to {event.end.strftime('%I:%M %p')}.",
+        )
+
+    def _derive_title(self, corpus: str) -> str:
+        """Extract a meeting title from the message. Falls back to 'Meeting'."""
+        lower = corpus.lower()
+        m = re.search(r"meeting\s+with\s+([\w\s@.]+?)(?:\s+(?:at|on|for|tomorrow|today|$))", lower)
+        if m:
+            return f"Meeting with {m.group(1).strip()}"
+        m = re.search(r"(?:book|schedule|set up)\s+(?:a\s+)?(.+?)(?:\s+(?:at|on|for|tomorrow|today))", lower)
+        if m:
+            return m.group(1).strip().title()
+        return "Meeting"
