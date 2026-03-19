@@ -137,13 +137,31 @@ def create_default_app() -> FastAPI:  # pragma: no cover
     allocator = PortAllocator()
     orchestrator = InfrastructureOrchestrator(port_allocator=allocator)
 
+    # --- Proactive intelligence ---
+    from src.proactive.state import ProactiveStateStore
+    from src.proactive.gate import NoiseGate
+    from src.proactive.heartbeat import HeartbeatDaemon, DefaultOutboundDispatcher
+
+    proactive_store = ProactiveStateStore(redis_client)
+    noise_gate = NoiseGate(proactive_store)
+    dispatcher = DefaultOutboundDispatcher(wa_manager, proactive_store)
+    heartbeat = HeartbeatDaemon(
+        ea_registry, proactive_store, noise_gate, dispatcher,
+    )
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         try:
             await allocator.initialize()
         except Exception:
             logger.exception("Port allocator init failed; provisioning will degrade")
+        try:
+            await heartbeat.start()
+            _app.state.heartbeat = heartbeat
+        except Exception:
+            logger.exception("Heartbeat daemon failed to start; proactive features disabled")
         yield
+        await heartbeat.stop()
         await redis_client.aclose()
 
     return create_app(
@@ -151,5 +169,6 @@ def create_default_app() -> FastAPI:  # pragma: no cover
         orchestrator=orchestrator,
         whatsapp_manager=wa_manager,
         redis_client=redis_client,
+        proactive_state_store=proactive_store,
         lifespan=lifespan,
     )
