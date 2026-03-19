@@ -4,6 +4,7 @@ Sophisticated LangGraph conversation management with advanced business learning 
 """
 
 import asyncio
+import importlib
 import json
 import logging
 import os
@@ -56,8 +57,6 @@ from .base.specialist import (
     SpecialistResult,
     SpecialistStatus,
 )
-from .specialists.social_media import SocialMediaSpecialist
-
 # Competitive Positioning System
 try:
     from .competitive_positioning import competitive_positioning
@@ -595,8 +594,19 @@ class ExecutiveAssistant:
         self.memory = ExecutiveAssistantMemory(customer_id)
         self.workflow_creator = WorkflowCreator(customer_id)
 
+        # Imported here, not at module level — one broken specialist doesn't
+        # sink the EA or the others.
         self.delegation_registry = DelegationRegistry(confidence_threshold=0.6)
-        self.delegation_registry.register(SocialMediaSpecialist())
+        for mod_name, cls_name in (
+            ("social_media", "SocialMediaSpecialist"),
+            ("finance", "FinanceSpecialist"),
+            ("scheduling", "SchedulingSpecialist"),
+        ):
+            try:
+                mod = importlib.import_module(f"src.agents.specialists.{mod_name}")
+                self.delegation_registry.register(getattr(mod, cls_name)())
+            except Exception as e:
+                logger.warning(f"Specialist {cls_name} unavailable: {e}")
         self.specialist_timeout = 15.0
         
         # Initialize LLM for sophisticated conversation management
