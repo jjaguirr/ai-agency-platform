@@ -58,6 +58,20 @@ from .base.specialist import (
 )
 from .specialists.social_media import SocialMediaSpecialist
 
+# Finance specialist (guarded — import failure doesn't block other specialists)
+try:
+    from .specialists.finance import FinanceSpecialist
+    _FINANCE_AVAILABLE = True
+except ImportError:
+    _FINANCE_AVAILABLE = False
+
+# Scheduling specialist (guarded — import failure doesn't block other specialists)
+try:
+    from .specialists.scheduling import SchedulingSpecialist
+    _SCHEDULING_AVAILABLE = True
+except ImportError:
+    _SCHEDULING_AVAILABLE = False
+
 # Competitive Positioning System
 try:
     from .competitive_positioning import competitive_positioning
@@ -597,6 +611,10 @@ class ExecutiveAssistant:
 
         self.delegation_registry = DelegationRegistry(confidence_threshold=0.6)
         self.delegation_registry.register(SocialMediaSpecialist())
+        if _FINANCE_AVAILABLE:
+            self.delegation_registry.register(FinanceSpecialist())
+        if _SCHEDULING_AVAILABLE:
+            self.delegation_registry.register(SchedulingSpecialist())
         self.specialist_timeout = 15.0
         
         # Initialize LLM for sophisticated conversation management
