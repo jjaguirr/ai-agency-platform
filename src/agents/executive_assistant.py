@@ -56,7 +56,19 @@ from .base.specialist import (
     SpecialistResult,
     SpecialistStatus,
 )
-from .specialists.social_media import SocialMediaSpecialist
+try:
+    from .specialists.social_media import SocialMediaSpecialist
+    _SOCIAL_MEDIA_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Social media specialist not available: {e}")
+    _SOCIAL_MEDIA_AVAILABLE = False
+
+try:
+    from .specialists.finance import FinanceSpecialist
+    _FINANCE_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Finance specialist not available: {e}")
+    _FINANCE_AVAILABLE = False
 
 # Competitive Positioning System
 try:
@@ -596,7 +608,10 @@ class ExecutiveAssistant:
         self.workflow_creator = WorkflowCreator(customer_id)
 
         self.delegation_registry = DelegationRegistry(confidence_threshold=0.6)
-        self.delegation_registry.register(SocialMediaSpecialist())
+        if _SOCIAL_MEDIA_AVAILABLE:
+            self.delegation_registry.register(SocialMediaSpecialist())
+        if _FINANCE_AVAILABLE:
+            self.delegation_registry.register(FinanceSpecialist())
         self.specialist_timeout = 15.0
         
         # Initialize LLM for sophisticated conversation management
