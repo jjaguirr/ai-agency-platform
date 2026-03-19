@@ -13,6 +13,7 @@ from fastapi import FastAPI
 
 from fastapi.exceptions import RequestValidationError
 
+from .correlation import CorrelationIdMiddleware, install_correlation_log_factory
 from .ea_registry import EARegistry
 from .errors import (
     APIError,
@@ -52,6 +53,13 @@ def create_app(
         version="1.0.0",
         lifespan=lifespan,
     )
+
+    # Correlation-ID middleware wraps everything — including exception
+    # handlers — so X-Request-ID appears on every response. The log
+    # factory injects correlation_id into every LogRecord at creation
+    # time (covers propagated records, which logger-level filters miss).
+    app.add_middleware(CorrelationIdMiddleware)
+    install_correlation_log_factory()
 
     # State container — routes pull deps from here
     app.state.ea_registry = ea_registry

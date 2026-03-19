@@ -14,6 +14,7 @@ class JSONFormatter(logging.Formatter):
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
+            "correlation_id": getattr(record, "correlation_id", "-"),
         }
         if record.exc_info and record.exc_info[0]:
             log_data["exception"] = self.formatException(record.exc_info)

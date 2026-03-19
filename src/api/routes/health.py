@@ -57,4 +57,5 @@ async def readyz(request: Request):
         checks=checks,
     )
     status_code = 200 if ready else 503
+    logger.debug("readyz status=%s checks=%s", body.status, checks)
     return JSONResponse(status_code=status_code, content=body.model_dump())
