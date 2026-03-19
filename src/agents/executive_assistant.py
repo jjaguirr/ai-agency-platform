@@ -108,7 +108,8 @@ class BusinessContext:
     customers: List[Dict] = None
     team_members: List[Dict] = None
     goals: List[str] = None
-    
+    timezone: str = "UTC"
+
     def __post_init__(self):
         if self.daily_operations is None:
             self.daily_operations = []
