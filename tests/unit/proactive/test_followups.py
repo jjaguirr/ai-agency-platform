@@ -66,6 +66,15 @@ class TestIllDoX:
         # Next Monday after Wed 18th is Mon 23rd
         assert c[0].due.date() == datetime(2026, 3, 23).date()
 
+    def test_same_day_reference_rolls_to_next_week(self, ref):
+        """'by Wednesday' said ON a Wednesday → next Wednesday, not today.
+        Pins the `delta = 7` branch when target == ref.weekday()."""
+        # ref is Wed 2026-03-18
+        c = extract_commitments("I'll send it by Wednesday", ref=ref)
+        assert len(c) == 1
+        # Next Wednesday is Mar 25
+        assert c[0].due.date() == datetime(2026, 3, 25).date()
+
     def test_ill_without_deadline_not_extracted(self, ref):
         """No deadline anchor → skip. 'I'll think about it' isn't a commitment."""
         c = extract_commitments("I'll think about it", ref=ref)
@@ -124,6 +133,13 @@ class TestTriggerGeneration:
         assert t.trigger_type == "follow_up"
         assert "call John" in t.suggested_message
         assert t.cooldown_key is not None  # so it doesn't fire every tick
+
+    def test_fires_at_exact_due_time(self, ref):
+        """now == due → fire. Pins the `<` (not `<=`) boundary — a
+        commitment due NOW is due, not almost-due."""
+        from src.agents.proactive.followups import commitment_to_trigger
+        c = Commitment(text="x", due=ref, raw="r")
+        assert commitment_to_trigger(c, now=ref) is not None
 
     def test_not_yet_due_yields_none(self, ref):
         from src.agents.proactive.followups import commitment_to_trigger

@@ -143,6 +143,40 @@ class TestQuietHours:
         assert d.allow
 
     @pytest.mark.asyncio
+    async def test_quiet_hours_start_is_inclusive(self, state_store, default_prefs, clock):
+        """22:00 sharp is inside [22, 07) — start bound is inclusive.
+        Pins the `h >= start` semantics in the wrap-midnight branch."""
+        clock.set(datetime(2026, 3, 18, 22, 0, tzinfo=ZoneInfo("UTC")))
+        gate = NoiseGate(state_store, clock=clock)
+        assert not (await gate.evaluate("cust", _trigger(), default_prefs)).allow
+
+    @pytest.mark.asyncio
+    async def test_quiet_hours_end_is_exclusive(self, state_store, default_prefs, clock):
+        """07:00 sharp is outside [22, 07) — end bound is exclusive.
+        06:59 is still quiet, 07:00 is not. Pins `h < end`."""
+        gate = NoiseGate(state_store, clock=clock)
+        clock.set(datetime(2026, 3, 18, 6, 59, tzinfo=ZoneInfo("UTC")))
+        assert not (await gate.evaluate("cust", _trigger(), default_prefs)).allow
+        clock.set(datetime(2026, 3, 18, 7, 0, tzinfo=ZoneInfo("UTC")))
+        assert (await gate.evaluate("cust", _trigger(), default_prefs)).allow
+
+    @pytest.mark.asyncio
+    async def test_quiet_hours_non_wrapping_window(self, state_store, clock):
+        """Normal (non-wrapping) quiet window, e.g. a lunch break 12–14.
+        Exercises the `start < end` branch that midnight-wrapping prefs
+        never hit."""
+        prefs = ProactivePrefs(timezone="UTC", min_priority=Priority.LOW,
+                               quiet_start_hour=12, quiet_end_hour=14,
+                               daily_cap=5, cooldown_hours=24)
+        gate = NoiseGate(state_store, clock=clock)
+        clock.set(datetime(2026, 3, 18, 11, 59, tzinfo=ZoneInfo("UTC")))
+        assert (await gate.evaluate("cust", _trigger(), prefs)).allow
+        clock.set(datetime(2026, 3, 18, 12, 0, tzinfo=ZoneInfo("UTC")))
+        assert not (await gate.evaluate("cust", _trigger(), prefs)).allow
+        clock.set(datetime(2026, 3, 18, 14, 0, tzinfo=ZoneInfo("UTC")))
+        assert (await gate.evaluate("cust", _trigger(), prefs)).allow
+
+    @pytest.mark.asyncio
     async def test_urgent_overrides_quiet_hours(self, state_store, default_prefs, clock):
         clock.set(datetime(2026, 3, 18, 3, 0, tzinfo=ZoneInfo("UTC")))
         gate = NoiseGate(state_store, clock=clock)
@@ -233,3 +267,18 @@ class TestDailyCap:
         # Fresh day, cap reset, one slot — NOT consumed by the urgent above
         clock.advance(timedelta(days=1))
         assert (await gate.evaluate("cust", _trigger(), prefs)).allow
+
+    @pytest.mark.asyncio
+    async def test_urgent_leaves_room_in_cap_for_non_urgent(self, state_store, clock):
+        """With cap=2: send 1 MEDIUM + 1 URGENT → count is still 1 →
+        a second MEDIUM fits. Pins the `< URGENT` exemption — if URGENT
+        counted, count would be 2 and the second MEDIUM would be blocked."""
+        prefs = ProactivePrefs(timezone="UTC", min_priority=Priority.LOW,
+                               quiet_start_hour=22, quiet_end_hour=7,
+                               daily_cap=2, cooldown_hours=1)
+        gate = NoiseGate(state_store, clock=clock)
+
+        await gate.record_sent("cust", _trigger(), prefs)                      # count → 1
+        await gate.record_sent("cust", _trigger(priority=Priority.URGENT), prefs)  # count still 1
+        d = await gate.evaluate("cust", _trigger(), prefs)
+        assert d.allow, "URGENT must not have consumed a cap slot"

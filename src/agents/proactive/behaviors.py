@@ -135,7 +135,7 @@ async def check_idle_nudge(
     # One nudge per idle period — if we already nudged after they went
     # quiet and they didn't respond, nagging harder won't help.
     last_nudge = await state_store.get_last_nudge(customer_id)
-    if last_nudge is not None and last_nudge > last_interaction:
+    if last_nudge is not None and last_nudge >= last_interaction:
         return None
 
     pending = await state_store.list_followups(customer_id)
