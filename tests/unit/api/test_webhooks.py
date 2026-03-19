@@ -7,10 +7,10 @@ verifies the main API forwards webhook POSTs into that existing machinery.
 """
 import asyncio
 import logging
+from unittest.mock import AsyncMock, Mock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, Mock, MagicMock
 
 from src.api.app import create_app
 from src.api.constants import EA_CALL_TIMEOUT
@@ -155,6 +155,7 @@ class TestWebhookRouting:
 
 
 class TestWebhookTimeout:
+    @patch("src.api.routes.webhooks.EA_CALL_TIMEOUT", 0.1)
     def test_timeout_returns_200_not_503(self):
         """
         Timed-out webhook must return 200 — Twilio interprets non-2xx
@@ -178,6 +179,7 @@ class TestWebhookTimeout:
         resp = client.post("/webhook/whatsapp/cust_wa", content=b"x")
         assert resp.status_code == 200  # NOT 503
 
+    @patch("src.api.routes.webhooks.EA_CALL_TIMEOUT", 0.1)
     def test_timeout_is_logged(self, caplog):
         incoming = IncomingMessage(
             provider_message_id="SM_slow", from_number="+1555",
