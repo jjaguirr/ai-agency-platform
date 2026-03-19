@@ -17,12 +17,26 @@ from src.api.auth import create_token
 from src.api.ea_registry import EARegistry
 
 
+def _mock_orchestrator():
+    """Orchestrator that returns properly typed env objects."""
+    orch = AsyncMock()
+
+    async def _provision(customer_id, tier="professional", **_):
+        env = MagicMock()
+        env.customer_id = customer_id
+        env.tier = tier
+        return env
+
+    orch.provision_customer_environment = AsyncMock(side_effect=_provision)
+    return orch
+
+
 def _test_app(**overrides):
     ea = AsyncMock()
     ea.handle_customer_interaction = AsyncMock(return_value="ok")
     defaults = dict(
         ea_registry=EARegistry(factory=lambda cid: ea),
-        orchestrator=AsyncMock(),
+        orchestrator=_mock_orchestrator(),
         whatsapp_manager=MagicMock(),
         redis_client=AsyncMock(),
     )
@@ -134,28 +148,40 @@ class TestHeaderOnErrors:
 
 
 class TestCorrelationInLogs:
-    def test_log_records_contain_correlation_id(self, auth_headers):
-        app = _test_app()
+    def test_log_records_contain_correlation_id(self, caplog):
+        """
+        Trigger a 503 (EA exception) so the error handler emits a log
+        line. The correlation filter should inject the ID into it.
+        """
+        broken_ea = AsyncMock()
+        broken_ea.handle_customer_interaction = AsyncMock(
+            side_effect=ConnectionError("boom")
+        )
+        app = create_app(
+            ea_registry=EARegistry(factory=lambda cid: broken_ea),
+            orchestrator=_mock_orchestrator(),
+            whatsapp_manager=MagicMock(),
+            redis_client=AsyncMock(),
+        )
         client = TestClient(app)
+        tok = create_token("cust_log")
 
-        handler = logging.Handler()
-        handler.setLevel(logging.DEBUG)
-        records: list[logging.LogRecord] = []
-        handler.emit = lambda record: records.append(record)
-        logging.getLogger().addHandler(handler)
-
-        try:
+        with caplog.at_level(logging.DEBUG):
             client.post(
                 "/v1/conversations/message",
                 json={"message": "hi", "channel": "chat"},
-                headers=auth_headers,
+                headers={"Authorization": f"Bearer {tok}"},
             )
-        finally:
-            logging.getLogger().removeHandler(handler)
 
-        # At least one log record should have the correlation_id attribute
-        corr_records = [r for r in records if hasattr(r, "correlation_id")]
-        assert len(corr_records) > 0
-        # And they should all have the same ID for this request
-        ids = {r.correlation_id for r in corr_records}
+        # The log-record factory injects correlation_id into every
+        # LogRecord at creation time. caplog captures these.
+        app_records = [
+            r for r in caplog.records
+            if hasattr(r, "correlation_id") and r.name != "httpx"
+        ]
+        assert len(app_records) > 0, (
+            f"No records with correlation_id; captured {len(caplog.records)} total: "
+            f"{[(r.name, hasattr(r, 'correlation_id')) for r in caplog.records]}"
+        )
+        ids = {r.correlation_id for r in app_records if r.correlation_id != "-"}
         assert len(ids) == 1
