@@ -58,6 +58,17 @@ from .base.specialist import (
 )
 from .specialists.social_media import SocialMediaSpecialist
 
+# Finance is guarded — a missing optional dependency or import failure
+# degrades the EA to generalist mode for finance-domain messages. It
+# does NOT crash EA init.
+try:
+    from .specialists.finance import FinanceSpecialist
+    _FINANCE_AVAILABLE = True
+except Exception as _e:
+    logger.warning(f"Finance specialist unavailable: {_e}")
+    FinanceSpecialist = None  # type: ignore[assignment]
+    _FINANCE_AVAILABLE = False
+
 # Competitive Positioning System
 try:
     from .competitive_positioning import competitive_positioning
@@ -597,6 +608,8 @@ class ExecutiveAssistant:
 
         self.delegation_registry = DelegationRegistry(confidence_threshold=0.6)
         self.delegation_registry.register(SocialMediaSpecialist())
+        if _FINANCE_AVAILABLE:
+            self.delegation_registry.register(FinanceSpecialist())
         self.specialist_timeout = 15.0
         
         # Initialize LLM for sophisticated conversation management
