@@ -83,3 +83,15 @@ def broken_redis():
     r = AsyncMock()
     r.ping = AsyncMock(side_effect=ConnectionError("redis unreachable"))
     return r
+
+
+@pytest.fixture
+def mock_conversation_repo():
+    """Mocked ConversationRepository for API unit tests."""
+    repo = AsyncMock()
+    repo.ensure_conversation = AsyncMock(return_value="conv_id")
+    repo.append_message = AsyncMock(return_value="msg_id")
+    repo.get_messages = AsyncMock(return_value=None)
+    repo.list_conversations = AsyncMock(return_value=[])
+    repo.delete_customer_data = AsyncMock(return_value=0)
+    return repo

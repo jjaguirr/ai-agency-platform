@@ -1,8 +1,8 @@
 """
 Conversation endpoint: POST /v1/conversations/message
 
-Accepts {message, channel, conversation_id?} → routes through per-customer
-EA → returns {response, conversation_id}.
+Accepts {message, channel, conversation_id?} -> routes through per-customer
+EA -> returns {response, conversation_id}.
 
 The EA already handles specialist failures by falling back to generalist
 mode, so a broken specialist must still yield 200. What *should* produce
@@ -18,7 +18,7 @@ from src.api.auth import create_token
 from src.api.ea_registry import EARegistry
 
 
-def _app_with_ea(ea_instance, **extra):
+def _app_with_ea(ea_instance, *, conversation_repo=None, **extra):
     """Build app with a registry that always returns the given EA."""
     registry = EARegistry(factory=lambda cid: ea_instance)
     return create_app(
@@ -26,6 +26,7 @@ def _app_with_ea(ea_instance, **extra):
         orchestrator=extra.get("orchestrator") or AsyncMock(),
         whatsapp_manager=extra.get("whatsapp_manager") or MagicMock(),
         redis_client=extra.get("redis_client") or AsyncMock(),
+        conversation_repo=conversation_repo,
     )
 
 
@@ -97,7 +98,7 @@ class TestConversationHappyPath:
     def test_whitespace_conversation_id_normalized(self, mock_ea, auth_headers):
         """
         "   " must not become a Redis key. The schema normalizes
-        whitespace-only to None → route generates a fresh UUID.
+        whitespace-only to None -> route generates a fresh UUID.
         """
         app = _app_with_ea(mock_ea)
         client = TestClient(app)
@@ -123,7 +124,7 @@ class TestConversationAuth:
     def test_token_customer_id_scopes_ea_lookup(self, mock_ea):
         """
         The EA instance the request is routed to MUST be keyed by the
-        customer_id in the token — not by a request body field, not by
+        customer_id in the token -- not by a request body field, not by
         a default. This is the tenant isolation boundary.
         """
         requested_customers: list[str] = []
@@ -219,7 +220,7 @@ class TestConversationDegradedMode:
 
     def test_ea_infra_failure_returns_structured_503(self, auth_headers):
         """
-        If the EA itself blows up (not specialist failure — actual
+        If the EA itself blows up (not specialist failure -- actual
         exception from handle_customer_interaction), caller gets 503
         with a structured body, not a traceback.
         """
@@ -243,3 +244,66 @@ class TestConversationDegradedMode:
             "type": "service_unavailable",
             "detail": "Assistant temporarily unavailable.",
         }
+
+
+class TestConversationPersistence:
+    """Verify that post_message persists messages via the repository."""
+
+    def test_persists_user_and_assistant_messages(
+        self, mock_ea, mock_conversation_repo, auth_headers
+    ):
+        mock_ea.handle_customer_interaction = AsyncMock(return_value="reply")
+        app = _app_with_ea(mock_ea, conversation_repo=mock_conversation_repo)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/v1/conversations/message",
+            json={"message": "hello", "channel": "chat",
+                  "conversation_id": "conv_persist"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+
+        # ensure_conversation called
+        mock_conversation_repo.ensure_conversation.assert_called_once_with(
+            "conv_persist", "cust_conv", "chat"
+        )
+
+        # Both user and assistant messages appended
+        calls = mock_conversation_repo.append_message.call_args_list
+        assert len(calls) == 2
+        assert calls[0].args == ("conv_persist", "cust_conv", "user", "hello")
+        assert calls[1].args == ("conv_persist", "cust_conv", "assistant", "reply")
+
+    def test_persistence_failure_does_not_break_response(self, mock_ea, auth_headers):
+        """If the repo raises, the message endpoint still returns 200."""
+        mock_ea.handle_customer_interaction = AsyncMock(return_value="reply")
+
+        failing_repo = AsyncMock()
+        failing_repo.ensure_conversation = AsyncMock(
+            side_effect=Exception("db down")
+        )
+
+        app = _app_with_ea(mock_ea, conversation_repo=failing_repo)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/v1/conversations/message",
+            json={"message": "hello", "channel": "chat"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["response"] == "reply"
+
+    def test_works_without_repo(self, mock_ea, auth_headers):
+        """No repo injected -> still works, just no persistence."""
+        mock_ea.handle_customer_interaction = AsyncMock(return_value="reply")
+        app = _app_with_ea(mock_ea, conversation_repo=None)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/v1/conversations/message",
+            json={"message": "hello", "channel": "chat"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200

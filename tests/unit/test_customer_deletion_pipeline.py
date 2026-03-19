@@ -58,6 +58,11 @@ def _extract_table_defs(sql: str) -> dict[str, str]:
 def schema_tables() -> dict[str, str]:
     defs = _extract_table_defs(SCHEMA_MAIN.read_text())
     defs.update(_extract_table_defs(SCHEMA_MEM.read_text()))
+    # Include migration files
+    migrations_dir = REPO_ROOT / "src" / "database" / "migrations"
+    if migrations_dir.is_dir():
+        for sql_file in sorted(migrations_dir.glob("*.sql")):
+            defs.update(_extract_table_defs(sql_file.read_text()))
     return defs
 
 
@@ -277,8 +282,8 @@ class TestSchemaContract:
         assert table in schema_tables, f"{table} not found in schema.sql"
         body = schema_tables[table]
 
-        assert re.search(r"\bcustomer_id\s+VARCHAR", body, re.IGNORECASE), (
-            f"{table}.customer_id is not VARCHAR — pipeline passes str, may type-mismatch"
+        assert re.search(r"\bcustomer_id\s+(?:VARCHAR|TEXT)", body, re.IGNORECASE), (
+            f"{table}.customer_id is not VARCHAR/TEXT — pipeline passes str, may type-mismatch"
         )
         # No FK to customers on the customer_id column
         cid_decl = re.search(r"customer_id\b[^,\n]*", body, re.IGNORECASE).group(0)
