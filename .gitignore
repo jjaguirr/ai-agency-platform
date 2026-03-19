@@ -1,5 +1,7 @@
 # Claude Code
 .claude/
+.claude_dev_active
+claude-dev
 
 # Environment Variables - NEVER COMMIT SECRETS
 .env
