@@ -209,3 +209,36 @@ class HeartbeatDaemon:
             logger.exception("Failed to get specialist triggers for customer=%s", customer_id)
 
         return triggers
+
+
+class DefaultOutboundDispatcher:
+    """Dispatch proactive triggers via WhatsApp (if available) and store for API pull."""
+
+    def __init__(self, whatsapp_manager, state_store: ProactiveStateStore) -> None:
+        self._wa = whatsapp_manager
+        self._state = state_store
+
+    async def dispatch(self, customer_id: str, trigger: ProactiveTrigger) -> None:
+        notification = {
+            "id": f"notif_{id(trigger)}",
+            "domain": trigger.domain,
+            "trigger_type": trigger.trigger_type,
+            "priority": trigger.priority.name,
+            "title": trigger.title,
+            "message": trigger.suggested_message,
+            "created_at": trigger.created_at.isoformat(),
+        }
+
+        # Try WhatsApp delivery
+        try:
+            channel = self._wa.get_channel(customer_id)
+            if channel is not None:
+                await channel.send_message(customer_id, trigger.suggested_message)
+        except Exception:
+            logger.warning(
+                "WhatsApp dispatch failed for customer=%s trigger=%s",
+                customer_id, trigger.title,
+            )
+
+        # Always store for API pull
+        await self._state.add_pending_notification(customer_id, notification)

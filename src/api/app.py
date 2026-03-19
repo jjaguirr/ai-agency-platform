@@ -21,7 +21,7 @@ from .errors import (
     handle_validation_error,
 )
 from .middleware import CorrelationMiddleware, install_correlation_logging
-from .routes import conversations, health, history, provisioning, webhooks
+from .routes import conversations, health, history, notifications, provisioning, webhooks
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,7 @@ def create_app(
     whatsapp_manager: Any,
     redis_client: Any,
     lifespan: Optional[Lifespan] = None,
+    proactive_state_store: Any = None,
 ) -> FastAPI:
     """
     Build the API with all dependencies injected.
@@ -59,6 +60,7 @@ def create_app(
     app.state.orchestrator = orchestrator
     app.state.whatsapp_manager = whatsapp_manager
     app.state.redis_client = redis_client
+    app.state.proactive_state_store = proactive_state_store
 
     # Structured error handling. All paths converge on {type, detail}.
     # Order: specific-first so the Exception catch-all doesn't shadow
@@ -78,6 +80,7 @@ def create_app(
     app.include_router(history.router)
     app.include_router(provisioning.router)
     app.include_router(webhooks.router)
+    app.include_router(notifications.router)
 
     return app
 

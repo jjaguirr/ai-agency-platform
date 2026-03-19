@@ -79,3 +79,13 @@ class HealthResponse(BaseModel):
 class ReadinessResponse(BaseModel):
     status: Literal["ready", "not_ready"]
     checks: dict[str, str]
+
+
+class NotificationResponse(BaseModel):
+    id: str
+    domain: str
+    trigger_type: str
+    priority: str
+    title: str
+    message: str
+    created_at: str
