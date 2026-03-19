@@ -20,9 +20,12 @@ from src.agents.specialists.scheduling import (
     TimeSlot,
 )
 from src.agents.base.specialist import (
+    DelegationRegistry,
     SpecialistTask,
     SpecialistStatus,
 )
+from src.agents.specialists.social_media import SocialMediaSpecialist
+from src.agents.specialists.finance import FinanceSpecialist
 from src.agents.executive_assistant import BusinessContext
 
 
@@ -226,3 +229,83 @@ class TestAssessContextAware:
             office_ctx,
         )
         assert a.confidence == 0.9
+
+
+# --- Cross-specialist overlap routing ---------------------------------------
+
+@pytest.fixture
+def registry_all_three():
+    """Registry with all three specialists — the full routing surface."""
+    reg = DelegationRegistry(confidence_threshold=0.6)
+    reg.register(SocialMediaSpecialist())
+    reg.register(FinanceSpecialist())
+    reg.register(SchedulingSpecialist())
+    return reg
+
+
+@pytest.fixture
+def rich_ctx():
+    """Context with tools across all three domains — enables routing for
+    cross-specialist overlap tests."""
+    return BusinessContext(
+        business_name="Acme Corp",
+        industry="consulting",
+        current_tools=[
+            "Google Calendar", "Zoom", "Slack",
+            "Instagram", "Facebook",
+            "QuickBooks",
+        ],
+        pain_points=["scheduling conflicts", "social media engagement", "cash flow"],
+    )
+
+
+class TestRoutingOverlap:
+    """Three-specialist routing disambiguation."""
+
+    def test_calendar_query_routes_to_scheduling(self, registry_all_three, rich_ctx):
+        match = registry_all_three.route("what meetings do I have tomorrow?", rich_ctx)
+        assert match is not None
+        assert match.specialist.domain == "scheduling"
+
+    def test_schedule_a_post_routes_to_social_media(self, registry_all_three, rich_ctx):
+        """'Schedule a post' — social media action, not calendar."""
+        match = registry_all_three.route("schedule a post for next Tuesday", rich_ctx)
+        assert match is not None
+        assert match.specialist.domain == "social_media"
+
+    def test_schedule_a_payment_routes_to_finance(self, registry_all_three, rich_ctx):
+        """'Schedule a payment' — finance action, not calendar."""
+        match = registry_all_three.route(
+            "schedule a payment of $500 for the 15th", rich_ctx
+        )
+        assert match is not None
+        assert match.specialist.domain == "finance"
+
+    def test_book_meeting_with_accountant_routes_to_scheduling(self, registry_all_three, rich_ctx):
+        """Calendar action, even though topic is finance."""
+        match = registry_all_three.route(
+            "book a meeting with the accountant to review Q3 expenses", rich_ctx
+        )
+        assert match is not None
+        assert match.specialist.domain == "scheduling"
+
+    def test_content_planning_meeting_routes_to_scheduling(self, registry_all_three, rich_ctx):
+        """Calendar action, even though topic is social media."""
+        match = registry_all_three.route(
+            "set up a content planning meeting for the marketing team", rich_ctx
+        )
+        assert match is not None
+        assert match.specialist.domain == "scheduling"
+
+    def test_social_media_budget_review_goes_to_ea(self, registry_all_three, rich_ctx):
+        """Three-way ambiguity with advisory framing — EA keeps it."""
+        match = registry_all_three.route(
+            "when should I plan the social media budget review?", rich_ctx
+        )
+        assert match is None, "three-way strategic question should stay with EA"
+
+    def test_all_three_registered_no_framework_changes(self, registry_all_three):
+        """Adding scheduling required zero changes to specialist.py."""
+        assert registry_all_three.get("scheduling") is not None
+        assert registry_all_three.get("finance") is not None
+        assert registry_all_three.get("social_media") is not None

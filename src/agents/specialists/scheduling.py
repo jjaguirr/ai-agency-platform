@@ -84,7 +84,7 @@ _UNAMBIGUOUS_PHRASES = [
 _STRONG_PHRASES = [
     "meeting with", "appointment with", "free at", "available at",
     "conflict at", "what's on my", "block time", "move the",
-    "push back", "what meetings",
+    "push back", "what meetings", "a meeting", "planning meeting",
 ]
 _WEAK_PHRASES = [
     "calendar", "meeting", "appointment", "busy", "free", "slot",
