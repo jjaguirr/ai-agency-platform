@@ -156,10 +156,116 @@ class SchedulingSpecialist(SpecialistAgent):
         return TaskAssessment(confidence=confidence, is_strategic=is_strategic)
 
     async def execute_task(self, task: SpecialistTask) -> SpecialistResult:
+        if self._calendar_client is None:
+            return SpecialistResult(
+                status=SpecialistStatus.FAILED,
+                domain=self.domain,
+                payload={},
+                confidence=0.0,
+                error="No calendar service connected. Calendar operations are unavailable.",
+            )
+
+        text = task.description.lower()
+
+        # Intent routing — order matters (see spec).
+        if self._is_daily_overview(text):
+            return await self._handle_daily_overview(task)
+        if self._is_find_slots(text):
+            return await self._handle_find_slots(task)
+        if self._is_availability_check(text):
+            return await self._handle_availability(task)
+        if self._is_reschedule(text):
+            return await self._handle_reschedule(task)
+        if self._is_cancel(text):
+            return await self._handle_cancel(task)
+        return await self._handle_create_event(task)
+
+    # --- Shared helpers -------------------------------------------------------
+
+    def _customer_corpus(self, task: SpecialistTask) -> str:
+        """Concatenate current message + prior customer turns for multi-turn
+        extraction. Specialist turns are excluded."""
+        parts = [task.description]
+        for turn in task.prior_turns:
+            if turn.get("role") == "customer":
+                parts.append(turn["content"])
+        return "  ".join(parts)
+
+    # --- Intent detection (internal) ------------------------------------------
+
+    def _is_daily_overview(self, text: str) -> bool:
+        cues = [
+            "what's on my calendar", "whats on my calendar",
+            "what meetings", "my schedule today", "my schedule tomorrow",
+            "daily agenda", "what's my day",
+            "my schedule for", "what do i have",
+        ]
+        return any(cue in text for cue in cues)
+
+    def _is_find_slots(self, text: str) -> bool:
+        cues = [
+            "find time", "find a slot", "find me",
+            "when can i meet", "when can we meet",
+            "find available",
+        ]
+        return any(cue in text for cue in cues)
+
+    def _is_availability_check(self, text: str) -> bool:
+        cues = [
+            "am i free", "am i available", "do i have anything",
+            "any conflicts", "conflict at", "double-booked",
+            "do i have a conflict",
+        ]
+        return any(cue in text for cue in cues)
+
+    def _is_reschedule(self, text: str) -> bool:
+        cues = [
+            "move the", "move my", "reschedule",
+            "push back", "change the time",
+        ]
+        return any(cue in text for cue in cues)
+
+    def _is_cancel(self, text: str) -> bool:
+        cues = [
+            "cancel the", "cancel my", "remove the meeting",
+            "delete the meeting",
+        ]
+        return any(cue in text for cue in cues)
+
+    # --- Handler stubs (to be implemented in later tasks) ---------------------
+
+    async def _handle_daily_overview(self, task):
         return SpecialistResult(
-            status=SpecialistStatus.FAILED,
-            domain=self.domain,
-            payload={},
-            confidence=0.0,
-            error="Not implemented",
+            status=SpecialistStatus.FAILED, domain=self.domain,
+            payload={}, confidence=0.0, error="Not implemented",
+        )
+
+    async def _handle_find_slots(self, task):
+        return SpecialistResult(
+            status=SpecialistStatus.FAILED, domain=self.domain,
+            payload={}, confidence=0.0, error="Not implemented",
+        )
+
+    async def _handle_availability(self, task):
+        return SpecialistResult(
+            status=SpecialistStatus.FAILED, domain=self.domain,
+            payload={}, confidence=0.0, error="Not implemented",
+        )
+
+    async def _handle_reschedule(self, task):
+        return SpecialistResult(
+            status=SpecialistStatus.FAILED, domain=self.domain,
+            payload={}, confidence=0.0, error="Not implemented",
+        )
+
+    async def _handle_cancel(self, task):
+        return SpecialistResult(
+            status=SpecialistStatus.FAILED, domain=self.domain,
+            payload={}, confidence=0.0, error="Not implemented",
+        )
+
+    async def _handle_create_event(self, task):
+        return SpecialistResult(
+            status=SpecialistStatus.FAILED, domain=self.domain,
+            payload={}, confidence=0.0, error="Not implemented",
         )

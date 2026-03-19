@@ -309,3 +309,28 @@ class TestRoutingOverlap:
         assert registry_all_three.get("scheduling") is not None
         assert registry_all_three.get("finance") is not None
         assert registry_all_three.get("social_media") is not None
+
+
+# --- Graceful degradation ---------------------------------------------------
+
+class TestGracefulDegradation:
+    """calendar_client=None: assess_task works, execute_task returns FAILED."""
+
+    def test_assess_works_without_client(self, specialist, office_ctx):
+        """Routing must work regardless of client availability."""
+        a = specialist.assess_task("what meetings do I have?", office_ctx)
+        assert a.confidence >= 0.6
+
+    @pytest.mark.asyncio
+    async def test_execute_returns_failed_without_client(self, specialist, office_ctx):
+        task = SpecialistTask(
+            description="what meetings do I have tomorrow?",
+            customer_id="c",
+            business_context=office_ctx,
+            domain_memories=[],
+        )
+        result = await specialist.execute_task(task)
+
+        assert result.status == SpecialistStatus.FAILED
+        assert result.domain == "scheduling"
+        assert "calendar" in result.error.lower() or "connect" in result.error.lower()
