@@ -34,6 +34,7 @@ def create_app(
     orchestrator: Any,
     whatsapp_manager: Any,
     redis_client: Any,
+    conversation_repo: Any = None,
     lifespan: Optional[Lifespan] = None,
 ) -> FastAPI:
     """
@@ -59,6 +60,7 @@ def create_app(
     app.state.orchestrator = orchestrator
     app.state.whatsapp_manager = whatsapp_manager
     app.state.redis_client = redis_client
+    app.state.conversation_repo = conversation_repo
 
     # Structured error handling. All paths converge on {type, detail}.
     # Order: specific-first so the Exception catch-all doesn't shadow
@@ -97,12 +99,15 @@ def create_default_app() -> FastAPI:  # pragma: no cover
 
     import redis.asyncio as aioredis
 
+    import asyncpg
+
     from src.agents.executive_assistant import ExecutiveAssistant
     from src.communication.whatsapp import WhatsAppConfig
     from src.communication.whatsapp_manager import WhatsAppManager
+    from src.database.conversation_repository import ConversationRepository
     from src.infrastructure.infrastructure_orchestrator import InfrastructureOrchestrator
     from src.infrastructure.port_allocator import create_port_allocator
-    from src.utils.config import RedisConfig
+    from src.utils.config import DatabaseConfig, RedisConfig
 
     # --- Redis ---
     redis_cfg = RedisConfig.from_env()
@@ -134,13 +139,56 @@ def create_default_app() -> FastAPI:  # pragma: no cover
     allocator = PortAllocator()
     orchestrator = InfrastructureOrchestrator(port_allocator=allocator)
 
+    # --- Database config ---
+    db_cfg = DatabaseConfig.from_env()
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        # --- Port allocator ---
         try:
             await allocator.initialize()
         except Exception:
             logger.exception("Port allocator init failed; provisioning will degrade")
+
+        # --- Postgres conversation pool ---
+        pg_pool = None
+        conversation_repo = None
+        try:
+            pg_pool = await asyncpg.create_pool(db_cfg.url, min_size=2, max_size=10)
+            # Verify migration tables exist
+            async with pg_pool.acquire() as conn:
+                tables = await conn.fetch(
+                    "SELECT tablename FROM pg_tables WHERE schemaname = 'public' "
+                    "AND tablename IN ('conversations', 'messages')"
+                )
+                found = {row["tablename"] for row in tables}
+                missing = {"conversations", "messages"} - found
+                if missing:
+                    logger.error(
+                        "Missing conversation tables: %s. "
+                        "Run src/database/migrations/001_conversations.sql before starting.",
+                        missing,
+                    )
+                    await pg_pool.close()
+                    pg_pool = None
+                else:
+                    conversation_repo = ConversationRepository(pg_pool)
+                    _app.state.conversation_repo = conversation_repo
+                    logger.info("Conversation persistence initialized")
+        except Exception:
+            logger.exception(
+                "Failed to connect to PostgreSQL for conversation persistence; "
+                "history will be in-memory only"
+            )
+            if pg_pool:
+                await pg_pool.close()
+                pg_pool = None
+
         yield
+
+        # Shutdown
+        if pg_pool:
+            await pg_pool.close()
         await redis_client.aclose()
 
     return create_app(

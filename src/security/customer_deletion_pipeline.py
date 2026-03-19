@@ -190,6 +190,7 @@ PG_VARCHAR_TABLES: list[str] = [
     "memory_performance_metrics",
     "sla_violation_alerts",
     "customer_memory_stats",
+    "conversations",  # messages cascade via FK ON DELETE CASCADE
 ]
 
 # Tables in the main schema with UUID FK to customers(id). These cascade when

@@ -76,4 +76,18 @@ async def post_message(
             detail="Assistant temporarily unavailable.",
         )
 
+    # Persist conversation history to Postgres (best-effort).
+    repo = getattr(request.app.state, "conversation_repo", None)
+    if repo is not None:
+        try:
+            await repo.ensure_conversation(conversation_id, customer_id, req.channel)
+            await repo.append_message(conversation_id, customer_id, "user", req.message)
+            await repo.append_message(conversation_id, customer_id, "assistant", response_text)
+        except Exception:
+            logger.warning(
+                "Failed to persist conversation history for conv=%s",
+                conversation_id,
+                exc_info=True,
+            )
+
     return MessageResponse(response=response_text, conversation_id=conversation_id)
