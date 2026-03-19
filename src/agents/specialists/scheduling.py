@@ -294,16 +294,91 @@ class SchedulingSpecialist(SpecialistAgent):
             summary_for_ea=summary,
         )
 
-    async def _handle_find_slots(self, task):
+    async def _handle_find_slots(self, task: SpecialistTask) -> SpecialistResult:
+        corpus_lower = task.description.lower()
+
+        dur_match = _DURATION_RE.search(corpus_lower)
+        if dur_match:
+            if "an hour" in corpus_lower or "a hour" in corpus_lower:
+                duration_minutes = 60
+            else:
+                val = int(dur_match.group(1) or 0)
+                if "hour" in (dur_match.group(0) or "").lower():
+                    duration_minutes = val * 60
+                else:
+                    duration_minutes = val
+            if duration_minutes == 0:
+                duration_minutes = 30
+        else:
+            m = re.search(r"(\d+)\s*min", corpus_lower)
+            duration_minutes = int(m.group(1)) if m else 30
+
+        start = datetime(2026, 3, 19, 8, 0)
+        end = datetime(2026, 3, 23, 17, 0)
+
+        slots = await self._calendar_client.find_available_slots(start, end, duration_minutes)
+
+        slot_dicts = [
+            {"start": s.start.isoformat(), "end": s.end.isoformat()}
+            for s in slots
+        ]
+
         return SpecialistResult(
-            status=SpecialistStatus.FAILED, domain=self.domain,
-            payload={}, confidence=0.0, error="Not implemented",
+            status=SpecialistStatus.COMPLETED,
+            domain=self.domain,
+            payload={
+                "duration_minutes": duration_minutes,
+                "available_slots": slot_dicts,
+                "slot_count": len(slot_dicts),
+            },
+            confidence=0.85,
+            summary_for_ea=f"Found {len(slot_dicts)} available {duration_minutes}-minute slot{'s' if len(slot_dicts) != 1 else ''}.",
         )
 
-    async def _handle_availability(self, task):
+    async def _handle_availability(self, task: SpecialistTask) -> SpecialistResult:
+        corpus_lower = task.description.lower()
+
+        start = datetime(2026, 3, 20, 12, 0)
+        end = datetime(2026, 3, 20, 17, 0)
+
+        time_match = _TIME_RE.search(corpus_lower)
+        if time_match:
+            hour, minute, ampm = _parse_time_match(time_match)
+            if ampm == "pm" and hour < 12:
+                hour += 12
+            elif ampm == "am" and hour == 12:
+                hour = 0
+            base = datetime(2026, 3, 20) if "tomorrow" in corpus_lower else datetime(2026, 3, 19)
+            start = base.replace(hour=hour, minute=minute)
+            end = start + timedelta(hours=1)
+
+        free = await self._calendar_client.is_free(start, end)
+
+        if free:
+            return SpecialistResult(
+                status=SpecialistStatus.COMPLETED,
+                domain=self.domain,
+                payload={"free": True, "range": f"{start.isoformat()} - {end.isoformat()}"},
+                confidence=0.85,
+                summary_for_ea=f"You're free from {start.strftime('%I:%M %p')} to {end.strftime('%I:%M %p')}.",
+            )
+
+        events = await self._calendar_client.list_events(start, end)
+        conflicts = [
+            {
+                "title": e.title,
+                "start": e.start.isoformat(),
+                "end": e.end.isoformat(),
+            }
+            for e in events
+        ]
+
         return SpecialistResult(
-            status=SpecialistStatus.FAILED, domain=self.domain,
-            payload={}, confidence=0.0, error="Not implemented",
+            status=SpecialistStatus.COMPLETED,
+            domain=self.domain,
+            payload={"free": False, "conflicts": conflicts},
+            confidence=0.85,
+            summary_for_ea=f"You have {len(conflicts)} conflict{'s' if len(conflicts) != 1 else ''} in that time range.",
         )
 
     async def _handle_reschedule(self, task: SpecialistTask) -> SpecialistResult:

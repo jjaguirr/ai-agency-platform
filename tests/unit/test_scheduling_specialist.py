@@ -590,3 +590,70 @@ class TestExecuteCancel:
 
         assert result.status == SpecialistStatus.NEEDS_CLARIFICATION
         assert "which" in result.clarification_question.lower()
+
+
+# --- Availability -----------------------------------------------------------
+
+class TestExecuteAvailability:
+    @pytest.mark.asyncio
+    async def test_reports_free(self, office_ctx):
+        client = StubCalendarClient(events=[])
+        spec = SchedulingSpecialist(calendar_client=client)
+
+        task = SpecialistTask(
+            description="am I free tomorrow afternoon?",
+            customer_id="c",
+            business_context=office_ctx,
+            domain_memories=[],
+        )
+        result = await spec.execute_task(task)
+
+        assert result.status == SpecialistStatus.COMPLETED
+        assert result.payload["free"] is True
+
+    @pytest.mark.asyncio
+    async def test_reports_conflicts(self, office_ctx):
+        events = [
+            CalendarEvent(
+                id="1", title="Team Meeting",
+                start=datetime(2026, 3, 20, 14, 0),
+                end=datetime(2026, 3, 20, 15, 0),
+                attendees=[],
+            ),
+        ]
+        client = StubCalendarClient(events=events)
+        spec = SchedulingSpecialist(calendar_client=client)
+
+        task = SpecialistTask(
+            description="am I free tomorrow at 2pm?",
+            customer_id="c",
+            business_context=office_ctx,
+            domain_memories=[],
+        )
+        result = await spec.execute_task(task)
+
+        assert result.status == SpecialistStatus.COMPLETED
+        assert result.payload["free"] is False
+        assert len(result.payload["conflicts"]) > 0
+
+
+# --- Find slots -------------------------------------------------------------
+
+class TestExecuteFindSlots:
+    @pytest.mark.asyncio
+    async def test_returns_available_slots(self, office_ctx):
+        client = StubCalendarClient()
+        spec = SchedulingSpecialist(calendar_client=client)
+
+        task = SpecialistTask(
+            description="find me 30 minutes with Maria this week",
+            customer_id="c",
+            business_context=office_ctx,
+            domain_memories=[],
+        )
+        result = await spec.execute_task(task)
+
+        assert result.status == SpecialistStatus.COMPLETED
+        assert "available_slots" in result.payload
+        assert result.payload["duration_minutes"] == 30
+        assert any(c[0] == "find_available_slots" for c in client.calls)
