@@ -10,6 +10,13 @@ The EA handles its own partial failures (specialist timeout, LLM degraded)
 and returns a fallback string — those are 200s. We only map to 503 when
 the EA's handle_customer_interaction *raises*, which means an infrastructure
 dependency is hard-down.
+
+Persistence is a side effect: after a successful EA call, the user
+message and assistant reply are written to ConversationRepository. The
+EA stays unaware — it still keeps its in-memory history for LLM context;
+we just also durably store the exchange. If Postgres is briefly
+unavailable the user still gets their reply (storage is not on the
+critical path for a live conversation).
 """
 import asyncio
 import logging
@@ -75,5 +82,38 @@ async def post_message(
         raise ServiceUnavailableError(
             detail="Assistant temporarily unavailable.",
         )
+
+    # --- Persistence side effect -------------------------------------
+    # Write-after: only persist once we have a reply to persist. A
+    # failed EA call doesn't leave a half-recorded exchange in the DB.
+    # A failed Postgres write doesn't hide the reply from the user —
+    # they already have it; history just won't show this turn. Logged
+    # at WARNING because the API is still serving traffic.
+    repo = request.app.state.conversation_repo
+    if repo is not None:
+        try:
+            await repo.create_conversation(
+                customer_id=customer_id,
+                conversation_id=conversation_id,
+                channel=req.channel,
+            )
+            await repo.append_message(
+                customer_id=customer_id,
+                conversation_id=conversation_id,
+                role="user",
+                content=req.message,
+            )
+            await repo.append_message(
+                customer_id=customer_id,
+                conversation_id=conversation_id,
+                role="assistant",
+                content=response_text,
+            )
+        except Exception:
+            logger.warning(
+                "Persistence failed for customer=%s conv=%s — "
+                "reply delivered but not stored",
+                customer_id, conversation_id, exc_info=True,
+            )
 
     return MessageResponse(response=response_text, conversation_id=conversation_id)

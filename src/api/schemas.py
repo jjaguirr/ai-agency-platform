@@ -72,6 +72,17 @@ class ConversationHistoryResponse(BaseModel):
     channel: Optional[str] = None
 
 
+class ConversationSummary(BaseModel):
+    id: str
+    channel: str
+    created_at: str
+    updated_at: str
+
+
+class ConversationListResponse(BaseModel):
+    conversations: list[ConversationSummary]
+
+
 class HealthResponse(BaseModel):
     status: Literal["ok"]
 

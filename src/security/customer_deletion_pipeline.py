@@ -181,15 +181,19 @@ class StorageConfig:
     neo4j_password: str = field(default_factory=lambda: os.getenv("NEO4J_PASSWORD", "neo4j_password"))
 
 
-# PostgreSQL tables keyed by VARCHAR customer_id without FK — must be deleted
-# explicitly since they won't cascade. Source: src/memory/schema.sql and
-# customer_business_context in src/database/schema.sql.
+# PostgreSQL tables keyed by VARCHAR/TEXT customer_id without FK — must be
+# deleted explicitly since they won't cascade from customers(id). Source:
+# src/memory/schema.sql, customer_business_context in src/database/schema.sql,
+# and conversations in src/database/migrations/001_conversations.sql.
+# Note: `messages` cascades from `conversations` via FK, so deleting
+# conversations here cleans both.
 PG_VARCHAR_TABLES: list[str] = [
     "customer_business_context",
     "customer_memory_audit",
     "memory_performance_metrics",
     "sla_violation_alerts",
     "customer_memory_stats",
+    "conversations",
 ]
 
 # Tables in the main schema with UUID FK to customers(id). These cascade when
