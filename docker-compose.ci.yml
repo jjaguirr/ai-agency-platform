@@ -101,77 +101,6 @@ services:
     networks:
       - ci-network
 
-  # Memory Infrastructure Monitor (Minimal for CI)
-  memory-monitor:
-    build:
-      context: ./src/memory
-      dockerfile: Dockerfile.monitor
-    container_name: ai-agency-memory-monitor-ci
-    ports:
-      - "8084:8080"
-    environment:
-      - POSTGRES_URL=postgresql://testuser:testpass@postgres:5432/testdb
-      - REDIS_URL=redis://redis:6379
-      - QDRANT_URL=http://qdrant:6333
-      - NEO4J_URL=neo4j://neo4j:7687
-      - NEO4J_USER=neo4j
-      - NEO4J_PASSWORD=neo4j_ci_pass
-      - MONITORING_INTERVAL=60
-      - SLA_ENFORCEMENT=false
-      - LOG_LEVEL=WARN
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      qdrant:
-        condition: service_healthy
-    # No persistent volumes for CI
-    tmpfs:
-      - /app/logs:rw,noexec,nosuid,size=64m
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 10s
-      timeout: 3s
-      retries: 6
-      start_period: 20s
-    restart: "no"
-    networks:
-      - ci-network
-
-  # Security API - CI Mode (Minimal Security Checks)
-  security-api:
-    build:
-      context: ./src/security
-      dockerfile: Dockerfile.llamaguard-api
-    container_name: ai-agency-security-api-ci
-    ports:
-      - "8083:8080"
-    environment:
-      - LLAMAGUARD_ENABLED=false  # Bypass for CI speed
-      - LOG_LEVEL=WARN
-      - REDIS_URL=redis://redis:6379
-      - POSTGRES_URL=postgresql://testuser:testpass@postgres:5432/testdb
-      - JWT_SECRET=ci-test-secret-key-not-for-production
-      - CI_MODE=true
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    # No persistent volumes for CI
-    tmpfs:
-      - /app/logs:rw,noexec,nosuid,size=32m
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 10s
-      timeout: 3s
-      retries: 6
-      start_period: 15s
-    restart: "no"
-    networks:
-      - ci-network
-
 # No volumes for CI - everything is ephemeral for speed
 networks:
   ci-network:
@@ -207,8 +136,6 @@ networks:
 #    - PostgreSQL: localhost:5432 (testuser/testpass/testdb)
 #    - Redis: localhost:6379 (no auth)
 #    - Qdrant: localhost:6333 (HTTP), localhost:6334 (gRPC)
-#    - Memory Monitor: localhost:8084
-#    - Security API: localhost:8083
 #
 # 6. Excluded Services (for CI speed):
 #    - Neo4j: Too resource-intensive, not required for basic CI tests
