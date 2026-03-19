@@ -4,6 +4,10 @@ Conversation endpoint: POST /v1/conversations/message
 Accepts {message, channel, conversation_id?} → routes through per-customer
 EA → returns {response, conversation_id}.
 
+Persistence side effect (this feature): after the EA call, the route
+writes both the user message and the assistant reply to
+ConversationRepository. The EA stays unaware of Postgres.
+
 The EA already handles specialist failures by falling back to generalist
 mode, so a broken specialist must still yield 200. What *should* produce
 503 is an EA infrastructure failure (Redis gone mid-request, mem0 down)
@@ -18,7 +22,7 @@ from src.api.auth import create_token
 from src.api.ea_registry import EARegistry
 
 
-def _app_with_ea(ea_instance, **extra):
+def _app(ea_instance, *, repo=None, **extra):
     """Build app with a registry that always returns the given EA."""
     registry = EARegistry(factory=lambda cid: ea_instance)
     return create_app(
@@ -26,6 +30,7 @@ def _app_with_ea(ea_instance, **extra):
         orchestrator=extra.get("orchestrator") or AsyncMock(),
         whatsapp_manager=extra.get("whatsapp_manager") or MagicMock(),
         redis_client=extra.get("redis_client") or AsyncMock(),
+        conversation_repo=repo or AsyncMock(),
     )
 
 
@@ -39,7 +44,7 @@ class TestConversationHappyPath:
     def test_valid_message_returns_ea_response(self, mock_ea, auth_headers):
         mock_ea.handle_customer_interaction = AsyncMock(
             return_value="Hi, I'm Sarah.")
-        app = _app_with_ea(mock_ea)
+        app = _app(mock_ea)
         client = TestClient(app)
 
         resp = client.post(
@@ -55,7 +60,7 @@ class TestConversationHappyPath:
 
     def test_ea_receives_correct_channel_enum(self, mock_ea, auth_headers):
         from src.agents.executive_assistant import ConversationChannel
-        app = _app_with_ea(mock_ea)
+        app = _app(mock_ea)
         client = TestClient(app)
 
         client.post(
@@ -68,7 +73,7 @@ class TestConversationHappyPath:
         assert call_kwargs["channel"] == ConversationChannel.WHATSAPP
 
     def test_conversation_id_roundtrip(self, mock_ea, auth_headers):
-        app = _app_with_ea(mock_ea)
+        app = _app(mock_ea)
         client = TestClient(app)
 
         resp = client.post(
@@ -83,7 +88,7 @@ class TestConversationHappyPath:
                    "conversation_id"] == "conv_fixed"
 
     def test_conversation_id_generated_when_omitted(self, mock_ea, auth_headers):
-        app = _app_with_ea(mock_ea)
+        app = _app(mock_ea)
         client = TestClient(app)
 
         resp = client.post(
@@ -99,7 +104,7 @@ class TestConversationHappyPath:
         "   " must not become a Redis key. The schema normalizes
         whitespace-only to None → route generates a fresh UUID.
         """
-        app = _app_with_ea(mock_ea)
+        app = _app(mock_ea)
         client = TestClient(app)
 
         resp = client.post(
@@ -137,6 +142,7 @@ class TestConversationAuth:
             orchestrator=AsyncMock(),
             whatsapp_manager=MagicMock(),
             redis_client=AsyncMock(),
+            conversation_repo=AsyncMock(),
         )
         client = TestClient(app)
         tok = create_token("cust_from_token")
@@ -150,7 +156,7 @@ class TestConversationAuth:
         assert requested_customers == ["cust_from_token"]
 
     def test_no_token_returns_401(self, mock_ea):
-        app = _app_with_ea(mock_ea)
+        app = _app(mock_ea)
         client = TestClient(app)
 
         resp = client.post(
@@ -160,7 +166,7 @@ class TestConversationAuth:
         assert resp.status_code == 401
 
     def test_expired_token_returns_401(self, mock_ea):
-        app = _app_with_ea(mock_ea)
+        app = _app(mock_ea)
         client = TestClient(app)
         tok = create_token("cust_conv", expires_in=-1)
 
@@ -174,7 +180,7 @@ class TestConversationAuth:
 
 class TestConversationValidation:
     def test_invalid_channel_returns_422(self, mock_ea, auth_headers):
-        app = _app_with_ea(mock_ea)
+        app = _app(mock_ea)
         client = TestClient(app)
 
         resp = client.post(
@@ -185,7 +191,7 @@ class TestConversationValidation:
         assert resp.status_code == 422
 
     def test_missing_message_returns_422(self, mock_ea, auth_headers):
-        app = _app_with_ea(mock_ea)
+        app = _app(mock_ea)
         client = TestClient(app)
 
         resp = client.post(
@@ -206,7 +212,7 @@ class TestConversationDegradedMode:
         degraded_ea.handle_customer_interaction = AsyncMock(
             return_value="I'm having some trouble right now, but here's what I can tell you..."
         )
-        app = _app_with_ea(degraded_ea)
+        app = _app(degraded_ea)
         client = TestClient(app)
 
         resp = client.post(
@@ -226,7 +232,7 @@ class TestConversationDegradedMode:
         broken_ea = AsyncMock()
         broken_ea.handle_customer_interaction = AsyncMock(
             side_effect=ConnectionError("redis gone"))
-        app = _app_with_ea(broken_ea)
+        app = _app(broken_ea)
         client = TestClient(app)
 
         resp = client.post(
@@ -243,3 +249,174 @@ class TestConversationDegradedMode:
             "type": "service_unavailable",
             "detail": "Assistant temporarily unavailable.",
         }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Persistence side effect — new with this feature
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestPersistence:
+    def test_post_creates_conversation_and_appends_two_messages(
+            self, mock_ea, auth_headers):
+        """
+        One POST → conversation upsert + user message + assistant message.
+        """
+        repo = AsyncMock()
+        repo.create_conversation = AsyncMock(return_value="conv_p")
+        repo.append_message = AsyncMock(return_value=None)
+        mock_ea.handle_customer_interaction = AsyncMock(
+            return_value="assistant says hi")
+        client = TestClient(_app(mock_ea, repo=repo))
+
+        resp = client.post(
+            "/v1/conversations/message",
+            json={"message": "user says hi", "channel": "chat",
+                  "conversation_id": "conv_p"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+
+        repo.create_conversation.assert_awaited_once()
+        create_kw = repo.create_conversation.await_args.kwargs
+        assert create_kw["customer_id"] == "cust_conv"
+        assert create_kw["conversation_id"] == "conv_p"
+        assert create_kw["channel"] == "chat"
+
+        assert repo.append_message.await_count == 2
+        calls = repo.append_message.await_args_list
+        user_kw = calls[0].kwargs
+        asst_kw = calls[1].kwargs
+
+        assert user_kw["role"] == "user"
+        assert user_kw["content"] == "user says hi"
+        assert user_kw["customer_id"] == "cust_conv"
+        assert user_kw["conversation_id"] == "conv_p"
+
+        assert asst_kw["role"] == "assistant"
+        assert asst_kw["content"] == "assistant says hi"
+        assert asst_kw["customer_id"] == "cust_conv"
+
+    def test_persistence_uses_canonical_role_names(self, mock_ea, auth_headers):
+        """
+        "user"/"assistant", not LangChain's "human"/"ai". The DB has a
+        CHECK constraint enforcing this — make sure the route sends the
+        right values.
+        """
+        repo = AsyncMock()
+        client = TestClient(_app(mock_ea, repo=repo))
+
+        client.post(
+            "/v1/conversations/message",
+            json={"message": "hi", "channel": "chat"},
+            headers=auth_headers,
+        )
+
+        roles = [c.kwargs["role"] for c in repo.append_message.await_args_list]
+        assert roles == ["user", "assistant"]
+
+    def test_ea_failure_means_no_assistant_message_persisted(
+            self, auth_headers):
+        """
+        If the EA raises, we return 503 and MUST NOT write an assistant
+        message. Whether the user message is written is an implementation
+        choice (write-ahead vs write-after); what matters is no phantom
+        assistant reply.
+        """
+        repo = AsyncMock()
+        broken_ea = AsyncMock()
+        broken_ea.handle_customer_interaction = AsyncMock(
+            side_effect=ConnectionError("redis gone"))
+        client = TestClient(_app(broken_ea, repo=repo))
+
+        resp = client.post(
+            "/v1/conversations/message",
+            json={"message": "hi", "channel": "chat"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 503
+
+        roles = [c.kwargs["role"]
+                 for c in repo.append_message.await_args_list]
+        assert "assistant" not in roles
+
+    def test_repo_failure_does_not_hide_ea_response(
+            self, mock_ea, auth_headers):
+        """
+        Persistence is a side effect. If Postgres is briefly unavailable
+        but the EA responded, the user should still get the reply —
+        storage is not on the critical path for a live conversation.
+
+        (The message is lost from history; that's the trade-off. A
+        synchronous-only write would mean a Postgres blip takes down
+        the whole assistant.)
+        """
+        repo = AsyncMock()
+        repo.create_conversation = AsyncMock(
+            side_effect=ConnectionError("pg gone"))
+        mock_ea.handle_customer_interaction = AsyncMock(
+            return_value="EA still works")
+        client = TestClient(_app(mock_ea, repo=repo))
+
+        resp = client.post(
+            "/v1/conversations/message",
+            json={"message": "hi", "channel": "chat"},
+            headers=auth_headers,
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["response"] == "EA still works"
+
+    def test_roundtrip_through_real_repo_mock(self, mock_ea, auth_headers):
+        """
+        POST then GET. Storage layer stands in for both routes; asserts
+        the conversation_id flows through unchanged and the messages
+        the POST wrote are what the GET reads.
+        """
+        stored: dict[str, list[dict]] = {}
+
+        repo = AsyncMock()
+
+        async def _create(*, customer_id, conversation_id, channel):
+            stored.setdefault(conversation_id, [])
+            return conversation_id
+
+        async def _append(*, customer_id, conversation_id, role, content):
+            stored[conversation_id].append({
+                "role": role, "content": content,
+                "timestamp": f"2026-03-19T10:00:0{len(stored[conversation_id])}+00:00",
+            })
+
+        async def _get(*, customer_id, conversation_id):
+            return stored.get(conversation_id)
+
+        repo.create_conversation = AsyncMock(side_effect=_create)
+        repo.append_message = AsyncMock(side_effect=_append)
+        repo.get_messages = AsyncMock(side_effect=_get)
+
+        mock_ea.handle_customer_interaction = AsyncMock(
+            return_value="EA reply")
+        client = TestClient(_app(mock_ea, repo=repo))
+
+        # POST
+        post_resp = client.post(
+            "/v1/conversations/message",
+            json={"message": "hello", "channel": "chat",
+                  "conversation_id": "rt_conv"},
+            headers=auth_headers,
+        )
+        assert post_resp.status_code == 200
+
+        # GET
+        get_resp = client.get(
+            "/v1/conversations/rt_conv/messages",
+            headers=auth_headers,
+        )
+        assert get_resp.status_code == 200
+        body = get_resp.json()
+        assert len(body["messages"]) == 2
+        assert body["messages"][0] == {
+            "role": "user", "content": "hello",
+            "timestamp": "2026-03-19T10:00:00+00:00",
+        }
+        assert body["messages"][1]["role"] == "assistant"
+        assert body["messages"][1]["content"] == "EA reply"
