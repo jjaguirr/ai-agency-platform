@@ -334,3 +334,58 @@ class TestGracefulDegradation:
         assert result.status == SpecialistStatus.FAILED
         assert result.domain == "scheduling"
         assert "calendar" in result.error.lower() or "connect" in result.error.lower()
+
+
+# --- Daily overview ---------------------------------------------------------
+
+class TestExecuteDailyOverview:
+    @pytest.mark.asyncio
+    async def test_returns_event_list(self, office_ctx):
+        events = [
+            CalendarEvent(
+                id="1", title="Team Standup",
+                start=datetime(2026, 3, 19, 9, 0),
+                end=datetime(2026, 3, 19, 9, 30),
+                attendees=["alice@co.com"],
+            ),
+            CalendarEvent(
+                id="2", title="Lunch with Maria",
+                start=datetime(2026, 3, 19, 12, 0),
+                end=datetime(2026, 3, 19, 13, 0),
+                attendees=["maria@co.com"],
+            ),
+        ]
+        client = StubCalendarClient(events=events)
+        spec = SchedulingSpecialist(calendar_client=client)
+
+        task = SpecialistTask(
+            description="what's on my calendar today?",
+            customer_id="c",
+            business_context=office_ctx,
+            domain_memories=[],
+        )
+        result = await spec.execute_task(task)
+
+        assert result.status == SpecialistStatus.COMPLETED
+        assert result.domain == "scheduling"
+        assert result.payload["event_count"] == 2
+        assert len(result.payload["events"]) == 2
+        assert result.payload["events"][0]["title"] == "Team Standup"
+        assert result.summary_for_ea
+
+    @pytest.mark.asyncio
+    async def test_empty_calendar(self, office_ctx):
+        client = StubCalendarClient(events=[])
+        spec = SchedulingSpecialist(calendar_client=client)
+
+        task = SpecialistTask(
+            description="what meetings do I have today?",
+            customer_id="c",
+            business_context=office_ctx,
+            domain_memories=[],
+        )
+        result = await spec.execute_task(task)
+
+        assert result.status == SpecialistStatus.COMPLETED
+        assert result.payload["event_count"] == 0
+        assert result.payload["events"] == []

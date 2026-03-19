@@ -234,10 +234,39 @@ class SchedulingSpecialist(SpecialistAgent):
 
     # --- Handler stubs (to be implemented in later tasks) ---------------------
 
-    async def _handle_daily_overview(self, task):
+    async def _handle_daily_overview(self, task: SpecialistTask) -> SpecialistResult:
+        start = datetime(2026, 1, 1, 0, 0)
+        end = datetime(2099, 12, 31, 23, 59)
+
+        events = await self._calendar_client.list_events(start, end)
+
+        event_dicts = [
+            {
+                "title": e.title,
+                "start": e.start.isoformat(),
+                "end": e.end.isoformat(),
+                "attendees": e.attendees,
+                "location": e.location,
+            }
+            for e in events
+        ]
+
+        count = len(events)
+        if count == 0:
+            summary = "Your calendar is clear — no events scheduled."
+        else:
+            titles = ", ".join(e.title for e in events[:5])
+            summary = f"You have {count} event{'s' if count != 1 else ''}: {titles}."
+
         return SpecialistResult(
-            status=SpecialistStatus.FAILED, domain=self.domain,
-            payload={}, confidence=0.0, error="Not implemented",
+            status=SpecialistStatus.COMPLETED,
+            domain=self.domain,
+            payload={
+                "events": event_dicts,
+                "event_count": count,
+            },
+            confidence=0.85,
+            summary_for_ea=summary,
         )
 
     async def _handle_find_slots(self, task):
