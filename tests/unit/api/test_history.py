@@ -152,27 +152,10 @@ class TestHistoryResponses:
         assert body["messages"][0]["role"] == "user"
         assert body["messages"][1]["role"] == "assistant"
 
-    def test_messages_chronological_order(self):
-        """Repo already sorts by timestamp ASC — endpoint preserves it."""
-        repo = AsyncMock()
-        repo.get_messages = AsyncMock(return_value=[
-            {"role": "user", "content": "first",
-             "timestamp": "2026-03-19T10:00:00+00:00"},
-            {"role": "assistant", "content": "second",
-             "timestamp": "2026-03-19T10:00:01+00:00"},
-            {"role": "user", "content": "third",
-             "timestamp": "2026-03-19T10:00:02+00:00"},
-        ])
-        client = TestClient(_app(repo))
-        tok = create_token("cust_hist")
-
-        resp = client.get(
-            "/v1/conversations/conv1/messages",
-            headers={"Authorization": f"Bearer {tok}"},
-        )
-        body = resp.json()
-        timestamps = [m["timestamp"] for m in body["messages"]]
-        assert timestamps == sorted(timestamps)
+    # No chronological-order test here: feeding a sorted list to a mock
+    # and asserting it comes back sorted proves nothing. The real sort
+    # lives in the repository's SQL; it's covered by
+    # TestAppendMessage::test_order_by_is_load_bearing against Postgres.
 
 
 class TestListConversations:

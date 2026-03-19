@@ -85,6 +85,20 @@ async def cust(pool):
             "DELETE FROM conversations WHERE customer_id = $1", cid)
 
 
+@pytest.fixture
+def conv():
+    """
+    Fresh conversation_id factory per test. conversation_id is the PK —
+    hardcoded strings like "conv_a" leak state across runs (ON CONFLICT
+    DO NOTHING means a second create is silently dropped, leaving the
+    test operating on a row it doesn't own). The mutation probe runs
+    tests repeatedly; collisions made weak tests look green.
+    """
+    prefix = uuid.uuid4().hex[:8]
+    counter = iter(range(1000))
+    return lambda name="c": f"{name}_{prefix}_{next(counter)}"
+
+
 pytestmark = pytest.mark.integration
 
 
@@ -93,33 +107,35 @@ pytestmark = pytest.mark.integration
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestCreateAndFetch:
-    async def test_create_then_get_messages_empty(self, repo, cust):
+    async def test_create_then_get_messages_empty(self, repo, cust, conv):
+        cid = conv("empty")
         conv_id = await repo.create_conversation(
-            customer_id=cust, conversation_id="conv_empty", channel="chat")
-
-        msgs = await repo.get_messages(customer_id=cust, conversation_id=conv_id)
+            customer_id=cust, conversation_id=cid, channel="chat")
+        assert conv_id == cid
+        msgs = await repo.get_messages(customer_id=cust, conversation_id=cid)
         assert msgs == []
 
-    async def test_get_messages_unknown_conversation(self, repo, cust):
+    async def test_get_messages_unknown_conversation(self, repo, cust, conv):
         msgs = await repo.get_messages(
-            customer_id=cust, conversation_id="never_created")
+            customer_id=cust, conversation_id=conv("never"))
         assert msgs is None
 
-    async def test_create_is_idempotent_same_customer(self, repo, cust):
+    async def test_create_is_idempotent_same_customer(self, repo, cust, conv):
         """Creating the same conversation twice is a no-op, not an error.
 
         Lets the POST route call create_conversation unconditionally
         without a SELECT-before-INSERT race."""
+        cid = conv("dup")
         a = await repo.create_conversation(
-            customer_id=cust, conversation_id="conv_dup", channel="chat")
+            customer_id=cust, conversation_id=cid, channel="chat")
         b = await repo.create_conversation(
-            customer_id=cust, conversation_id="conv_dup", channel="whatsapp")
-        assert a == b == "conv_dup"
+            customer_id=cust, conversation_id=cid, channel="whatsapp")
+        assert a == b == cid
 
         # channel stays as the first write — upsert should not overwrite
-        conv = await repo.get_conversation(
-            customer_id=cust, conversation_id="conv_dup")
-        assert conv["channel"] == "chat"
+        row = await repo.get_conversation(
+            customer_id=cust, conversation_id=cid)
+        assert row["channel"] == "chat"
 
     async def test_create_generates_id_when_none(self, repo, cust):
         conv_id = await repo.create_conversation(
@@ -130,19 +146,19 @@ class TestCreateAndFetch:
 
 
 class TestAppendMessage:
-    async def test_append_preserves_order(self, repo, cust):
+    async def test_append_preserves_order(self, repo, cust, conv):
+        cid = conv("ord")
         await repo.create_conversation(
-            customer_id=cust, conversation_id="conv_ord", channel="chat")
+            customer_id=cust, conversation_id=cid, channel="chat")
         for i in range(5):
             await repo.append_message(
-                customer_id=cust,
-                conversation_id="conv_ord",
+                customer_id=cust, conversation_id=cid,
                 role="user" if i % 2 == 0 else "assistant",
                 content=f"m{i}",
             )
 
         msgs = await repo.get_messages(
-            customer_id=cust, conversation_id="conv_ord")
+            customer_id=cust, conversation_id=cid)
         assert [m["content"] for m in msgs] == ["m0", "m1", "m2", "m3", "m4"]
         assert [m["role"] for m in msgs] == [
             "user", "assistant", "user", "assistant", "user"]
@@ -150,40 +166,78 @@ class TestAppendMessage:
         ts = [m["timestamp"] for m in msgs]
         assert ts == sorted(ts)
 
-    async def test_append_to_unknown_conversation_fails(self, repo, cust):
-        """FK should reject a message for a conversation that doesn't exist."""
-        with pytest.raises(Exception):  # asyncpg.ForeignKeyViolationError
+    async def test_order_by_is_load_bearing(self, repo, pool, cust, conv):
+        """
+        Without ORDER BY, Postgres heap-scan order usually matches
+        insertion order on a fresh table — which makes
+        test_append_preserves_order pass even when the ORDER BY
+        clause is deleted. Force the issue: insert rows with
+        deliberately non-monotone timestamps directly, then confirm
+        get_messages returns them in timestamp order anyway.
+        """
+        cid = conv("sort")
+        await repo.create_conversation(
+            customer_id=cust, conversation_id=cid, channel="chat")
+        # Three rows inserted in timestamp order C, A, B. Correct
+        # read order is A, B, C. Heap-scan order would be C, A, B.
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO messages (conversation_id, role, content, timestamp) "
+                "VALUES "
+                "($1, 'user', 'C', '2026-03-19 10:00:02+00'), "
+                "($1, 'user', 'A', '2026-03-19 10:00:00+00'), "
+                "($1, 'user', 'B', '2026-03-19 10:00:01+00')",
+                cid,
+            )
+        msgs = await repo.get_messages(
+            customer_id=cust, conversation_id=cid)
+        assert [m["content"] for m in msgs] == ["A", "B", "C"], (
+            f"get_messages returned {[m['content'] for m in msgs]} — "
+            f"ORDER BY timestamp is not applied")
+
+    async def test_append_to_unknown_conversation_fails(self, repo, cust, conv):
+        """Conversation doesn't exist → specific exception, not silent
+        success. Bare Exception would also catch a typo in the test."""
+        with pytest.raises(asyncpg.ForeignKeyViolationError):
             await repo.append_message(
-                customer_id=cust,
-                conversation_id="ghost",
-                role="user",
-                content="hello",
+                customer_id=cust, conversation_id=conv("ghost"),
+                role="user", content="hello",
             )
 
-    async def test_append_rejects_invalid_role(self, repo, cust):
+    async def test_append_rejects_invalid_role(self, repo, cust, conv):
+        """LangChain's 'human' must not slip past the CHECK constraint."""
+        cid = conv("role")
         await repo.create_conversation(
-            customer_id=cust, conversation_id="conv_role", channel="chat")
-        with pytest.raises(Exception):  # CheckViolationError
+            customer_id=cust, conversation_id=cid, channel="chat")
+        with pytest.raises(asyncpg.CheckViolationError):
             await repo.append_message(
-                customer_id=cust,
-                conversation_id="conv_role",
-                role="human",  # LangChain convention — must be rejected
-                content="hello",
+                customer_id=cust, conversation_id=cid,
+                role="human", content="hello",
             )
 
-    async def test_append_bumps_conversation_updated_at(self, repo, cust):
+    async def test_append_bumps_conversation_updated_at(
+            self, repo, pool, cust, conv):
+        """Strict > — equal-timestamp would mean the bump is a no-op."""
+        cid = conv("bump")
         await repo.create_conversation(
-            customer_id=cust, conversation_id="conv_bump", channel="chat")
+            customer_id=cust, conversation_id=cid, channel="chat")
+        # Force updated_at into the past so now() is measurably later.
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE conversations SET updated_at = '2000-01-01+00' "
+                "WHERE id = $1", cid)
         before = await repo.get_conversation(
-            customer_id=cust, conversation_id="conv_bump")
+            customer_id=cust, conversation_id=cid)
 
         await repo.append_message(
-            customer_id=cust, conversation_id="conv_bump",
+            customer_id=cust, conversation_id=cid,
             role="user", content="hi")
 
         after = await repo.get_conversation(
-            customer_id=cust, conversation_id="conv_bump")
-        assert after["updated_at"] >= before["updated_at"]
+            customer_id=cust, conversation_id=cid)
+        assert after["updated_at"] > before["updated_at"], (
+            f"updated_at not bumped: "
+            f"{before['updated_at']} → {after['updated_at']}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -191,50 +245,66 @@ class TestAppendMessage:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestTenantIsolation:
-    async def test_wrong_customer_sees_none(self, repo, pool, cust):
+    async def test_wrong_customer_sees_none(self, repo, pool, cust, conv):
         other = f"test_conv_other_{uuid.uuid4().hex[:12]}"
+        cid = conv("mine")
         try:
             await repo.create_conversation(
-                customer_id=cust, conversation_id="conv_mine", channel="chat")
+                customer_id=cust, conversation_id=cid, channel="chat")
             await repo.append_message(
-                customer_id=cust, conversation_id="conv_mine",
+                customer_id=cust, conversation_id=cid,
                 role="user", content="secret")
 
-            # `other` asks for `conv_mine` — must see nothing.
+            # `other` asks for it — must see nothing.
             msgs = await repo.get_messages(
-                customer_id=other, conversation_id="conv_mine")
+                customer_id=other, conversation_id=cid)
             assert msgs is None
 
-            conv = await repo.get_conversation(
-                customer_id=other, conversation_id="conv_mine")
-            assert conv is None
+            row = await repo.get_conversation(
+                customer_id=other, conversation_id=cid)
+            assert row is None
         finally:
             async with pool.acquire() as c:
                 await c.execute(
                     "DELETE FROM conversations WHERE customer_id = $1", other)
 
-    async def test_wrong_customer_cannot_append(self, repo, cust):
+    async def test_wrong_customer_cannot_append(self, repo, pool, cust, conv):
+        """
+        Customer B appending to customer A's conversation must be
+        *rejected*, not silently swallowed. The API route passes the
+        JWT's customer_id here — if this guard is absent, a caller who
+        guesses a conversation_id can inject messages into someone
+        else's history.
+
+        Two assertions, both load-bearing:
+          1. the append raises (fail loud, don't fail silent)
+          2. the message never reached storage (checked directly at
+             the table, bypassing repo's own tenant filter so this
+             test doesn't depend on get_messages being correct)
+        """
         other = f"test_conv_other_{uuid.uuid4().hex[:12]}"
+        cid = conv("guard")
         await repo.create_conversation(
-            customer_id=cust, conversation_id="conv_guard", channel="chat")
+            customer_id=cust, conversation_id=cid, channel="chat")
 
-        # Appending with the wrong customer_id must not land in cust's conv.
-        # Implementation choice: silent no-op or raise — either is fine as
-        # long as the message does NOT appear in cust's history.
-        try:
+        with pytest.raises(asyncpg.ForeignKeyViolationError):
             await repo.append_message(
-                customer_id=other, conversation_id="conv_guard",
+                customer_id=other, conversation_id=cid,
                 role="user", content="intrusion")
-        except Exception:
-            pass
 
-        msgs = await repo.get_messages(
-            customer_id=cust, conversation_id="conv_guard")
-        contents = [m["content"] for m in msgs]
-        assert "intrusion" not in contents
+        # Belt-and-braces: the row must not exist regardless of what
+        # get_messages' own filter does. Query the table raw.
+        async with pool.acquire() as conn:
+            landed = await conn.fetchval(
+                "SELECT count(*) FROM messages "
+                "WHERE conversation_id = $1 AND content = 'intrusion'",
+                cid)
+        assert landed == 0, (
+            "wrong-customer append landed in storage — "
+            "tenant guard in append_message is missing or broken")
 
     async def test_same_conversation_id_different_customers_cannot_collide(
-            self, repo, pool, cust):
+            self, repo, pool, cust, conv):
         """
         conversation_id is the PK — two customers cannot both own "conv_x".
 
@@ -245,25 +315,25 @@ class TestTenantIsolation:
         assert the repo doesn't silently merge them.
         """
         other = f"test_conv_other_{uuid.uuid4().hex[:12]}"
+        cid = conv("shared")
         try:
             await repo.create_conversation(
-                customer_id=cust, conversation_id="conv_shared", channel="chat")
+                customer_id=cust, conversation_id=cid, channel="chat")
 
             # Second create with a different customer_id must not
             # overwrite ownership.
             await repo.create_conversation(
-                customer_id=other, conversation_id="conv_shared",
-                channel="whatsapp")
+                customer_id=other, conversation_id=cid, channel="whatsapp")
 
-            conv = await repo.get_conversation(
-                customer_id=cust, conversation_id="conv_shared")
-            assert conv is not None
-            assert conv["customer_id"] == cust
+            mine = await repo.get_conversation(
+                customer_id=cust, conversation_id=cid)
+            assert mine is not None
+            assert mine["customer_id"] == cust
 
             # Other still cannot see it.
-            conv_other = await repo.get_conversation(
-                customer_id=other, conversation_id="conv_shared")
-            assert conv_other is None
+            theirs = await repo.get_conversation(
+                customer_id=other, conversation_id=cid)
+            assert theirs is None
         finally:
             async with pool.acquire() as c:
                 await c.execute(
@@ -276,40 +346,53 @@ class TestTenantIsolation:
 
 class TestListConversations:
     async def test_list_returns_customers_conversations_only(
-            self, repo, pool, cust):
+            self, repo, pool, cust, conv):
         other = f"test_conv_other_{uuid.uuid4().hex[:12]}"
+        mine_a, mine_b, theirs_x = conv("a"), conv("b"), conv("x")
         try:
             await repo.create_conversation(
-                customer_id=cust, conversation_id="conv_a", channel="chat")
+                customer_id=cust, conversation_id=mine_a, channel="chat")
             await repo.create_conversation(
-                customer_id=cust, conversation_id="conv_b", channel="email")
+                customer_id=cust, conversation_id=mine_b, channel="email")
             await repo.create_conversation(
-                customer_id=other, conversation_id="conv_x", channel="chat")
+                customer_id=other, conversation_id=theirs_x, channel="chat")
 
             convs = await repo.list_conversations(customer_id=cust)
             ids = {c["id"] for c in convs}
-            assert ids == {"conv_a", "conv_b"}
+            assert ids == {mine_a, mine_b}
+            assert theirs_x not in ids
         finally:
             async with pool.acquire() as c:
                 await c.execute(
                     "DELETE FROM conversations WHERE customer_id = $1", other)
 
-    async def test_list_ordered_by_updated_at_desc(self, repo, cust):
-        # Create in order a, b, c — then bump b so it sorts first.
-        for conv_id in ("conv_a", "conv_b", "conv_c"):
+    async def test_list_ordered_by_updated_at_desc(
+            self, repo, pool, cust, conv):
+        # Backdate three conversations, bump the middle one, assert it
+        # sorts first. Directly setting updated_at avoids relying on
+        # creation-order wall-clock drift.
+        ca, cb, cc = conv("a"), conv("b"), conv("c")
+        for cid in (ca, cb, cc):
             await repo.create_conversation(
-                customer_id=cust, conversation_id=conv_id, channel="chat")
+                customer_id=cust, conversation_id=cid, channel="chat")
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE conversations SET updated_at = '2000-01-01+00' "
+                "WHERE id = ANY($1::text[])", [ca, cb, cc])
         await repo.append_message(
-            customer_id=cust, conversation_id="conv_b",
+            customer_id=cust, conversation_id=cb,
             role="user", content="bump")
 
         convs = await repo.list_conversations(customer_id=cust)
-        assert convs[0]["id"] == "conv_b"
+        assert convs[0]["id"] == cb, (
+            f"expected {cb!r} first (most recently updated), "
+            f"got {[c['id'] for c in convs]}")
 
-    async def test_list_pagination(self, repo, cust):
-        for i in range(7):
+    async def test_list_pagination(self, repo, cust, conv):
+        ids = [conv(f"p{i}") for i in range(7)]
+        for cid in ids:
             await repo.create_conversation(
-                customer_id=cust, conversation_id=f"conv_{i}", channel="chat")
+                customer_id=cust, conversation_id=cid, channel="chat")
 
         page1 = await repo.list_conversations(
             customer_id=cust, limit=3, offset=0)
@@ -324,6 +407,7 @@ class TestListConversations:
 
         all_ids = [c["id"] for c in page1 + page2 + page3]
         assert len(all_ids) == len(set(all_ids))  # no duplicates across pages
+        assert set(all_ids) == set(ids)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -331,7 +415,7 @@ class TestListConversations:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestSurvivesReconnect:
-    async def test_history_survives_pool_cycle(self, pool, cust):
+    async def test_history_survives_pool_cycle(self, pool, cust, conv):
         """
         Simulate process restart: build a repo, write, drop it, build a
         fresh repo on the same pool, read. Data must survive.
@@ -343,17 +427,18 @@ class TestSurvivesReconnect:
         """
         from src.database.conversation_repository import ConversationRepository
 
+        cid = conv("persist")
         repo1 = ConversationRepository(pool)
         await repo1.create_conversation(
-            customer_id=cust, conversation_id="conv_persist", channel="chat")
+            customer_id=cust, conversation_id=cid, channel="chat")
         await repo1.append_message(
-            customer_id=cust, conversation_id="conv_persist",
+            customer_id=cust, conversation_id=cid,
             role="user", content="before restart")
         del repo1
 
         repo2 = ConversationRepository(pool)
         msgs = await repo2.get_messages(
-            customer_id=cust, conversation_id="conv_persist")
+            customer_id=cust, conversation_id=cid)
         assert msgs is not None
         assert msgs[0]["content"] == "before restart"
 
@@ -364,25 +449,26 @@ class TestSurvivesReconnect:
 
 class TestDeleteCustomerData:
     async def test_delete_removes_conversations_and_messages(
-            self, repo, pool, cust):
+            self, repo, pool, cust, conv):
+        cid = conv("del")
         await repo.create_conversation(
-            customer_id=cust, conversation_id="conv_del", channel="chat")
+            customer_id=cust, conversation_id=cid, channel="chat")
         await repo.append_message(
-            customer_id=cust, conversation_id="conv_del",
+            customer_id=cust, conversation_id=cid,
             role="user", content="to be forgotten")
 
         deleted = await repo.delete_customer_data(customer_id=cust)
-        assert deleted >= 1  # at least the conversation row
+        assert deleted == 1
 
         msgs = await repo.get_messages(
-            customer_id=cust, conversation_id="conv_del")
+            customer_id=cust, conversation_id=cid)
         assert msgs is None
 
         # Verify cascade actually cleared messages, not just the header.
         async with pool.acquire() as conn:
             orphans = await conn.fetchval(
                 "SELECT count(*) FROM messages WHERE conversation_id = $1",
-                "conv_del")
+                cid)
         assert orphans == 0
 
     async def test_delete_is_idempotent(self, repo, cust):
@@ -392,17 +478,17 @@ class TestDeleteCustomerData:
         assert n2 == 0
 
     async def test_delete_does_not_touch_other_customers(
-            self, repo, pool, cust):
+            self, repo, pool, cust, conv):
         other = f"test_conv_other_{uuid.uuid4().hex[:12]}"
+        cid = conv("survivor")
         try:
             await repo.create_conversation(
-                customer_id=other, conversation_id="conv_survivor",
-                channel="chat")
+                customer_id=other, conversation_id=cid, channel="chat")
 
             await repo.delete_customer_data(customer_id=cust)
 
             survivor = await repo.get_conversation(
-                customer_id=other, conversation_id="conv_survivor")
+                customer_id=other, conversation_id=cid)
             assert survivor is not None
         finally:
             async with pool.acquire() as c:
