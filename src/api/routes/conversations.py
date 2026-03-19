@@ -35,10 +35,7 @@ _CHANNEL_MAP = {
     "chat": ConversationChannel.CHAT,
 }
 
-# EA has an internal specialist_timeout (15s) but the overall LangGraph
-# run has no bound. A hung LLM endpoint or half-open mem0 connection would
-# otherwise hold this request — and its worker — indefinitely.
-_EA_CALL_TIMEOUT = 60.0
+from ..constants import EA_CALL_TIMEOUT
 
 
 @router.post("/message", response_model=MessageResponse)
@@ -58,12 +55,12 @@ async def post_message(
                 channel=_CHANNEL_MAP[req.channel],
                 conversation_id=conversation_id,
             ),
-            timeout=_EA_CALL_TIMEOUT,
+            timeout=EA_CALL_TIMEOUT,
         )
     except asyncio.TimeoutError:
         logger.error(
             "EA timed out for customer=%s conv=%s after %.0fs",
-            customer_id, conversation_id, _EA_CALL_TIMEOUT,
+            customer_id, conversation_id, EA_CALL_TIMEOUT,
         )
         raise ServiceUnavailableError(
             detail="Assistant temporarily unavailable.",
