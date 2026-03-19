@@ -66,6 +66,35 @@ class TestTenantIsolation:
         # 404 — don't confirm existence for another tenant
         assert resp.status_code == 404
 
+    def test_unprovisioned_customer_gets_404(self):
+        """
+        Valid JWT for a customer_id that was never provisioned.
+
+        The EA registry lazily creates an EA on first access, so this
+        doesn't error — the fresh EA simply has no conversations.
+        Uses a spec-compliant EA (not AsyncMock) so get_conversation_history
+        is exercised against a real empty dict, catching mock-masking bugs.
+        """
+        class BareEA:
+            """Minimal EA with just the method the route calls."""
+            def __init__(self, customer_id):
+                self.customer_id = customer_id
+                self._conversation_histories: dict[str, list[dict]] = {}
+
+            def get_conversation_history(self, conversation_id: str):
+                return self._conversation_histories.get(conversation_id)
+
+        app = _app_with_ea(BareEA("cust_phantom"))
+        client = TestClient(app)
+        tok = create_token("cust_phantom")
+
+        resp = client.get(
+            "/v1/conversations/any_conv/messages",
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+        assert resp.status_code == 404
+        assert "not found" in resp.json()["detail"].lower()
+
 
 class TestHistoryResponses:
     def test_unknown_conversation_404(self):
