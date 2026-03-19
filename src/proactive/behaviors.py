@@ -67,7 +67,7 @@ class MorningBriefingBehavior:
         return ProactiveTrigger(
             domain="ea",
             trigger_type="morning_briefing",
-            priority=Priority.LOW,
+            priority=Priority.MEDIUM,
             title="Morning Briefing",
             payload={"follow_ups": follow_ups},
             suggested_message=message,

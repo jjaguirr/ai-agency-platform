@@ -121,6 +121,11 @@ class HeartbeatDaemon:
                                 cid, trigger.cooldown_key, config.cooldown_window,
                             )
                         await self._state.increment_daily_count(cid)
+                        # Record briefing time so it doesn't fire twice same day
+                        if trigger.trigger_type == "morning_briefing":
+                            await self._state.set_last_briefing_time(
+                                cid, self._clock(),
+                            )
                     except Exception:
                         logger.exception(
                             "Failed to dispatch trigger %s for customer=%s",
@@ -191,7 +196,9 @@ class HeartbeatDaemon:
             registry = getattr(ea, "delegation_registry", None)
             if registry is None:
                 return triggers
-            specialists = getattr(registry, "_specialists", {})
+            specialists = getattr(registry, "_specialists", None)
+            if not isinstance(specialists, dict):
+                return triggers
             from src.agents.executive_assistant import BusinessContext
             ctx = BusinessContext()  # Minimal context for proactive checks
 

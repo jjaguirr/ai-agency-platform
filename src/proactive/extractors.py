@@ -100,6 +100,12 @@ def _resolve_date(text: str, reference: datetime) -> Optional[datetime]:
     return None
 
 
+def _split_sentences(text: str) -> List[str]:
+    """Split text on sentence boundaries (.!?) while preserving content."""
+    parts = re.split(r'(?<=[.!?])\s+', text.strip())
+    return [p.strip() for p in parts if p.strip()]
+
+
 class FollowUpExtractor:
     def extract(self, message: str, reference_time: datetime) -> List[FollowUp]:
         if not message.strip():
@@ -108,23 +114,27 @@ class FollowUpExtractor:
         results: list[FollowUp] = []
         seen_commitments: set[str] = set()
 
-        for pattern in _PATTERNS:
-            for match in pattern.finditer(message):
-                commitment = match.group(1).strip()
-                date_text = match.group(2).strip()
-                deadline = _resolve_date(date_text, reference_time)
-                if deadline is None:
-                    continue
-                # Deduplicate by commitment text
-                norm = commitment.lower()
-                if norm in seen_commitments:
-                    continue
-                seen_commitments.add(norm)
-                results.append(FollowUp(
-                    id=f"fu_{uuid.uuid4().hex[:12]}",
-                    commitment=commitment,
-                    deadline=deadline,
-                    source_message=message,
-                ))
+        # Process each sentence independently so mid-string commitments
+        # are detected (regex patterns use $ anchors).
+        sentences = _split_sentences(message)
+
+        for sentence in sentences:
+            for pattern in _PATTERNS:
+                for match in pattern.finditer(sentence):
+                    commitment = match.group(1).strip()
+                    date_text = match.group(2).strip()
+                    deadline = _resolve_date(date_text, reference_time)
+                    if deadline is None:
+                        continue
+                    norm = commitment.lower()
+                    if norm in seen_commitments:
+                        continue
+                    seen_commitments.add(norm)
+                    results.append(FollowUp(
+                        id=f"fu_{uuid.uuid4().hex[:12]}",
+                        commitment=commitment,
+                        deadline=deadline,
+                        source_message=message,
+                    ))
 
         return results

@@ -36,7 +36,7 @@ class TestMorningBriefing:
         result = await behavior.check(CID, cfg)
         assert result is not None
         assert result.trigger_type == "morning_briefing"
-        assert result.priority == Priority.LOW
+        assert result.priority == Priority.MEDIUM
 
     async def test_does_not_trigger_before_hour(self, store):
         behavior = MorningBriefingBehavior(

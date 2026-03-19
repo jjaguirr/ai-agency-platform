@@ -75,6 +75,16 @@ async def whatsapp_webhook(
     for event in events:
         if isinstance(event, IncomingMessage):
             await _handle_incoming(channel, event, ea_handler)
+            # Fire-and-forget: extract follow-ups and update interaction time
+            proactive_store = getattr(request.app.state, "proactive_state_store", None)
+            if proactive_store is not None:
+                from src.proactive.inbound import process_inbound_message
+                try:
+                    await process_inbound_message(
+                        customer_id, event.body, proactive_store,
+                    )
+                except Exception:
+                    logger.debug("Proactive inbound hook failed for customer=%s", customer_id)
         elif isinstance(event, StatusUpdate):
             await channel.handle_status_callback(event)
 
