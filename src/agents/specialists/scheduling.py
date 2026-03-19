@@ -74,6 +74,38 @@ class CalendarClient(Protocol):
                                    duration_minutes: int) -> List[TimeSlot]: ...
 
 
+# --- Assessment vocabulary --------------------------------------------------
+
+_UNAMBIGUOUS_PHRASES = [
+    "my calendar", "my schedule", "my meetings", "my appointments",
+    "book a meeting", "cancel the meeting", "reschedule",
+    "daily agenda",
+]
+_STRONG_PHRASES = [
+    "meeting with", "appointment with", "free at", "available at",
+    "conflict at", "what's on my", "block time", "move the",
+    "push back", "what meetings",
+]
+_WEAK_PHRASES = [
+    "calendar", "meeting", "appointment", "busy", "free", "slot",
+    "standup", "focus time",
+]
+
+_STRATEGIC_PATTERNS = [
+    r"\bshould i\b",
+    r"\bis it worth\b",
+    r"\bworth it\b",
+    r"\bdoes .+ make sense\b",
+    r"\bhow many meetings should\b",
+    r"\btoo many meetings\b",
+]
+
+_CALENDAR_TOOLS = {
+    "Google Calendar", "Outlook", "Calendly", "Cal.com",
+    "Apple Calendar", "Fantastical",
+}
+
+
 class SchedulingSpecialist(SpecialistAgent):
 
     def __init__(self, calendar_client: Optional[CalendarClient] = None):
@@ -84,7 +116,44 @@ class SchedulingSpecialist(SpecialistAgent):
         return "scheduling"
 
     def assess_task(self, task_description: str, context: "BusinessContext") -> TaskAssessment:
-        return TaskAssessment(confidence=0.0)
+        text = task_description.lower()
+
+        confidence = 0.0
+
+        # Unambiguous phrases — one hit is enough to route.
+        for phrase in _UNAMBIGUOUS_PHRASES:
+            if phrase in text:
+                confidence += 0.6
+                break
+
+        # Strong scheduling signals
+        for phrase in _STRONG_PHRASES:
+            if phrase in text:
+                confidence += 0.35
+
+        # Weak signals — capped so "calendar + meeting + busy" doesn't
+        # stack into a false positive. Follows finance.py pattern.
+        weak_hits = sum(1 for p in _WEAK_PHRASES if p in text)
+        confidence += min(0.25, weak_hits * 0.15)
+
+        # Context boost — only if there's some lexical signal already.
+        if confidence > 0:
+            tools = set(context.current_tools or [])
+            if tools & _CALENDAR_TOOLS:
+                confidence += 0.2
+            pain_points = [p.lower() for p in (context.pain_points or [])]
+            if any(any(k in pp for k in ["schedul", "calendar", "meeting"])
+                   for pp in pain_points):
+                confidence += 0.15
+
+        confidence = min(0.9, confidence)
+
+        # Strategic gate — same pattern as social media and finance.
+        is_strategic = False
+        if confidence >= 0.4:
+            is_strategic = any(re.search(p, text) for p in _STRATEGIC_PATTERNS)
+
+        return TaskAssessment(confidence=confidence, is_strategic=is_strategic)
 
     async def execute_task(self, task: SpecialistTask) -> SpecialistResult:
         return SpecialistResult(

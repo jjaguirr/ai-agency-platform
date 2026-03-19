@@ -123,3 +123,106 @@ class TestCalendarClientProtocol:
         assert "httpx" not in source
         assert "aiohttp" not in source
         assert "requests" not in source
+
+
+# --- Assessment: operational scheduling tasks (delegate) --------------------
+
+class TestAssessOperational:
+    """Concrete calendar tasks -> delegate."""
+
+    @pytest.mark.parametrize("msg", [
+        "what meetings do I have tomorrow?",
+        "what's on my calendar today?",
+        "book a meeting with John at 2pm tomorrow",
+        "cancel the meeting with Acme",
+        "reschedule my 3pm to 4pm",
+        "what's my schedule for Monday?",
+    ])
+    def test_confident_and_not_strategic(self, specialist, office_ctx, msg):
+        a = specialist.assess_task(msg, office_ctx)
+        assert a.confidence >= 0.6, f"expected confident on: {msg!r}, got {a.confidence:.2f}"
+        assert not a.is_strategic, f"expected operational on: {msg!r}"
+
+
+# --- Assessment: lexical floor (no context boost) ---------------------------
+
+class TestAssessLexicalFloor:
+    """Routing must work for a customer with no calendar tools."""
+
+    @pytest.mark.parametrize("msg", [
+        "what's on my calendar today?",
+        "my meetings tomorrow",
+        "book a meeting with Maria",
+        "cancel the meeting with Acme",
+        "reschedule my appointment",
+    ])
+    def test_unambiguous_phrases_route_without_context(self, specialist, bare_ctx, msg):
+        a = specialist.assess_task(msg, bare_ctx)
+        assert a.confidence >= 0.6, (
+            f"{msg!r} scored {a.confidence:.2f} with zero context — "
+            "unambiguous scheduling phrases should route on their own"
+        )
+        assert not a.is_strategic
+
+
+# --- Assessment: strategic scheduling tasks (EA keeps) ----------------------
+
+class TestAssessStrategic:
+    """In-domain but advisory — EA keeps it."""
+
+    @pytest.mark.parametrize("msg", [
+        "should I block off more focus time?",
+        "is it worth having a daily standup?",
+        "how many meetings should I have per week?",
+    ])
+    def test_in_domain_but_strategic(self, specialist, office_ctx, msg):
+        a = specialist.assess_task(msg, office_ctx)
+        assert a.confidence >= 0.4, f"expected domain recognition on: {msg!r}"
+        assert a.is_strategic, f"expected strategic flag on: {msg!r}"
+
+
+# --- Assessment: out of domain ----------------------------------------------
+
+class TestAssessOutOfDomain:
+    @pytest.mark.parametrize("msg", [
+        "how's my Instagram engagement this week?",
+        "track $500 spent on Facebook ads",
+        "what's my cash flow looking like?",
+        "can you draft a contract?",
+        "schedule a post for next Tuesday",
+        "schedule a payment of $500 for the 15th",
+    ])
+    def test_low_confidence(self, specialist, office_ctx, msg):
+        a = specialist.assess_task(msg, office_ctx)
+        assert a.confidence < 0.5, f"expected low confidence on: {msg!r}, got {a.confidence:.2f}"
+
+
+# --- Assessment: context-aware ----------------------------------------------
+
+class TestAssessContextAware:
+    def test_calendar_tools_boost_confidence(self, specialist):
+        msg = "am I free tomorrow afternoon?"
+        no_tools = BusinessContext(business_name="X")
+        with_tools = BusinessContext(
+            business_name="X",
+            current_tools=["Google Calendar"],
+        )
+        assert specialist.assess_task(msg, with_tools).confidence > \
+               specialist.assess_task(msg, no_tools).confidence
+
+    def test_scheduling_pain_points_boost_confidence(self, specialist):
+        msg = "am I free tomorrow afternoon?"
+        no_pain = BusinessContext(business_name="X")
+        with_pain = BusinessContext(
+            business_name="X",
+            pain_points=["scheduling conflicts"],
+        )
+        assert specialist.assess_task(msg, with_pain).confidence > \
+               specialist.assess_task(msg, no_pain).confidence
+
+    def test_confidence_capped_at_point_nine(self, specialist, office_ctx):
+        a = specialist.assess_task(
+            "reschedule my calendar meeting appointment for my schedule",
+            office_ctx,
+        )
+        assert a.confidence == 0.9
