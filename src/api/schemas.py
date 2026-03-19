@@ -59,6 +59,19 @@ class ProvisionResponse(BaseModel):
     tier: Tier
 
 
+class HistoryMessage(BaseModel):
+    role: str
+    content: str
+    timestamp: str
+
+
+class ConversationHistoryResponse(BaseModel):
+    conversation_id: str
+    customer_id: str
+    messages: list[HistoryMessage]
+    channel: Optional[str] = None
+
+
 class HealthResponse(BaseModel):
     status: Literal["ok"]
 

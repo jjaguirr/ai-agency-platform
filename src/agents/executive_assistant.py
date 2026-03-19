@@ -608,6 +608,10 @@ class ExecutiveAssistant:
             except Exception as e:
                 logger.warning(f"Specialist {cls_name} unavailable: {e}")
         self.specialist_timeout = 15.0
+
+        # In-memory conversation history. Populated by handle_customer_interaction,
+        # lost on LRU eviction from EARegistry — acceptable for now.
+        self._conversation_histories: dict[str, list[dict]] = {}
         
         # Initialize LLM for sophisticated conversation management
         if os.getenv("OPENAI_API_KEY"):
@@ -1479,7 +1483,11 @@ The key difference: automation tools give you software to configure. I give you 
         state.requires_clarification = True
         
         return state
-    
+
+    def get_conversation_history(self, conversation_id: str) -> list[dict] | None:
+        """Return message history for a conversation, or None if unknown."""
+        return self._conversation_histories.get(conversation_id)
+
     async def handle_customer_interaction(
         self, 
         message: str, 
@@ -1566,8 +1574,17 @@ The key difference: automation tools give you software to configure. I give you 
                     "active_delegation": result.active_delegation,
                 })
             
+            # Track conversation history for the history endpoint
+            self._conversation_histories.setdefault(conversation_id, [])
+            self._conversation_histories[conversation_id].append(
+                {"role": "human", "content": message, "timestamp": datetime.now().isoformat()}
+            )
+            self._conversation_histories[conversation_id].append(
+                {"role": "ai", "content": response, "timestamp": datetime.now().isoformat()}
+            )
+
             logger.info(f"Enhanced EA handled interaction for customer {self.customer_id} via {channel.value}")
-            
+
             return response
             
         except Exception as e:

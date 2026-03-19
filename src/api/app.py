@@ -20,7 +20,8 @@ from .errors import (
     handle_unexpected,
     handle_validation_error,
 )
-from .routes import conversations, health, provisioning, webhooks
+from .middleware import CorrelationMiddleware, install_correlation_logging
+from .routes import conversations, health, history, provisioning, webhooks
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +68,14 @@ def create_app(
     app.add_exception_handler(APIError, handle_api_error)
     app.add_exception_handler(Exception, handle_unexpected)
 
+    # Request correlation — ASGI middleware + log-record factory
+    app.add_middleware(CorrelationMiddleware)
+    install_correlation_logging()
+
     # Routers
     app.include_router(health.router)
     app.include_router(conversations.router)
+    app.include_router(history.router)
     app.include_router(provisioning.router)
     app.include_router(webhooks.router)
 
