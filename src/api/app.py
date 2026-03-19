@@ -21,7 +21,7 @@ from .errors import (
     handle_validation_error,
 )
 from .middleware import CorrelationMiddleware, install_correlation_logging
-from .routes import conversations, health, provisioning, webhooks
+from .routes import conversations, health, history, provisioning, webhooks
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +75,7 @@ def create_app(
     # Routers
     app.include_router(health.router)
     app.include_router(conversations.router)
+    app.include_router(history.router)
     app.include_router(provisioning.router)
     app.include_router(webhooks.router)
 
