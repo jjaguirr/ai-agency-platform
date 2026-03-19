@@ -8,7 +8,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any, Literal
 from dataclasses import dataclass, asdict, field
 from enum import Enum
@@ -611,6 +611,12 @@ class ExecutiveAssistant:
         if _FINANCE_AVAILABLE:
             self.delegation_registry.register(FinanceSpecialist())
         self.specialist_timeout = 15.0
+
+        # In-memory conversation history, keyed by conversation_id.
+        # Each entry is a chronological list of {role, content, timestamp,
+        # channel}. Lost on EA eviction from the registry's LRU — that's
+        # acceptable for now; persistent storage is a follow-up.
+        self._history: Dict[str, List[Dict[str, Any]]] = {}
         
         # Initialize LLM for sophisticated conversation management
         if os.getenv("OPENAI_API_KEY"):
@@ -633,8 +639,19 @@ class ExecutiveAssistant:
         
         self.personality = "professional"
         self.name = "Sarah"
-        
+
         logger.info(f"Enhanced Executive Assistant initialized for customer {customer_id}")
+
+    def get_conversation_history(
+        self, conversation_id: str,
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Return chronological message list, or None if unknown conversation.
+
+        In-memory only — lost on EA eviction from the registry's LRU
+        cache. Empty list means "conversation exists but no messages";
+        None means "never seen this conversation_id".
+        """
+        return self._history.get(conversation_id)
     
     def _create_conversation_graph(self) -> StateGraph:
         """Create sophisticated LangGraph conversation flow with advanced routing and state management"""
@@ -1569,8 +1586,18 @@ The key difference: automation tools give you software to configure. I give you 
                     "active_delegation": result.active_delegation,
                 })
             
+            # Append to in-memory history. Server-clock timestamps on
+            # both sides of the turn — client timestamps can't be trusted.
+            now = datetime.now(timezone.utc).isoformat()
+            self._history.setdefault(conversation_id, []).extend([
+                {"role": "user", "content": message,
+                 "timestamp": now, "channel": channel.value},
+                {"role": "assistant", "content": response,
+                 "timestamp": now, "channel": channel.value},
+            ])
+
             logger.info(f"Enhanced EA handled interaction for customer {self.customer_id} via {channel.value}")
-            
+
             return response
             
         except Exception as e:

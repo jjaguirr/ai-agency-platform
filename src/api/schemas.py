@@ -5,7 +5,7 @@ Channel values mirror ConversationChannel enum in executive_assistant.py.
 We declare them as a Literal here rather than importing the enum to keep
 the schema layer independent of agent internals.
 """
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -41,6 +41,19 @@ class MessageRequest(BaseModel):
 class MessageResponse(BaseModel):
     response: str
     conversation_id: str
+
+
+class HistoryMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+    timestamp: str
+
+
+class ConversationHistoryResponse(BaseModel):
+    conversation_id: str
+    customer_id: str
+    channel: Optional[Channel] = None
+    messages: List[HistoryMessage]
 
 
 class ProvisionRequest(BaseModel):

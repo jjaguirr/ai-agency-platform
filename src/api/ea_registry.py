@@ -112,6 +112,15 @@ class EARegistry:
             self._instances[customer_id] = ea
             return ea
 
+    def peek(self, customer_id: str) -> Optional[_EALike]:
+        """Non-creating lookup. Returns None if the EA isn't cached.
+
+        Use this for read-only routes (e.g. GET history) that must not
+        trigger an EA build — get() would connect to Redis + mem0 +
+        compile LangGraph just to return "not found".
+        """
+        return self._instances.get(customer_id)
+
     def clear(self, customer_id: str) -> None:
         """Evict a cached EA (e.g. on customer config change)."""
         self._instances.pop(customer_id, None)

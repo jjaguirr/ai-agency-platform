@@ -18,8 +18,13 @@ import uuid
 from fastapi import APIRouter, Depends, Request
 
 from ..auth import get_current_customer
-from ..errors import ServiceUnavailableError
-from ..schemas import MessageRequest, MessageResponse
+from ..errors import NotFoundError, ServiceUnavailableError
+from ..schemas import (
+    ConversationHistoryResponse,
+    HistoryMessage,
+    MessageRequest,
+    MessageResponse,
+)
 
 # Import at module level so import failures surface at startup, not per-request.
 from src.agents.executive_assistant import ConversationChannel
@@ -80,3 +85,45 @@ async def post_message(
         )
 
     return MessageResponse(response=response_text, conversation_id=conversation_id)
+
+
+@router.get("/{conversation_id}/messages", response_model=ConversationHistoryResponse)
+async def get_history(
+    conversation_id: str,
+    request: Request,
+    customer_id: str = Depends(get_current_customer),
+):
+    """
+    Return the message history for a conversation.
+
+    Tenant-isolated by construction: we look up the EA keyed by the
+    JWT's customer_id, then ask *that* EA for the conversation. A token
+    for customer A can never reach customer B's EA. Wrong-tenant and
+    doesn't-exist are indistinguishable — both 404.
+
+    Uses peek(), not get(): a read must not trigger an EA build.
+    """
+    ea_registry = request.app.state.ea_registry
+    ea = ea_registry.peek(customer_id)
+    if ea is None:
+        raise NotFoundError(detail="Conversation not found.")
+
+    history = ea.get_conversation_history(conversation_id)
+    if history is None:
+        raise NotFoundError(detail="Conversation not found.")
+
+    # Channel from the first message (all messages in a conversation
+    # share a channel). Empty history → no channel yet.
+    channel = history[0].get("channel") if history else None
+
+    return ConversationHistoryResponse(
+        conversation_id=conversation_id,
+        customer_id=customer_id,
+        channel=channel,
+        messages=[
+            HistoryMessage(
+                role=m["role"], content=m["content"], timestamp=m["timestamp"]
+            )
+            for m in history
+        ],
+    )

@@ -28,6 +28,11 @@ class BadRequestError(APIError):
         super().__init__(status_code=400, error_type="bad_request", detail=detail)
 
 
+class NotFoundError(APIError):
+    def __init__(self, detail: str):
+        super().__init__(status_code=404, error_type="not_found", detail=detail)
+
+
 class ServiceUnavailableError(APIError):
     def __init__(self, detail: str):
         super().__init__(status_code=503, error_type="service_unavailable",
