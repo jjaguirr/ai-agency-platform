@@ -116,6 +116,15 @@ class EARegistry:
         """Evict a cached EA (e.g. on customer config change)."""
         self._instances.pop(customer_id, None)
 
+    def active_customers(self) -> list[str]:
+        """Snapshot of customer IDs with a cached EA instance.
+
+        Used by the heartbeat daemon to decide who to tick. Returns a
+        copy because the caller may be iterating while another task
+        evicts — mutating an OrderedDict during iteration raises.
+        """
+        return list(self._instances.keys())
+
     def __contains__(self, customer_id: str) -> bool:
         return customer_id in self._instances
 

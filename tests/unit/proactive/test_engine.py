@@ -55,6 +55,8 @@ class TestEngineCheck:
         from src.agents.proactive.followups import Commitment
 
         clock.set(datetime(2026, 3, 18, 10, 0, tzinfo=ZoneInfo("UTC")))
+        # Briefing already sent today — isolate this test to the followup path
+        await state_store.set_last_briefing("cust", clock())
         # Followup due an hour ago
         await state_store.add_followup("cust", Commitment(
             text="call John", due=clock() - timedelta(hours=1),
@@ -148,6 +150,8 @@ class TestEngineCheck:
         bad.domain = "bad"
         bad.proactive_check = AsyncMock(side_effect=RuntimeError("oops"))
 
+        # Briefing already sent — isolate to specialist-crash + followup path
+        await state_store.set_last_briefing("cust", clock())
         # Followup should still deliver even though specialist crashed
         await state_store.add_followup("cust", Commitment(
             text="call John", due=clock() - timedelta(hours=1), raw="r"))

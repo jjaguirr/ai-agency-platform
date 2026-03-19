@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.agents.executive_assistant import BusinessContext
+    from src.agents.proactive.triggers import ProactiveTrigger
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +128,20 @@ class SpecialistAgent(ABC):
     @abstractmethod
     async def execute_task(self, task: SpecialistTask) -> SpecialistResult:
         """Do the work. May raise — the registry catches and converts to FAILED."""
+
+    async def proactive_check(
+        self, customer_id: str, context: "BusinessContext"
+    ) -> Optional["ProactiveTrigger"]:
+        """Optional proactive hook. Override to surface unprompted alerts
+        (anomalies, conflicts, deadlines) for this specialist's domain.
+
+        The default returns None — specialists that don't override are
+        simply skipped by the heartbeat loop. This keeps the proactive
+        system opt-in: adding a new specialist doesn't force anyone to
+        think about heartbeat semantics until they actually have
+        something to say.
+        """
+        return None
 
 
 # --- Registry ---------------------------------------------------------------

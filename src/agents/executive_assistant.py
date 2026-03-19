@@ -104,6 +104,7 @@ class BusinessContext:
     current_tools: List[str] = None
     automation_opportunities: List[str] = None
     communication_style: str = "professional"
+    timezone: str = "UTC"
     key_processes: Dict[str, Any] = None
     customers: List[Dict] = None
     team_members: List[Dict] = None

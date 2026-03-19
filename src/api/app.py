@@ -21,7 +21,7 @@ from .errors import (
     handle_validation_error,
 )
 from .middleware import CorrelationMiddleware, install_correlation_logging
-from .routes import conversations, health, history, provisioning, webhooks
+from .routes import conversations, health, history, notifications, provisioning, webhooks
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +76,7 @@ def create_app(
     app.include_router(health.router)
     app.include_router(conversations.router)
     app.include_router(history.router)
+    app.include_router(notifications.router)
     app.include_router(provisioning.router)
     app.include_router(webhooks.router)
 
@@ -134,13 +135,53 @@ def create_default_app() -> FastAPI:  # pragma: no cover
     allocator = PortAllocator()
     orchestrator = InfrastructureOrchestrator(port_allocator=allocator)
 
+    # --- Proactive heartbeat ---
+    # One daemon per process, ticking over every cached EA. No external
+    # scheduler — it rides the FastAPI event loop via lifespan.
+    from src.agents.proactive.engine import ProactiveEngine
+    from src.agents.proactive.gate import NoiseGate, ProactivePrefs
+    from src.agents.proactive.heartbeat import HeartbeatDaemon
+    from src.agents.proactive.outbound import OutboundRouter
+    from src.agents.proactive.state import ProactiveStateStore
+    from src.agents.proactive.triggers import Priority
+    from datetime import datetime, timezone
+
+    _clock = lambda: datetime.now(timezone.utc)
+    _store = ProactiveStateStore(redis=redis_client, clock=_clock)
+    _gate = NoiseGate(_store, clock=_clock)
+    _router = OutboundRouter(whatsapp_manager=wa_manager, state_store=_store)
+    _engine = ProactiveEngine(state_store=_store, gate=_gate,
+                              router=_router, clock=_clock)
+
+    # Platform-wide fallback prefs. Real per-customer prefs would come
+    # from a settings store keyed on customer_id — today there's one
+    # dial set for everyone. The hook point is the check_fn closure.
+    _default_prefs = ProactivePrefs(
+        timezone="UTC", min_priority=Priority.MEDIUM,
+        quiet_start_hour=22, quiet_end_hour=7,
+        daily_cap=5, cooldown_hours=24,
+    )
+
+    async def _check(customer_id: str) -> None:
+        ea = await ea_registry.get(customer_id)
+        ctx = getattr(ea, "business_context", None)
+        specs = list(getattr(
+            getattr(ea, "delegation_registry", None), "_specialists", {}
+        ).values())
+        await _engine.check_customer(customer_id, ctx,
+                                     specialists=specs, prefs=_default_prefs)
+
+    heartbeat = HeartbeatDaemon(ea_registry=ea_registry, check_fn=_check)
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         try:
             await allocator.initialize()
         except Exception:
             logger.exception("Port allocator init failed; provisioning will degrade")
+        await heartbeat.start()
         yield
+        await heartbeat.stop()
         await redis_client.aclose()
 
     return create_app(
