@@ -71,7 +71,11 @@ class NoiseGate:
 
     @staticmethod
     def _in_quiet_hours(now: datetime, config: NoiseConfig) -> bool:
-        tz = ZoneInfo(config.timezone)
+        try:
+            tz = ZoneInfo(config.timezone)
+        except (KeyError, Exception):
+            logger.warning("Invalid timezone %r, falling back to UTC", config.timezone)
+            tz = ZoneInfo("UTC")
         local_hour = now.astimezone(tz).hour
         start, end = config.quiet_start, config.quiet_end
         if start > end:

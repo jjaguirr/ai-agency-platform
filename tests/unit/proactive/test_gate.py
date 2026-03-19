@@ -201,6 +201,29 @@ class TestCombined:
         )
         assert not decision.allowed
 
+    async def test_invalid_timezone_falls_back_to_utc(self, gate):
+        """Bad timezone should not crash the gate — fall back to UTC."""
+        cfg = NoiseConfig(quiet_start=22, quiet_end=7, timezone="Fake/Zone")
+        trigger = _trigger(priority=Priority.MEDIUM, cooldown_key=None)
+        # 10:00 UTC is outside quiet hours in any reasonable interpretation
+        decision = await gate.evaluate(
+            CID, trigger, cfg,
+            now=datetime(2026, 3, 19, 10, 0, tzinfo=timezone.utc),
+        )
+        assert decision.allowed
+
+    async def test_invalid_timezone_quiet_hours_still_work(self, gate):
+        """Even with fallback, quiet hours logic applies using UTC."""
+        cfg = NoiseConfig(quiet_start=22, quiet_end=7, timezone="Not/Real")
+        trigger = _trigger(priority=Priority.MEDIUM, cooldown_key=None)
+        # 23:00 UTC — within quiet hours under UTC fallback
+        decision = await gate.evaluate(
+            CID, trigger, cfg,
+            now=datetime(2026, 3, 19, 23, 0, tzinfo=timezone.utc),
+        )
+        assert not decision.allowed
+        assert "quiet_hours" in decision.reason
+
     async def test_urgent_bypasses_quiet_and_cap_but_not_cooldown(self, gate, store):
         cfg = NoiseConfig(quiet_start=22, quiet_end=7, timezone="UTC")
         # Cooldown active
