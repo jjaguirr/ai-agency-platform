@@ -4,11 +4,14 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Callable, List, Optional
+from typing import TYPE_CHECKING, Callable, List, Optional
 from zoneinfo import ZoneInfo
 
 from .state import ProactiveStateStore
 from .triggers import Priority, ProactiveTrigger
+
+if TYPE_CHECKING:
+    from .settings_cache import PersonalityConfig
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +34,16 @@ class MorningBriefingBehavior:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
 
     async def check(
-        self, customer_id: str, config: BehaviorConfig,
+        self,
+        customer_id: str,
+        config: BehaviorConfig,
+        *,
+        personality: Optional[PersonalityConfig] = None,
+        briefing_enabled: bool = True,
     ) -> Optional[ProactiveTrigger]:
+        if not briefing_enabled:
+            return None
+
         now = self._clock()
         tz = ZoneInfo(config.timezone)
         local_now = now.astimezone(tz)
@@ -62,7 +73,7 @@ class MorningBriefingBehavior:
             for fu in follow_ups:
                 parts.append(f"  - {fu.get('commitment', 'unknown')}")
 
-        message = "Good morning! Here's your briefing for today.\n" + "\n".join(parts)
+        message = _format_briefing(parts, personality)
 
         return ProactiveTrigger(
             domain="ea",
@@ -73,6 +84,29 @@ class MorningBriefingBehavior:
             suggested_message=message,
             cooldown_key="ea:morning_briefing",
         )
+
+
+def _format_briefing(
+    parts: list[str],
+    personality: Optional[PersonalityConfig] = None,
+) -> str:
+    """Build briefing message adapted to personality settings."""
+    if personality is None:
+        return "Good morning! Here's your briefing for today.\n" + "\n".join(parts)
+
+    tone = personality.tone
+    name = personality.name
+    body = "\n".join(parts)
+
+    if tone == "concise":
+        return f"Briefing for {name}:\n{body}" if name != "Assistant" else f"Briefing:\n{body}"
+    elif tone == "friendly":
+        greeting = f"Hey {name}!" if name != "Assistant" else "Hey there!"
+        return f"{greeting} Here's what's on your plate today.\n{body}"
+    else:
+        # professional / detailed / default
+        greeting = f"Good morning, {name}!" if name != "Assistant" else "Good morning!"
+        return f"{greeting} Here's your briefing for today.\n{body}"
 
 
 class FollowUpTrackerBehavior:

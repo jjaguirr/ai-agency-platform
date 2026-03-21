@@ -8,6 +8,7 @@ from src.proactive.behaviors import (
     IdleNudgeBehavior,
     BehaviorConfig,
 )
+from src.proactive.settings_cache import PersonalityConfig
 from src.proactive.state import ProactiveStateStore
 from src.proactive.triggers import Priority
 
@@ -92,6 +93,62 @@ class TestMorningBriefing:
     async def test_default_hour_is_8(self):
         cfg = BehaviorConfig()
         assert cfg.briefing_hour == 8
+
+
+class TestMorningBriefingPersonalization:
+    async def test_uses_customer_name_in_greeting(self, store):
+        behavior = MorningBriefingBehavior(
+            store, clock=_clock(datetime(2026, 3, 19, 8, 5, tzinfo=timezone.utc))
+        )
+        await store.add_follow_up(CID, {"id": "fu_1", "commitment": "call John"})
+        cfg = BehaviorConfig(briefing_hour=8, timezone="UTC")
+        personality = PersonalityConfig(name="Maria", tone="professional")
+        result = await behavior.check(CID, cfg, personality=personality)
+        assert result is not None
+        assert "Maria" in result.suggested_message
+
+    async def test_concise_tone_shortens_message(self, store):
+        behavior = MorningBriefingBehavior(
+            store, clock=_clock(datetime(2026, 3, 19, 8, 5, tzinfo=timezone.utc))
+        )
+        await store.add_follow_up(CID, {"id": "fu_1", "commitment": "call John"})
+        cfg = BehaviorConfig(briefing_hour=8, timezone="UTC")
+        personality = PersonalityConfig(tone="concise")
+        result = await behavior.check(CID, cfg, personality=personality)
+        assert result is not None
+        # Concise skips the long greeting
+        assert "Here's your briefing" not in result.suggested_message
+
+    async def test_friendly_tone_informal(self, store):
+        behavior = MorningBriefingBehavior(
+            store, clock=_clock(datetime(2026, 3, 19, 8, 5, tzinfo=timezone.utc))
+        )
+        await store.add_follow_up(CID, {"id": "fu_1", "commitment": "call John"})
+        cfg = BehaviorConfig(briefing_hour=8, timezone="UTC")
+        personality = PersonalityConfig(tone="friendly", name="Alex")
+        result = await behavior.check(CID, cfg, personality=personality)
+        assert result is not None
+        assert "Hey" in result.suggested_message or "Hi" in result.suggested_message
+
+    async def test_falls_back_gracefully_without_personality(self, store):
+        behavior = MorningBriefingBehavior(
+            store, clock=_clock(datetime(2026, 3, 19, 8, 5, tzinfo=timezone.utc))
+        )
+        await store.add_follow_up(CID, {"id": "fu_1", "commitment": "call John"})
+        cfg = BehaviorConfig(briefing_hour=8, timezone="UTC")
+        # No personality passed — should use default
+        result = await behavior.check(CID, cfg)
+        assert result is not None
+        assert "Good morning" in result.suggested_message
+
+    async def test_briefing_disabled_returns_none(self, store):
+        behavior = MorningBriefingBehavior(
+            store, clock=_clock(datetime(2026, 3, 19, 8, 5, tzinfo=timezone.utc))
+        )
+        await store.add_follow_up(CID, {"id": "fu_1", "commitment": "call John"})
+        cfg = BehaviorConfig(briefing_hour=8, timezone="UTC")
+        result = await behavior.check(CID, cfg, briefing_enabled=False)
+        assert result is None
 
 
 class TestFollowUpTracker:

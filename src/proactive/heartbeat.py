@@ -158,7 +158,11 @@ class HeartbeatDaemon:
             except TypeError:
                 # Behavior.check may need config — try with customer config
                 try:
-                    result = await behavior.check(customer_id, cfg)
+                    kwargs = {}
+                    if isinstance(behavior, MorningBriefingBehavior):
+                        kwargs["personality"] = customer_config.personality
+                        kwargs["briefing_enabled"] = customer_config.briefing_enabled
+                    result = await behavior.check(customer_id, cfg, **kwargs)
                     if result is not None:
                         if isinstance(result, list):
                             triggers.extend(result)
