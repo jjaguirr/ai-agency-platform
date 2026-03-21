@@ -22,7 +22,7 @@ from .errors import (
 )
 from .middleware import CorrelationMiddleware, install_correlation_logging
 from .routes import (
-    auth_login, conversations, health, history, notifications,
+    audit, auth_login, conversations, health, history, notifications,
     provisioning, settings, webhooks, workflows,
 )
 
@@ -40,6 +40,8 @@ def create_app(
     conversation_repo: Optional[Any] = None,
     lifespan: Optional[Lifespan] = None,
     proactive_state_store: Any = None,
+    safety_pipeline: Optional[Any] = None,
+    safety_config: Optional[Any] = None,
 ) -> FastAPI:
     """
     Build the API with all dependencies injected.
@@ -72,6 +74,11 @@ def create_app(
     app.state.redis_client = redis_client
     app.state.conversation_repo = conversation_repo
     app.state.proactive_state_store = proactive_state_store
+    # Safety pipeline is optional — pre-safety tests construct apps
+    # without one and the conversation/webhook routes guard for None.
+    # safety_config is separate: it gates the rate-limit middleware
+    # below, which is an independent concern from input/output scanning.
+    app.state.safety_pipeline = safety_pipeline
 
     # Structured error handling. All paths converge on {type, detail}.
     # Order: specific-first so the Exception catch-all doesn't shadow
@@ -85,6 +92,21 @@ def create_app(
     app.add_middleware(CorrelationMiddleware)
     install_correlation_logging()
 
+    # Rate limiter — pure ASGI, added after CorrelationMiddleware so it
+    # runs *outermost* (Starlette builds the stack in reverse add order).
+    # An unauthenticated flood should hit the global bucket before any
+    # correlation-ID allocation or auth parsing. Gated on safety_config
+    # rather than safety_pipeline because the limiter is independent of
+    # the scan pipeline: tests that want rate limiting pass a config +
+    # real-ish redis; tests that don't omit the config and never throttle.
+    if safety_config is not None:
+        from src.safety.rate_limiter import RateLimitMiddleware
+        app.add_middleware(
+            RateLimitMiddleware,
+            redis_client=redis_client,
+            config=safety_config,
+        )
+
     # Routers
     app.include_router(health.router)
     app.include_router(conversations.router)
@@ -95,6 +117,7 @@ def create_app(
     app.include_router(auth_login.router)
     app.include_router(settings.router)
     app.include_router(workflows.router)
+    app.include_router(audit.router)
 
     # Dashboard static assets at / — mounted AFTER routers so /v1/*
     # resolves to API handlers before StaticFiles' catch-all kicks in.
@@ -153,6 +176,17 @@ def create_default_app() -> FastAPI:  # pragma: no cover
     # --- Postgres (conversation storage) ---
     db_cfg = DatabaseConfig.from_env()
 
+    # --- Safety layer ---
+    # Built before the EA registry so the factory can hand each new EA
+    # the same AuditLogger instance for confirmation-event logging.
+    from src.safety.audit import AuditLogger
+    from src.safety.config import SafetyConfig
+    from src.safety.pipeline import SafetyPipeline
+
+    safety_cfg = SafetyConfig.from_env()
+    audit_logger = AuditLogger(redis_client, max_events=safety_cfg.audit_max_events)
+    safety_pipeline = SafetyPipeline(safety_cfg, audit_logger)
+
     # --- EA registry ---
     # Size-bound caps worst-case EA memory at max × sizeof(one EA).
     # 128 is a reasonable per-worker default; scale horizontally or
@@ -160,10 +194,16 @@ def create_default_app() -> FastAPI:  # pragma: no cover
     # at INFO). Env-configurable so ops don't need a code change.
     import os as _os
     ea_max = int(_os.environ.get("EA_REGISTRY_MAX_SIZE", "128"))
-    ea_registry = EARegistry(
-        factory=lambda cid: ExecutiveAssistant(customer_id=cid),
-        max_size=ea_max,
-    )
+
+    def _ea_factory(cid: str) -> ExecutiveAssistant:
+        ea = ExecutiveAssistant(customer_id=cid)
+        # audit_logger is optional on the EA; when present,
+        # NEEDS_CONFIRMATION lifecycle events land in the same
+        # Redis trail as the pipeline's injection/redaction events.
+        ea.audit_logger = audit_logger
+        return ea
+
+    ea_registry = EARegistry(factory=_ea_factory, max_size=ea_max)
 
     # --- WhatsApp manager ---
     wa_manager = WhatsAppManager()
@@ -240,5 +280,7 @@ def create_default_app() -> FastAPI:  # pragma: no cover
         # is up. Routes tolerate None during the startup window.
         conversation_repo=None,
         proactive_state_store=proactive_store,
+        safety_pipeline=safety_pipeline,
+        safety_config=safety_cfg,
         lifespan=lifespan,
     )

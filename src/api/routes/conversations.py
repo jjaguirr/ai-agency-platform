@@ -54,11 +54,28 @@ async def post_message(
     conversation_id = req.conversation_id or str(uuid.uuid4())
     ea_registry = request.app.state.ea_registry
 
+    # --- Input safety gate -------------------------------------------
+    # Runs before the try block so MessageTooLongError (APIError, 422)
+    # propagates to the APIError handler rather than being swallowed
+    # by the broad except-Exception below. HIGH-risk injection returns
+    # a canned fallback without ever touching the EA.
+    pipeline = getattr(request.app.state, "safety_pipeline", None)
+    if pipeline is not None:
+        decision = await pipeline.scan_input(req.message, customer_id)
+        if not decision.proceed:
+            return MessageResponse(
+                response=decision.safe_response,
+                conversation_id=conversation_id,
+            )
+        message_to_ea = decision.sanitized_message
+    else:
+        message_to_ea = req.message
+
     try:
         ea = await ea_registry.get(customer_id)
         response_text = await asyncio.wait_for(
             ea.handle_customer_interaction(
-                message=req.message,
+                message=message_to_ea,
                 channel=_CHANNEL_MAP[req.channel],
                 conversation_id=conversation_id,
             ),
@@ -82,6 +99,14 @@ async def post_message(
         raise ServiceUnavailableError(
             detail="Assistant temporarily unavailable.",
         )
+
+    # --- Output safety gate ------------------------------------------
+    # Redact leaked internal keys, cross-tenant IDs, stack traces —
+    # anything the OutputScanner patterns catch — before the response
+    # leaves the process. response_text is guaranteed-set here; the
+    # except clauses above all raise.
+    if pipeline is not None:
+        response_text = await pipeline.scan_output(response_text, customer_id)
 
     # --- Persistence side effect -------------------------------------
     # Write-after: only persist once we have a reply to persist. A
