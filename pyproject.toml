@@ -78,16 +78,15 @@ dev = [
     "pytest-mock>=3.12.0",
     "pytest-timeout>=2.2.0",
     "pytest-benchmark>=4.0.0",
-
     # Test data & mocking
     "faker>=19.0.0",
     "factory-boy>=3.3.0",
     "responses>=0.23.0",
     "fakeredis>=2.20.0",
     "hypothesis>=6.88.0",
-
     # Coverage
     "coverage[toml]>=7.3.0",
+    "asgi-lifespan>=2.1.0",
 ]
 
 [project.optional-dependencies]
