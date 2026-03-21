@@ -141,6 +141,21 @@ async def post_message(
                 customer_id, conversation_id, exc_info=True,
             )
 
+    # Delegation outcomes: if the EA reached a terminal specialist state
+    # this turn, pop_delegation_events yields the records. Drained here
+    # rather than inside the EA because the EA stays Postgres-unaware —
+    # same layering discipline as message persistence above.
+    intel_repo = getattr(request.app.state, "intelligence_repo", None)
+    if intel_repo is not None:
+        try:
+            for rec in ea.pop_delegation_events(conversation_id):
+                await intel_repo.record_delegation(rec)
+        except Exception:
+            logger.warning(
+                "Delegation event persistence failed for customer=%s conv=%s",
+                customer_id, conversation_id, exc_info=True,
+            )
+
     # Fire-and-forget: extract follow-ups and update interaction time
     proactive_store = getattr(request.app.state, "proactive_state_store", None)
     if proactive_store is not None:

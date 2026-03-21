@@ -38,6 +38,7 @@ def create_app(
     whatsapp_manager: Any,
     redis_client: Any,
     conversation_repo: Optional[Any] = None,
+    intelligence_repo: Optional[Any] = None,
     lifespan: Optional[Lifespan] = None,
     proactive_state_store: Any = None,
     safety_pipeline: Optional[Any] = None,
@@ -73,6 +74,7 @@ def create_app(
     app.state.whatsapp_manager = whatsapp_manager
     app.state.redis_client = redis_client
     app.state.conversation_repo = conversation_repo
+    app.state.intelligence_repo = intelligence_repo
     app.state.proactive_state_store = proactive_state_store
     # Safety pipeline is optional — pre-safety tests construct apps
     # without one and the conversation/webhook routes guard for None.

@@ -9,7 +9,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any, Literal
 from dataclasses import dataclass, asdict, field
 from enum import Enum
@@ -644,6 +644,12 @@ class ExecutiveAssistant:
         # In-memory conversation history. Populated by handle_customer_interaction,
         # lost on LRU eviction from EARegistry — acceptable for now.
         self._conversation_histories: dict[str, list[dict]] = {}
+
+        # Delegation outcomes emitted by _delegate_to_specialist on terminal
+        # states. The conversations route drains these via pop_delegation_events
+        # after handle_customer_interaction returns and persists to Postgres —
+        # same write-after layering as message persistence.
+        self._delegation_events: dict[str, list] = {}
         
         # Initialize LLM for sophisticated conversation management
         if os.getenv("OPENAI_API_KEY"):
@@ -1329,6 +1335,44 @@ The key difference: automation tools give you software to configure. I give you 
 
         return state
 
+    def pop_delegation_events(self, conversation_id: str) -> list:
+        """Drain terminal delegation records for one conversation.
+
+        Destructive read. The route calls this once per request after
+        handle_customer_interaction returns; pop means a Postgres hiccup
+        followed by a retry won't double-write, and the buffer doesn't
+        grow unbounded.
+        """
+        return self._delegation_events.pop(conversation_id, [])
+
+    def _emit_delegation(
+        self,
+        conversation_id: str,
+        *,
+        domain: str,
+        status: str,
+        turns: int,
+        started_at: datetime,
+        confirmation_requested: bool,
+        confirmation_outcome: Optional[str],
+    ) -> None:
+        # Local import keeps the intelligence module off the EA's import
+        # graph — same shape as _audit_confirmation's correlation_id import.
+        from src.intelligence.repository import DelegationRecord
+        self._delegation_events.setdefault(conversation_id, []).append(
+            DelegationRecord(
+                conversation_id=conversation_id,
+                customer_id=self.customer_id,
+                domain=domain,
+                status=status,
+                turns=turns,
+                confirmation_requested=confirmation_requested,
+                confirmation_outcome=confirmation_outcome,
+                started_at=started_at,
+                ended_at=datetime.now(timezone.utc),
+            )
+        )
+
     async def _delegate_to_specialist(self, state: ConversationState) -> ConversationState:
         """Hand a task to a specialist, weave the result into the EA's response.
 
@@ -1337,6 +1381,28 @@ The key difference: automation tools give you software to configure. I give you 
         a clarification — skip routing, carry prior_turns back to the same one.
         """
         last_message = state.messages[-1].content if state.messages else ""
+
+        # --- tracking ---------------------------------------------------
+        # Turn count and start time ride on active_delegation so they
+        # survive the Redis round-trip between turns. On a fresh run both
+        # start here; on resume they're read back (with backcompat
+        # defaults for state written before this instrumentation existed).
+        if state.active_delegation:
+            turn_count = state.active_delegation.get("turn_count", 0) + 1
+            _started_raw = state.active_delegation.get("started_at")
+            started_at = (
+                datetime.fromisoformat(_started_raw) if _started_raw
+                else datetime.now(timezone.utc)
+            )
+            confirmation_requested = state.active_delegation.get(
+                "confirmation_requested", False,
+            )
+        else:
+            turn_count = 1
+            started_at = datetime.now(timezone.utc)
+            confirmation_requested = False
+        confirmation_outcome: Optional[str] = None
+        # ----------------------------------------------------------------
 
         if state.active_delegation:
             domain = state.active_delegation["domain"]
@@ -1353,6 +1419,13 @@ The key difference: automation tools give you software to configure. I give you 
                     await self._audit_confirmation(
                         AuditEventType.HIGH_RISK_ACTION_DECLINED, domain, pending,
                     )
+                    self._emit_delegation(
+                        state.conversation_id,
+                        domain=domain, status="cancelled", turns=turn_count,
+                        started_at=started_at,
+                        confirmation_requested=True,
+                        confirmation_outcome="declined",
+                    )
                     state.messages.append(AIMessage(
                         content="Understood — I've cancelled that.",
                     ))
@@ -1361,6 +1434,8 @@ The key difference: automation tools give you software to configure. I give you 
                 # via prior_turns. The specialist reads the stashed IDs
                 # from there rather than re-resolving — the target may
                 # have moved in the meantime.
+                confirmation_requested = True
+                confirmation_outcome = "confirmed"
                 prior_turns.append({
                     "role": "customer",
                     "content": last_message,
@@ -1416,6 +1491,13 @@ The key difference: automation tools give you software to configure. I give you 
                 f"Specialist {domain} failed ({result.error}) — EA handling directly"
             )
             state.active_delegation = None
+            self._emit_delegation(
+                state.conversation_id,
+                domain=domain, status="failed", turns=turn_count,
+                started_at=started_at,
+                confirmation_requested=confirmation_requested,
+                confirmation_outcome=confirmation_outcome,
+            )
             return await self._handle_general_assistance(state)
 
         if result.status == SpecialistStatus.NEEDS_CLARIFICATION:
@@ -1427,6 +1509,8 @@ The key difference: automation tools give you software to configure. I give you 
                 "prior_turns": prior_turns + [
                     {"role": "specialist", "content": result.clarification_question},
                 ],
+                "turn_count": turn_count,
+                "started_at": started_at.isoformat(),
             }
             state.messages.append(AIMessage(content=result.clarification_question))
             return state
@@ -1443,6 +1527,9 @@ The key difference: automation tools give you software to configure. I give you 
                     {"role": "specialist", "content": result.confirmation_prompt},
                 ],
                 "pending_action": result.payload,
+                "turn_count": turn_count,
+                "started_at": started_at.isoformat(),
+                "confirmation_requested": True,
             }
             await self._audit_confirmation(
                 AuditEventType.HIGH_RISK_ACTION_REQUESTED, domain, result.payload,
@@ -1454,6 +1541,13 @@ The key difference: automation tools give you software to configure. I give you 
         # conversational voice. When an LLM is available we let it phrase;
         # otherwise we fall back to the specialist's summary_for_ea hint.
         state.active_delegation = None
+        self._emit_delegation(
+            state.conversation_id,
+            domain=domain, status="completed", turns=turn_count,
+            started_at=started_at,
+            confirmation_requested=confirmation_requested,
+            confirmation_outcome=confirmation_outcome,
+        )
         response = await self._synthesize_specialist_result(result, state.business_context)
         state.messages.append(AIMessage(content=response))
         return state
