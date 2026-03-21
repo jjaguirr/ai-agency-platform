@@ -260,7 +260,6 @@ class DefaultOutboundDispatcher:
 
     async def dispatch(self, customer_id: str, trigger: ProactiveTrigger) -> None:
         notification = {
-            "id": f"notif_{id(trigger)}",
             "domain": trigger.domain,
             "trigger_type": trigger.trigger_type,
             "priority": trigger.priority.name,

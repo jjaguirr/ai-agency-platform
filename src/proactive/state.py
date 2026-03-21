@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from datetime import datetime, timezone, date
 from typing import Any, Dict, List, Optional
 
@@ -95,26 +96,74 @@ class ProactiveStateStore:
         return count
 
     # -- Pending notifications (pull-based for API clients) ------------------
+    # Hash storage: {notif_id → json}. Each record carries its own status
+    # so GET can be non-destructive and the customer explicitly marks
+    # read/snoozed/dismissed.
 
     async def add_pending_notification(
         self, customer_id: str, notification: Dict[str, Any]
-    ) -> None:
+    ) -> str:
         key = _key(customer_id, "notifications")
-        await self._r.rpush(key, json.dumps(notification))
+        notif = dict(notification)
+        # Dispatcher previously used id(trigger) — useless across processes.
+        # Generate here if the caller didn't supply one.
+        notif_id = notif.get("id") or f"notif_{uuid.uuid4().hex[:12]}"
+        notif["id"] = notif_id
+        notif.setdefault("status", "pending")
+        await self._r.hset(key, notif_id, json.dumps(notif))
+        return notif_id
 
-    async def pop_pending_notifications(
-        self, customer_id: str,
+    async def list_pending_notifications(
+        self, customer_id: str, *, now: datetime,
     ) -> List[Dict[str, Any]]:
         key = _key(customer_id, "notifications")
-        pipe = self._r.pipeline()
-        pipe.lrange(key, 0, -1)
-        pipe.delete(key)
-        results = await pipe.execute()
-        raw_items = results[0]
-        return [
-            json.loads(item.decode() if isinstance(item, bytes) else item)
-            for item in raw_items
-        ]
+        raw = await self._r.hgetall(key)
+        out: list[dict] = []
+        for v in raw.values():
+            decoded = v.decode() if isinstance(v, bytes) else v
+            n = json.loads(decoded)
+            status = n.get("status", "pending")
+            if status == "pending":
+                out.append(n)
+            elif status == "snoozed":
+                until_raw = n.get("snooze_until")
+                if until_raw and datetime.fromisoformat(until_raw) <= now:
+                    out.append(n)
+        return out
+
+    async def mark_notification_read(
+        self, customer_id: str, notification_id: str,
+    ) -> bool:
+        return await self._set_status(customer_id, notification_id, "read")
+
+    async def snooze_notification(
+        self, customer_id: str, notification_id: str, until: datetime,
+    ) -> bool:
+        return await self._set_status(
+            customer_id, notification_id, "snoozed",
+            snooze_until=until.isoformat(),
+        )
+
+    async def dismiss_notification(
+        self, customer_id: str, notification_id: str,
+    ) -> bool:
+        key = _key(customer_id, "notifications")
+        deleted = await self._r.hdel(key, notification_id)
+        return deleted > 0
+
+    async def _set_status(
+        self, customer_id: str, notification_id: str, status: str, **extra: str,
+    ) -> bool:
+        key = _key(customer_id, "notifications")
+        raw = await self._r.hget(key, notification_id)
+        if raw is None:
+            return False
+        decoded = raw.decode() if isinstance(raw, bytes) else raw
+        n = json.loads(decoded)
+        n["status"] = status
+        n.update(extra)
+        await self._r.hset(key, notification_id, json.dumps(n))
+        return True
 
     # -- Domain events (specialist → heartbeat staging) ----------------------
     # Specialists detect anomalies/conflicts synchronously during task

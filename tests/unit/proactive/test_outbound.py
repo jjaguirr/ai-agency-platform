@@ -1,10 +1,13 @@
 """Tests for DefaultOutboundDispatcher."""
 import pytest
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 from src.proactive.heartbeat import DefaultOutboundDispatcher
 from src.proactive.state import ProactiveStateStore
 from src.proactive.triggers import Priority, ProactiveTrigger
+
+_NOW = datetime(2026, 3, 19, 10, 0, tzinfo=timezone.utc)
 
 
 @pytest.fixture
@@ -44,7 +47,7 @@ class TestDefaultOutboundDispatcher:
     async def test_stores_notification_for_api(self, store, mock_whatsapp_manager_no_channel):
         dispatcher = DefaultOutboundDispatcher(mock_whatsapp_manager_no_channel, store)
         await dispatcher.dispatch("cust_1", _trigger())
-        notifications = await store.pop_pending_notifications("cust_1")
+        notifications = await store.list_pending_notifications("cust_1", now=_NOW)
         assert len(notifications) == 1
         assert notifications[0]["message"] == "Hello from EA"
 
@@ -58,7 +61,7 @@ class TestDefaultOutboundDispatcher:
         """Even when WhatsApp works, store for API pull."""
         dispatcher = DefaultOutboundDispatcher(mock_whatsapp_manager, store)
         await dispatcher.dispatch("cust_1", _trigger())
-        notifications = await store.pop_pending_notifications("cust_1")
+        notifications = await store.list_pending_notifications("cust_1", now=_NOW)
         assert len(notifications) == 1
 
     async def test_whatsapp_failure_still_stores_notification(self, store):
@@ -70,5 +73,5 @@ class TestDefaultOutboundDispatcher:
         # Should not raise
         await dispatcher.dispatch("cust_1", _trigger())
         # Notification still stored
-        notifications = await store.pop_pending_notifications("cust_1")
+        notifications = await store.list_pending_notifications("cust_1", now=_NOW)
         assert len(notifications) == 1
