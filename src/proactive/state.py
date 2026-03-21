@@ -172,3 +172,23 @@ class ProactiveStateStore:
             return None
         total = float(stats.get("sum", 0.0))
         return total / count
+
+    # -- Workflow execution tracking (n8n failure detection) -----------------
+    # One string per workflow: the most-recent execution ID we've already
+    # processed. WorkflowFailureBehavior walks newest-first executions
+    # until it hits this ID; anything newer is new-to-us.
+
+    async def get_last_seen_execution(
+        self, customer_id: str, workflow_id: str,
+    ) -> Optional[str]:
+        key = _key(customer_id, "wf_last_exec", workflow_id)
+        val = await self._r.get(key)
+        if val is None:
+            return None
+        return val.decode() if isinstance(val, bytes) else val
+
+    async def set_last_seen_execution(
+        self, customer_id: str, workflow_id: str, execution_id: str,
+    ) -> None:
+        key = _key(customer_id, "wf_last_exec", workflow_id)
+        await self._r.set(key, execution_id)
