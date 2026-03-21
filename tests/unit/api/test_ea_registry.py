@@ -301,3 +301,53 @@ class TestEARegistryLRUEviction:
         # cust_a was LRU → evicted; cust_b survived
         assert "cust_a" not in registry
         assert "cust_b" in registry
+
+
+class TestPostCreateHook:
+    """set_post_create_hook — callback invoked on every newly-built EA."""
+
+    async def test_hook_called_on_new_ea(self):
+        factory = MagicMock(side_effect=lambda cid: MagicMock(customer_id=cid))
+        registry = EARegistry(factory=factory)
+        hook = MagicMock()
+        registry.set_post_create_hook(hook)
+
+        ea = await registry.get("cust_a")
+
+        hook.assert_called_once_with(ea)
+
+    async def test_hook_not_called_on_cache_hit(self):
+        factory = MagicMock(side_effect=lambda cid: MagicMock(customer_id=cid))
+        registry = EARegistry(factory=factory)
+        hook = MagicMock()
+        registry.set_post_create_hook(hook)
+
+        await registry.get("cust_a")
+        hook.reset_mock()
+        await registry.get("cust_a")  # cache hit
+
+        hook.assert_not_called()
+
+    async def test_hook_exception_propagates(self):
+        """A broken hook must not silently swallow — caller sees the error."""
+        factory = MagicMock(side_effect=lambda cid: MagicMock(customer_id=cid))
+        registry = EARegistry(factory=factory)
+        registry.set_post_create_hook(MagicMock(side_effect=RuntimeError("boom")))
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await registry.get("cust_a")
+
+        # EA was NOT cached — retry should re-invoke factory + hook
+        assert "cust_a" not in registry
+
+    async def test_hook_receives_each_new_ea(self):
+        factory = MagicMock(side_effect=lambda cid: MagicMock(customer_id=cid))
+        registry = EARegistry(factory=factory)
+        received = []
+        registry.set_post_create_hook(lambda ea: received.append(ea.customer_id))
+
+        await registry.get("cust_a")
+        await registry.get("cust_b")
+        await registry.get("cust_a")  # cache hit — no call
+
+        assert received == ["cust_a", "cust_b"]
