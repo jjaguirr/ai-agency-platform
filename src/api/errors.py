@@ -34,6 +34,22 @@ class ServiceUnavailableError(APIError):
                          detail=detail)
 
 
+class MessageTooLongError(APIError):
+    """Input exceeds the configured max_message_length.
+
+    422 rather than 400: the request is well-formed (valid JSON, valid
+    schema) but fails a semantic constraint. Matches the convention the
+    Pydantic validation handler already uses for field-level failures.
+    """
+
+    def __init__(self, length: int, limit: int):
+        super().__init__(
+            status_code=422,
+            error_type="message_too_long",
+            detail=f"Message length {length} exceeds limit of {limit} characters.",
+        )
+
+
 # --- Handlers -------------------------------------------------------------
 
 async def handle_api_error(_: Request, exc: APIError) -> JSONResponse:
