@@ -1,0 +1,13 @@
+name: Weekly Business Report
+description: Fetch metrics from an API, aggregate the last 7 days, email a summary, and archive to storage. Runs on a cron schedule.
+category: reporting
+integrations:
+  - http
+  - email
+tags:
+  - weekly
+  - report
+  - metrics
+  - email
+  - scheduled
+  - digest

@@ -602,6 +602,7 @@ class ExecutiveAssistant:
             ("social_media", "SocialMediaSpecialist"),
             ("finance", "FinanceSpecialist"),
             ("scheduling", "SchedulingSpecialist"),
+            ("workflows", "WorkflowSpecialist"),
         ):
             try:
                 mod = importlib.import_module(f"src.agents.specialists.{mod_name}")
