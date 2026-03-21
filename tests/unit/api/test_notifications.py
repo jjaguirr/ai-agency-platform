@@ -133,3 +133,100 @@ class TestNotificationsEndpoint:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.json() == []
+
+
+class TestNotificationLifecycleEndpoints:
+    """Tests for persistent notification lifecycle: read, snooze, dismiss."""
+
+    async def _add_notif(self, store, cid="cust_test"):
+        return await store.add_notification(cid, {
+            "domain": "ea", "trigger_type": "test", "priority": "MEDIUM",
+            "title": "Test", "message": "Hello",
+            "created_at": "2026-03-19T08:00:00+00:00",
+        })
+
+    async def test_get_returns_persistent_notifications(self, async_client, token, store):
+        notif_id = await self._add_notif(store)
+        resp = await async_client.get(
+            "/v1/notifications",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) >= 1
+        ids = [n["id"] for n in data]
+        assert notif_id in ids
+
+    async def test_get_persistent_not_consumed(self, async_client, token, store):
+        """Persistent notifications survive multiple GETs."""
+        await self._add_notif(store)
+        resp1 = await async_client.get(
+            "/v1/notifications",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        resp2 = await async_client.get(
+            "/v1/notifications",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        # Persistent notifications still there on second call
+        assert len(resp2.json()) >= 1
+
+    async def test_mark_read(self, async_client, token, store):
+        notif_id = await self._add_notif(store)
+        resp = await async_client.post(
+            f"/v1/notifications/{notif_id}/read",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        # Should be excluded from GET
+        resp2 = await async_client.get(
+            "/v1/notifications",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        ids = [n["id"] for n in resp2.json()]
+        assert notif_id not in ids
+
+    async def test_snooze(self, async_client, token, store):
+        notif_id = await self._add_notif(store)
+        resp = await async_client.post(
+            f"/v1/notifications/{notif_id}/snooze",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"duration_seconds": 3600},
+        )
+        assert resp.status_code == 200
+
+    async def test_snooze_default_1hr(self, async_client, token, store):
+        notif_id = await self._add_notif(store)
+        resp = await async_client.post(
+            f"/v1/notifications/{notif_id}/snooze",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        stored = await store.get_notification("cust_test", notif_id)
+        assert stored["status"] == "snoozed"
+        assert stored["snooze_until"] != ""
+
+    async def test_dismiss(self, async_client, token, store):
+        notif_id = await self._add_notif(store)
+        resp = await async_client.post(
+            f"/v1/notifications/{notif_id}/dismiss",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        stored = await store.get_notification("cust_test", notif_id)
+        assert stored["status"] == "dismissed"
+
+    async def test_action_on_nonexistent_returns_404(self, async_client, token):
+        resp = await async_client.post(
+            "/v1/notifications/notif_fake/read",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 404
+
+    async def test_tenant_isolation_on_actions(self, async_client, other_token, store):
+        notif_id = await self._add_notif(store, cid="cust_test")
+        resp = await async_client.post(
+            f"/v1/notifications/{notif_id}/read",
+            headers={"Authorization": f"Bearer {other_token}"},
+        )
+        assert resp.status_code == 404

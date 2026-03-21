@@ -241,7 +241,6 @@ class DefaultOutboundDispatcher:
 
     async def dispatch(self, customer_id: str, trigger: ProactiveTrigger) -> None:
         notification = {
-            "id": f"notif_{id(trigger)}",
             "domain": trigger.domain,
             "trigger_type": trigger.trigger_type,
             "priority": trigger.priority.name,
@@ -261,5 +260,5 @@ class DefaultOutboundDispatcher:
                 customer_id, trigger.title,
             )
 
-        # Always store for API pull
-        await self._state.add_pending_notification(customer_id, notification)
+        # Store as persistent notification with lifecycle support
+        await self._state.add_notification(customer_id, notification)

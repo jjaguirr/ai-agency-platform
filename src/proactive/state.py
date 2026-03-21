@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from datetime import datetime, timezone, date
 from typing import Any, Dict, List, Optional
 
@@ -115,3 +116,89 @@ class ProactiveStateStore:
             json.loads(item.decode() if isinstance(item, bytes) else item)
             for item in raw_items
         ]
+
+    # -- Notification lifecycle (persistent, with status) --------------------
+
+    _NOTIF_TTL = 604800  # 7 days
+
+    async def add_notification(
+        self, customer_id: str, notification: Dict[str, Any],
+    ) -> str:
+        notif_id = f"notif_{uuid.uuid4().hex[:12]}"
+        data = {**notification, "id": notif_id, "status": "pending", "snooze_until": ""}
+        key = _key(customer_id, "notif", notif_id)
+        idx_key = _key(customer_id, "notification_ids")
+        pipe = self._r.pipeline()
+        pipe.hset(key, mapping=data)
+        pipe.expire(key, self._NOTIF_TTL)
+        pipe.sadd(idx_key, notif_id)
+        pipe.expire(idx_key, self._NOTIF_TTL)
+        await pipe.execute()
+        return notif_id
+
+    async def get_notification(
+        self, customer_id: str, notif_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        key = _key(customer_id, "notif", notif_id)
+        data = await self._r.hgetall(key)
+        if not data:
+            return None
+        return {
+            (k.decode() if isinstance(k, bytes) else k): (v.decode() if isinstance(v, bytes) else v)
+            for k, v in data.items()
+        }
+
+    async def list_notifications(
+        self, customer_id: str, *, now: Optional[datetime] = None,
+    ) -> List[Dict[str, Any]]:
+        now = now or datetime.now(timezone.utc)
+        idx_key = _key(customer_id, "notification_ids")
+        ids = await self._r.smembers(idx_key)
+        result: list[Dict[str, Any]] = []
+        for raw_id in ids:
+            notif_id = raw_id.decode() if isinstance(raw_id, bytes) else raw_id
+            notif = await self.get_notification(customer_id, notif_id)
+            if notif is None:
+                continue
+            status = notif.get("status", "pending")
+            if status in ("read", "dismissed"):
+                continue
+            if status == "snoozed":
+                snooze_until = notif.get("snooze_until", "")
+                if snooze_until:
+                    try:
+                        if datetime.fromisoformat(snooze_until) > now:
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+            result.append(notif)
+        return result
+
+    async def mark_notification_read(
+        self, customer_id: str, notif_id: str,
+    ) -> bool:
+        key = _key(customer_id, "notif", notif_id)
+        if not await self._r.exists(key):
+            return False
+        await self._r.hset(key, "status", "read")
+        return True
+
+    async def snooze_notification(
+        self, customer_id: str, notif_id: str, until: datetime,
+    ) -> bool:
+        key = _key(customer_id, "notif", notif_id)
+        if not await self._r.exists(key):
+            return False
+        pipe = self._r.pipeline()
+        pipe.hset(key, mapping={"status": "snoozed", "snooze_until": until.isoformat()})
+        await pipe.execute()
+        return True
+
+    async def dismiss_notification(
+        self, customer_id: str, notif_id: str,
+    ) -> bool:
+        key = _key(customer_id, "notif", notif_id)
+        if not await self._r.exists(key):
+            return False
+        await self._r.hset(key, "status", "dismissed")
+        return True

@@ -100,6 +100,11 @@ class NotificationResponse(BaseModel):
     title: str
     message: str
     created_at: str
+    status: str = "pending"
+
+
+class SnoozeRequest(BaseModel):
+    duration_seconds: int = Field(default=3600, ge=60, le=86400)
 
 
 # --- Dashboard auth -------------------------------------------------------

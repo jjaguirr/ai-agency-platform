@@ -136,6 +136,93 @@ class TestPendingNotifications:
         assert result[1]["message"] == "Second"
 
 
+class TestNotificationLifecycle:
+    async def test_add_notification_assigns_status(self, store):
+        notif = {
+            "domain": "ea", "trigger_type": "morning_briefing",
+            "priority": "MEDIUM", "title": "Briefing", "message": "Hello",
+            "created_at": "2026-03-19T08:00:00+00:00",
+        }
+        notif_id = await store.add_notification(CID, notif)
+        assert notif_id is not None
+        stored = await store.get_notification(CID, notif_id)
+        assert stored["status"] == "pending"
+        assert stored["id"] == notif_id
+
+    async def test_list_notifications_returns_pending(self, store):
+        n = {"domain": "ea", "trigger_type": "test", "priority": "MEDIUM",
+             "title": "T", "message": "M", "created_at": "2026-03-19T08:00:00+00:00"}
+        notif_id = await store.add_notification(CID, n)
+        result = await store.list_notifications(CID)
+        assert len(result) == 1
+        assert result[0]["id"] == notif_id
+
+    async def test_mark_read_excludes_from_list(self, store):
+        n = {"domain": "ea", "trigger_type": "test", "priority": "MEDIUM",
+             "title": "T", "message": "M", "created_at": "2026-03-19T08:00:00+00:00"}
+        notif_id = await store.add_notification(CID, n)
+        await store.mark_notification_read(CID, notif_id)
+        result = await store.list_notifications(CID)
+        assert len(result) == 0
+        # But notification still exists
+        stored = await store.get_notification(CID, notif_id)
+        assert stored["status"] == "read"
+
+    async def test_snooze_hides_until_expiry(self, store):
+        n = {"domain": "ea", "trigger_type": "test", "priority": "MEDIUM",
+             "title": "T", "message": "M", "created_at": "2026-03-19T08:00:00+00:00"}
+        notif_id = await store.add_notification(CID, n)
+        snooze_until = datetime(2026, 3, 19, 11, 0, tzinfo=timezone.utc)
+        await store.snooze_notification(CID, notif_id, snooze_until)
+
+        # Before expiry — hidden
+        now_before = datetime(2026, 3, 19, 10, 30, tzinfo=timezone.utc)
+        result = await store.list_notifications(CID, now=now_before)
+        assert len(result) == 0
+
+        # After expiry — visible again
+        now_after = datetime(2026, 3, 19, 11, 5, tzinfo=timezone.utc)
+        result = await store.list_notifications(CID, now=now_after)
+        assert len(result) == 1
+
+    async def test_dismiss_hides_permanently(self, store):
+        n = {"domain": "ea", "trigger_type": "test", "priority": "MEDIUM",
+             "title": "T", "message": "M", "created_at": "2026-03-19T08:00:00+00:00"}
+        notif_id = await store.add_notification(CID, n)
+        await store.dismiss_notification(CID, notif_id)
+        result = await store.list_notifications(CID)
+        assert len(result) == 0
+        stored = await store.get_notification(CID, notif_id)
+        assert stored["status"] == "dismissed"
+
+    async def test_get_notification_by_id(self, store):
+        n = {"domain": "finance", "trigger_type": "anomaly", "priority": "HIGH",
+             "title": "Anomaly", "message": "Unusual", "created_at": "2026-03-19T08:00:00+00:00"}
+        notif_id = await store.add_notification(CID, n)
+        stored = await store.get_notification(CID, notif_id)
+        assert stored["domain"] == "finance"
+        assert stored["title"] == "Anomaly"
+
+    async def test_get_nonexistent_returns_none(self, store):
+        result = await store.get_notification(CID, "notif_fake")
+        assert result is None
+
+    async def test_customer_isolation(self, store):
+        n = {"domain": "ea", "trigger_type": "test", "priority": "MEDIUM",
+             "title": "T", "message": "M", "created_at": "2026-03-19T08:00:00+00:00"}
+        await store.add_notification(CID, n)
+        result = await store.list_notifications(CID_OTHER)
+        assert len(result) == 0
+
+    async def test_notification_has_ttl(self, fake_redis, store):
+        n = {"domain": "ea", "trigger_type": "test", "priority": "MEDIUM",
+             "title": "T", "message": "M", "created_at": "2026-03-19T08:00:00+00:00"}
+        notif_id = await store.add_notification(CID, n)
+        key = f"proactive:{CID}:notif:{notif_id}"
+        ttl = await fake_redis.ttl(key)
+        assert ttl > 0  # Has TTL set
+
+
 class TestKeyPrefixAndIsolation:
     async def test_keys_use_proactive_prefix(self, fake_redis, store):
         await store.record_cooldown(CID, "test_key", window_seconds=60)

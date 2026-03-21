@@ -75,7 +75,7 @@ async def test_put_then_get_roundtrips(aclient, auth_headers, fake_redis):
     payload = {
         "working_hours": {"start": "08:30", "end": "17:00", "timezone": "America/New_York"},
         "briefing": {"enabled": False, "time": "07:15"},
-        "proactive": {"priority_threshold": "HIGH", "daily_cap": 3, "idle_nudge_minutes": 60},
+        "proactive": {"priority_threshold": "HIGH", "daily_cap": 3, "idle_nudge_minutes": 60, "anomaly_threshold": 2.0, "monthly_budget": None},
         "personality": {"tone": "concise", "language": "es", "name": "Aria"},
         "connected_services": {"calendar": True, "n8n": False},
     }
