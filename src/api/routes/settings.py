@@ -33,12 +33,25 @@ async def get_settings(
     redis = request.app.state.redis_client
     raw = await redis.get(_REDIS_KEY.format(customer_id=customer_id))
     if raw is None:
-        return Settings()
-    if isinstance(raw, bytes):
-        raw = raw.decode("utf-8")
-    # model_validate tolerates extra keys we've since removed and fills
-    # defaults for keys we've since added — forward-compatible storage.
-    return Settings.model_validate(json.loads(raw))
+        settings = Settings()
+    else:
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        # model_validate tolerates extra keys we've since removed and fills
+        # defaults for keys we've since added — forward-compatible storage.
+        settings = Settings.model_validate(json.loads(raw))
+
+    # Live n8n health check — overrides stored value.
+    # Calendar stays False until an integration exists.
+    n8n_client = getattr(request.app.state, "n8n_client", None)
+    if n8n_client is not None:
+        try:
+            await n8n_client.list_workflows()
+            settings.connected_services.n8n = True
+        except Exception:
+            settings.connected_services.n8n = False
+
+    return settings
 
 
 @router.put("", response_model=Settings)
