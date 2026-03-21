@@ -16,6 +16,8 @@ of the feature: history outlives EA LRU eviction.
 """
 import logging
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from ..auth import get_current_customer
@@ -34,6 +36,7 @@ async def list_conversations(
     customer_id: str = Depends(get_current_customer),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    topic: Optional[str] = Query(None),
 ):
     repo = request.app.state.conversation_repo
     if repo is None:
@@ -42,7 +45,7 @@ async def list_conversations(
         return ConversationListResponse(conversations=[])
 
     convs = await repo.list_conversations(
-        customer_id=customer_id, limit=limit, offset=offset)
+        customer_id=customer_id, limit=limit, offset=offset, topic=topic)
     return ConversationListResponse(conversations=convs)
 
 

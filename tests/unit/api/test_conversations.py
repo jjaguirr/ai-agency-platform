@@ -420,3 +420,119 @@ class TestPersistence:
         }
         assert body["messages"][1]["role"] == "assistant"
         assert body["messages"][1]["content"] == "EA reply"
+
+
+# ─── delegation event persistence ──────────────────────────────────────────
+
+class TestDelegationEventDrain:
+    """
+    After the EA returns, the route drains ea.pop_delegation_events() and
+    writes each record to IntelligenceRepository. Same write-after
+    contract as message persistence: never on the critical path, failures
+    don't hide the reply.
+    """
+
+    def _rec(self, conv_id="conv_d"):
+        from datetime import datetime, timezone
+        from src.intelligence.repository import DelegationRecord
+        now = datetime.now(timezone.utc)
+        return DelegationRecord(
+            conversation_id=conv_id, customer_id="cust_conv",
+            domain="finance", status="completed", turns=1,
+            confirmation_requested=False, confirmation_outcome=None,
+            started_at=now, ended_at=now,
+        )
+
+    def _app_with_intel(self, ea, intel_repo):
+        registry = EARegistry(factory=lambda cid: ea)
+        return create_app(
+            ea_registry=registry,
+            orchestrator=AsyncMock(),
+            whatsapp_manager=MagicMock(),
+            redis_client=AsyncMock(),
+            conversation_repo=AsyncMock(),
+            intelligence_repo=intel_repo,
+        )
+
+    def test_events_drained_and_recorded(self, mock_ea, auth_headers):
+        recs = [self._rec(), self._rec()]
+        mock_ea.pop_delegation_events = MagicMock(return_value=recs)
+        intel_repo = AsyncMock()
+        client = TestClient(self._app_with_intel(mock_ea, intel_repo))
+
+        resp = client.post(
+            "/v1/conversations/message",
+            json={"message": "hi", "channel": "chat",
+                  "conversation_id": "conv_d"},
+            headers=auth_headers,
+        )
+
+        assert resp.status_code == 200
+        assert intel_repo.record_delegation.await_count == 2
+        # Records passed through positionally, unchanged.
+        passed = [c.args[0] for c in intel_repo.record_delegation.await_args_list]
+        assert passed == recs
+
+    def test_pop_scoped_to_conversation_id(self, mock_ea, auth_headers):
+        mock_ea.pop_delegation_events = MagicMock(return_value=[])
+        intel_repo = AsyncMock()
+        client = TestClient(self._app_with_intel(mock_ea, intel_repo))
+
+        client.post(
+            "/v1/conversations/message",
+            json={"message": "hi", "channel": "chat",
+                  "conversation_id": "conv_scoped"},
+            headers=auth_headers,
+        )
+
+        mock_ea.pop_delegation_events.assert_called_once_with("conv_scoped")
+
+    def test_intel_repo_failure_does_not_hide_reply(self, mock_ea, auth_headers):
+        mock_ea.handle_customer_interaction = AsyncMock(return_value="still here")
+        mock_ea.pop_delegation_events = MagicMock(return_value=[self._rec()])
+        intel_repo = AsyncMock()
+        intel_repo.record_delegation = AsyncMock(
+            side_effect=ConnectionError("pg gone"))
+        client = TestClient(self._app_with_intel(mock_ea, intel_repo))
+
+        resp = client.post(
+            "/v1/conversations/message",
+            json={"message": "hi", "channel": "chat"},
+            headers=auth_headers,
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["response"] == "still here"
+
+    def test_no_intel_repo_means_no_drain(self, mock_ea, auth_headers):
+        # Existing _app helper doesn't pass intelligence_repo → None.
+        # Route should short-circuit without touching the EA buffer.
+        mock_ea.pop_delegation_events = MagicMock(return_value=[])
+        client = TestClient(_app(mock_ea))
+
+        resp = client.post(
+            "/v1/conversations/message",
+            json={"message": "hi", "channel": "chat"},
+            headers=auth_headers,
+        )
+
+        assert resp.status_code == 200
+        mock_ea.pop_delegation_events.assert_not_called()
+
+    def test_ea_failure_means_no_drain(self, mock_ea, auth_headers):
+        # EA raised → 503. The ea local was never assigned; drain must
+        # not be attempted.
+        mock_ea.handle_customer_interaction = AsyncMock(
+            side_effect=RuntimeError("redis gone"))
+        mock_ea.pop_delegation_events = MagicMock(return_value=[])
+        intel_repo = AsyncMock()
+        client = TestClient(self._app_with_intel(mock_ea, intel_repo))
+
+        resp = client.post(
+            "/v1/conversations/message",
+            json={"message": "hi", "channel": "chat"},
+            headers=auth_headers,
+        )
+
+        assert resp.status_code == 503
+        intel_repo.record_delegation.assert_not_awaited()

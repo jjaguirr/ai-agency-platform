@@ -22,7 +22,7 @@ from .errors import (
 )
 from .middleware import CorrelationMiddleware, install_correlation_logging
 from .routes import (
-    audit, auth_login, conversations, health, history, notifications,
+    analytics, audit, auth_login, conversations, health, history, notifications,
     provisioning, settings, webhooks, workflows,
 )
 
@@ -38,6 +38,7 @@ def create_app(
     whatsapp_manager: Any,
     redis_client: Any,
     conversation_repo: Optional[Any] = None,
+    intelligence_repo: Optional[Any] = None,
     lifespan: Optional[Lifespan] = None,
     proactive_state_store: Any = None,
     safety_pipeline: Optional[Any] = None,
@@ -73,6 +74,7 @@ def create_app(
     app.state.whatsapp_manager = whatsapp_manager
     app.state.redis_client = redis_client
     app.state.conversation_repo = conversation_repo
+    app.state.intelligence_repo = intelligence_repo
     app.state.proactive_state_store = proactive_state_store
     # Safety pipeline is optional — pre-safety tests construct apps
     # without one and the conversation/webhook routes guard for None.
@@ -118,6 +120,7 @@ def create_app(
     app.include_router(settings.router)
     app.include_router(workflows.router)
     app.include_router(audit.router)
+    app.include_router(analytics.router)
 
     # Dashboard static assets at / — mounted AFTER routers so /v1/*
     # resolves to API handlers before StaticFiles' catch-all kicks in.
@@ -236,6 +239,41 @@ def create_default_app() -> FastAPI:  # pragma: no cover
         ea_registry, proactive_store, noise_gate, dispatcher,
     )
 
+    # --- Conversation intelligence ---
+    # The daemon needs an LLM for summarization. No OPENAI_API_KEY means
+    # no daemon — delegation tracking and the analytics endpoint still
+    # work (they don't need the LLM), but conversations stay
+    # summary=NULL until a key is configured.
+    from src.intelligence.daemon import IntelligenceDaemon
+    from src.intelligence.summarizer import ConversationSummarizer
+
+    intel_daemon: Optional[IntelligenceDaemon] = None
+    if _os.environ.get("OPENAI_API_KEY"):
+        from langchain_openai import ChatOpenAI
+        _summary_model = ChatOpenAI(
+            model=_os.environ.get("INTEL_SUMMARIZER_MODEL", "gpt-4o-mini"),
+            temperature=0.2,
+        )
+
+        async def _llm_call(prompt: str) -> str:
+            msg = await _summary_model.ainvoke(prompt)
+            return msg.content
+
+        summarizer = ConversationSummarizer(_llm_call)
+        # intel_repo / conv_repo filled in by the lifespan once the pool
+        # is up. The daemon doesn't start until both exist, so we build
+        # it there rather than here.
+    else:
+        summarizer = None
+        logger.warning(
+            "No OPENAI_API_KEY — intelligence daemon disabled, "
+            "conversations will not be auto-summarized",
+        )
+
+    intel_idle_min = int(_os.environ.get("INTEL_IDLE_MINUTES", "30"))
+    intel_tick_sec = float(_os.environ.get("INTEL_TICK_SECONDS", "60"))
+    intel_batch = int(_os.environ.get("INTEL_BATCH_LIMIT", "100"))
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         # Postgres pool + schema check. A missing table is fatal: the
@@ -253,6 +291,13 @@ def create_default_app() -> FastAPI:  # pragma: no cover
             ) from e
         _app.state.conversation_repo = repo
 
+        # Intelligence repo rides on the same pool. Always constructed —
+        # the conversations route and analytics endpoint need it whether
+        # or not the daemon runs.
+        from src.intelligence.repository import IntelligenceRepository
+        intel_repo = IntelligenceRepository(pool)
+        _app.state.intelligence_repo = intel_repo
+
         try:
             await allocator.initialize()
         except Exception:
@@ -264,8 +309,30 @@ def create_default_app() -> FastAPI:  # pragma: no cover
         except Exception:
             logger.exception("Heartbeat daemon failed to start; proactive features disabled")
 
+        nonlocal intel_daemon
+        if summarizer is not None:
+            try:
+                intel_daemon = IntelligenceDaemon(
+                    intel_repo=intel_repo,
+                    conv_repo=repo,
+                    summarizer=summarizer,
+                    idle_minutes=intel_idle_min,
+                    batch_limit=intel_batch,
+                    tick_interval=intel_tick_sec,
+                )
+                await intel_daemon.start()
+                _app.state.intel_daemon = intel_daemon
+            except Exception:
+                logger.exception(
+                    "Intelligence daemon failed to start; "
+                    "summaries/tagging disabled",
+                )
+                intel_daemon = None
+
         yield
 
+        if intel_daemon is not None:
+            await intel_daemon.stop()
         await heartbeat.stop()
         await redis_client.aclose()
         if pg_pool_box:

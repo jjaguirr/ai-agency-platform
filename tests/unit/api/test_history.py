@@ -203,3 +203,91 @@ class TestListConversations:
         kwargs = repo.list_conversations.await_args.kwargs
         assert kwargs["limit"] == 10
         assert kwargs["offset"] == 20
+
+
+# ─── intelligence fields + topic filter ────────────────────────────────────
+
+class TestListIntelligence:
+    """
+    After the intelligence sweep runs, list rows carry summary/topics/
+    quality_flags. Before, those columns are NULL/empty-array — the
+    schema defaults absorb both cases so the dashboard doesn't need to
+    branch.
+    """
+
+    def test_summary_topics_flags_surfaced(self):
+        repo = AsyncMock()
+        repo.list_conversations = AsyncMock(return_value=[
+            {
+                "id": "conv_a", "channel": "chat",
+                "created_at": "2026-03-19T09:00:00+00:00",
+                "updated_at": "2026-03-19T10:00:00+00:00",
+                "summary": "Customer asked about March invoices.",
+                "topics": ["finance"],
+                "quality_flags": ["long"],
+            },
+        ])
+        client = TestClient(_app(repo))
+        tok = create_token("cust_intel")
+
+        resp = client.get(
+            "/v1/conversations",
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+
+        assert resp.status_code == 200
+        c = resp.json()["conversations"][0]
+        assert c["summary"] == "Customer asked about March invoices."
+        assert c["topics"] == ["finance"]
+        assert c["quality_flags"] == ["long"]
+
+    def test_missing_intelligence_fields_default(self):
+        # Rows the sweep hasn't touched yet: no summary key in the dict,
+        # or summary explicitly None. Response schema defaults both to
+        # null / empty list.
+        repo = AsyncMock()
+        repo.list_conversations = AsyncMock(return_value=[
+            {"id": "conv_old", "channel": "chat",
+             "created_at": "2026-03-19T09:00:00+00:00",
+             "updated_at": "2026-03-19T10:00:00+00:00"},
+        ])
+        client = TestClient(_app(repo))
+        tok = create_token("cust_intel")
+
+        resp = client.get(
+            "/v1/conversations",
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+
+        assert resp.status_code == 200
+        c = resp.json()["conversations"][0]
+        assert c["summary"] is None
+        assert c["topics"] == []
+        assert c["quality_flags"] == []
+
+    def test_topic_filter_passed_to_repo(self):
+        repo = AsyncMock()
+        repo.list_conversations = AsyncMock(return_value=[])
+        client = TestClient(_app(repo))
+        tok = create_token("cust_intel")
+
+        client.get(
+            "/v1/conversations?topic=finance",
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+
+        assert repo.list_conversations.await_args.kwargs["topic"] == "finance"
+
+    def test_no_topic_filter_passes_none(self):
+        repo = AsyncMock()
+        repo.list_conversations = AsyncMock(return_value=[])
+        client = TestClient(_app(repo))
+        tok = create_token("cust_intel")
+
+        client.get(
+            "/v1/conversations",
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+
+        # None, not the string "None" or omitted-then-KeyError
+        assert repo.list_conversations.await_args.kwargs.get("topic") is None

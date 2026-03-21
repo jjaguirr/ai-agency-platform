@@ -25,7 +25,7 @@ import pytest_asyncio
 asyncpg = pytest.importorskip("asyncpg")
 
 REPO_ROOT = Path(__file__).parents[2]
-MIGRATION = REPO_ROOT / "src" / "database" / "migrations" / "001_conversations.sql"
+MIGRATIONS_DIR = REPO_ROOT / "src" / "database" / "migrations"
 
 
 def _dsn() -> str:
@@ -39,10 +39,16 @@ def _dsn() -> str:
     return f"postgresql://{user}:{pw}@{host}:{port}/{db}"
 
 
-# Migration is idempotent so re-applying per-test is harmless; cheaper
+# Migrations are idempotent so re-applying per-test is harmless; cheaper
 # than fighting pytest-asyncio's event-loop-scope rules for a handful
-# of integration tests.
-_MIGRATION_SQL = MIGRATION.read_text()
+# of integration tests. Sorted glob → applied in version order; adding
+# 003 won't require touching this file.
+_MIGRATION_SQL = [p.read_text() for p in sorted(MIGRATIONS_DIR.glob("*.sql"))]
+assert len(_MIGRATION_SQL) >= 2, (
+    f"Expected at least migrations 001 and 002 in {MIGRATIONS_DIR}, "
+    f"found {len(_MIGRATION_SQL)} — list_conversations SELECTs columns "
+    "that 002 adds, so these tests will fail without it."
+)
 
 
 @pytest_asyncio.fixture
@@ -53,8 +59,8 @@ async def pool():
     except (OSError, asyncpg.PostgresError) as e:
         pytest.skip(f"Postgres unavailable at {dsn!r}: {e}")
 
-    # Apply migration. schema_migrations may not exist in a bare test DB,
-    # so ensure it's present first (idempotent CREATE).
+    # Apply migrations in order. schema_migrations may not exist in a bare
+    # test DB, so ensure it's present first (idempotent CREATE).
     async with p.acquire() as conn:
         await conn.execute(
             "CREATE TABLE IF NOT EXISTS schema_migrations ("
@@ -62,7 +68,8 @@ async def pool():
             "  description TEXT,"
             "  applied_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP)"
         )
-        await conn.execute(_MIGRATION_SQL)
+        for sql in _MIGRATION_SQL:
+            await conn.execute(sql)
 
     yield p
     await p.close()
