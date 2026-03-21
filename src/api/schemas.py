@@ -183,3 +183,46 @@ class AuditEventResponse(BaseModel):
 
 class AuditListResponse(BaseModel):
     events: list[AuditEventResponse]
+
+
+# --- Analytics -----------------------------------------------------------
+
+AnalyticsRange = Literal["24h", "7d", "30d"]
+
+
+class TopicCount(BaseModel):
+    label: str
+    value: int
+
+
+class SpecialistMetrics(BaseModel):
+    domain: str
+    delegation_count: int
+    success_rate: Optional[float]
+    avg_turns: Optional[float]
+    confirmation_rate: Optional[float]
+
+
+class QualityOverview(BaseModel):
+    total: int
+    flags: dict[str, int]
+
+
+class TrendPoint(BaseModel):
+    current: int
+    previous: int
+    delta_pct: Optional[float]  # None when previous == 0
+
+
+class AnalyticsWindow(BaseModel):
+    since: str
+    until: str
+    label: str  # "24h" | "7d" | "30d" | "custom"
+
+
+class AnalyticsResponse(BaseModel):
+    window: AnalyticsWindow
+    topics: list[TopicCount]
+    specialists: list[SpecialistMetrics]
+    quality: QualityOverview
+    trend: dict[str, TrendPoint]
