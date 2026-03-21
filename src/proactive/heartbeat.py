@@ -18,6 +18,7 @@ from .behaviors import (
     MorningBriefingBehavior,
 )
 from .gate import GateDecision, NoiseConfig, NoiseGate
+from .settings_loader import CustomerSettingsLoader
 from .state import ProactiveStateStore
 from .triggers import ProactiveTrigger
 
@@ -40,6 +41,7 @@ class HeartbeatDaemon:
         tick_interval: float = 300.0,
         customer_timeout: float = 30.0,
         clock: Optional[Callable[[], datetime]] = None,
+        settings_loader: Optional[CustomerSettingsLoader] = None,
     ) -> None:
         self._registry = ea_registry
         self._state = state_store
@@ -48,6 +50,7 @@ class HeartbeatDaemon:
         self._tick_interval = tick_interval
         self._customer_timeout = customer_timeout
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._settings = settings_loader
         self._task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
 
@@ -93,10 +96,20 @@ class HeartbeatDaemon:
         if not customer_ids:
             return
 
+        # Load per-customer config once, up front. The loader caches with
+        # a short TTL, so even a large customer set is at most one Redis
+        # read per customer per tick. Loading outside the timeout-wrapped
+        # check means a slow Redis response doesn't burn the customer's
+        # 30-second check budget.
+        noise_configs: dict[str, NoiseConfig] = {}
+        behavior_configs: dict[str, BehaviorConfig] = {}
+        for cid in customer_ids:
+            noise_configs[cid], behavior_configs[cid] = await self._load_configs(cid)
+
         async def _safe_check(cid: str) -> list[ProactiveTrigger]:
             try:
                 return await asyncio.wait_for(
-                    self._check_customer(cid),
+                    self._check_customer(cid, behavior_configs[cid]),
                     timeout=self._customer_timeout,
                 )
             except asyncio.TimeoutError:
@@ -109,8 +122,8 @@ class HeartbeatDaemon:
         results = await asyncio.gather(*[_safe_check(cid) for cid in customer_ids])
 
         for cid, triggers in zip(customer_ids, results):
+            config = noise_configs[cid]
             for trigger in triggers:
-                config = NoiseConfig()  # TODO: per-customer config from BusinessContext
                 decision = await self._gate.evaluate(cid, trigger, config, now=self._clock())
                 if decision.allowed:
                     try:
@@ -137,38 +150,56 @@ class HeartbeatDaemon:
                         cid, trigger.title, decision.reason,
                     )
 
-    async def _check_customer(self, customer_id: str) -> list[ProactiveTrigger]:
+    async def _load_configs(
+        self, customer_id: str,
+    ) -> tuple[NoiseConfig, BehaviorConfig]:
+        if self._settings is None:
+            return NoiseConfig(), BehaviorConfig()
+        try:
+            return (
+                await self._settings.noise_config_for(customer_id),
+                await self._settings.behavior_config_for(customer_id),
+            )
+        except Exception:
+            logger.exception(
+                "Failed to load settings for customer=%s; using defaults",
+                customer_id,
+            )
+            return NoiseConfig(), BehaviorConfig()
+
+    async def _check_customer(
+        self, customer_id: str, cfg: Optional[BehaviorConfig] = None,
+    ) -> list[ProactiveTrigger]:
+        cfg = cfg or BehaviorConfig()
         triggers: list[ProactiveTrigger] = []
 
-        # Built-in behaviors
+        # Built-in behaviors. Some take (customer_id), some take
+        # (customer_id, config) — try the config signature first so
+        # behaviors that care about per-customer settings see them.
         for behavior in self._get_behaviors():
             try:
-                result = await behavior.check(customer_id)
-                if result is not None:
-                    if isinstance(result, list):
-                        triggers.extend(result)
-                    else:
-                        triggers.append(result)
+                result = await behavior.check(customer_id, cfg)
             except TypeError:
-                # Behavior.check may need config — try with default config
                 try:
-                    cfg = BehaviorConfig()
-                    result = await behavior.check(customer_id, cfg)
-                    if result is not None:
-                        if isinstance(result, list):
-                            triggers.extend(result)
-                        else:
-                            triggers.append(result)
+                    result = await behavior.check(customer_id)
                 except Exception:
                     logger.exception(
                         "Behavior %s failed for customer=%s",
                         type(behavior).__name__, customer_id,
                     )
+                    continue
             except Exception:
                 logger.exception(
                     "Behavior %s failed for customer=%s",
                     type(behavior).__name__, customer_id,
                 )
+                continue
+            if result is None:
+                continue
+            if isinstance(result, list):
+                triggers.extend(result)
+            else:
+                triggers.append(result)
 
         # Specialist proactive checks
         specialist_triggers = await self._get_specialist_triggers(customer_id)
