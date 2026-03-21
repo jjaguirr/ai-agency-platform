@@ -18,6 +18,7 @@ from .behaviors import (
     MorningBriefingBehavior,
 )
 from .gate import GateDecision, NoiseConfig, NoiseGate
+from .settings_cache import CustomerConfig, CustomerSettingsCache
 from .state import ProactiveStateStore
 from .triggers import ProactiveTrigger
 
@@ -40,6 +41,7 @@ class HeartbeatDaemon:
         tick_interval: float = 300.0,
         customer_timeout: float = 30.0,
         clock: Optional[Callable[[], datetime]] = None,
+        settings_cache: Optional[CustomerSettingsCache] = None,
     ) -> None:
         self._registry = ea_registry
         self._state = state_store
@@ -48,6 +50,7 @@ class HeartbeatDaemon:
         self._tick_interval = tick_interval
         self._customer_timeout = customer_timeout
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._settings_cache = settings_cache
         self._task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
 
@@ -109,8 +112,9 @@ class HeartbeatDaemon:
         results = await asyncio.gather(*[_safe_check(cid) for cid in customer_ids])
 
         for cid, triggers in zip(customer_ids, results):
+            customer_config = await self._get_customer_config(cid)
             for trigger in triggers:
-                config = NoiseConfig()  # TODO: per-customer config from BusinessContext
+                config = customer_config.noise
                 decision = await self._gate.evaluate(cid, trigger, config, now=self._clock())
                 if decision.allowed:
                     try:
@@ -139,6 +143,8 @@ class HeartbeatDaemon:
 
     async def _check_customer(self, customer_id: str) -> list[ProactiveTrigger]:
         triggers: list[ProactiveTrigger] = []
+        customer_config = await self._get_customer_config(customer_id)
+        cfg = customer_config.behavior
 
         # Built-in behaviors
         for behavior in self._get_behaviors():
@@ -150,9 +156,8 @@ class HeartbeatDaemon:
                     else:
                         triggers.append(result)
             except TypeError:
-                # Behavior.check may need config — try with default config
+                # Behavior.check may need config — try with customer config
                 try:
-                    cfg = BehaviorConfig()
                     result = await behavior.check(customer_id, cfg)
                     if result is not None:
                         if isinstance(result, list):
@@ -175,6 +180,11 @@ class HeartbeatDaemon:
         triggers.extend(specialist_triggers)
 
         return triggers
+
+    async def _get_customer_config(self, customer_id: str) -> CustomerConfig:
+        if self._settings_cache is not None:
+            return await self._settings_cache.get(customer_id)
+        return CustomerConfig()
 
     def _get_behaviors(self) -> list:
         clock = self._clock

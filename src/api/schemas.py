@@ -139,6 +139,8 @@ class ProactiveSettings(BaseModel):
     priority_threshold: Priority = "MEDIUM"
     daily_cap: int = Field(default=5, ge=0, le=50)
     idle_nudge_minutes: int = Field(default=120, ge=0)
+    anomaly_threshold: float = Field(default=2.0, ge=1.0, le=10.0)
+    monthly_budget: Optional[float] = Field(default=None, ge=0)
 
 
 class PersonalitySettings(BaseModel):

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from src.proactive.heartbeat import HeartbeatDaemon, OutboundDispatcher
 from src.proactive.state import ProactiveStateStore
 from src.proactive.gate import NoiseGate, NoiseConfig, GateDecision
+from src.proactive.settings_cache import CustomerSettingsCache
 from src.proactive.triggers import Priority, ProactiveTrigger
 from src.api.ea_registry import EARegistry
 
@@ -209,6 +210,70 @@ class TestConfig:
     def test_default_customer_timeout(self, registry, store, gate, mock_dispatcher):
         daemon = HeartbeatDaemon(registry, store, gate, mock_dispatcher)
         assert daemon._customer_timeout == 30.0
+
+
+class TestSettingsCacheWiring:
+    async def test_uses_customer_settings_for_noise_config(
+        self, registry, store, gate, mock_dispatcher, fake_redis,
+    ):
+        """When settings_cache is provided, heartbeat uses per-customer config."""
+        import json
+        # Seed settings with HIGH threshold
+        await fake_redis.set("settings:cust_1", json.dumps({
+            "working_hours": {"start": "09:00", "end": "18:00", "timezone": "UTC"},
+            "proactive": {"priority_threshold": "HIGH", "daily_cap": 5, "idle_nudge_minutes": 120},
+            "briefing": {"enabled": True, "time": "08:00"},
+            "personality": {"tone": "professional", "language": "en", "name": "Assistant"},
+            "connected_services": {"calendar": False, "n8n": False},
+        }))
+        cache = CustomerSettingsCache(fake_redis, ttl_seconds=120)
+        daemon = HeartbeatDaemon(
+            registry, store, gate, mock_dispatcher,
+            tick_interval=0.05, settings_cache=cache,
+        )
+        # Inject a MEDIUM trigger — should be suppressed by HIGH threshold
+        trigger = _trigger(priority=Priority.MEDIUM)
+        daemon._get_behaviors = lambda: []
+        daemon._get_specialist_triggers = AsyncMock(return_value=[trigger])
+        await daemon._tick()
+        mock_dispatcher.dispatch.assert_not_called()
+
+    async def test_customer_settings_allows_matching_priority(
+        self, registry, store, gate, mock_dispatcher, fake_redis,
+    ):
+        """HIGH trigger passes when customer threshold is HIGH."""
+        import json
+        await fake_redis.set("settings:cust_1", json.dumps({
+            "working_hours": {"start": "09:00", "end": "18:00", "timezone": "UTC"},
+            "proactive": {"priority_threshold": "HIGH", "daily_cap": 5, "idle_nudge_minutes": 120},
+            "briefing": {"enabled": True, "time": "08:00"},
+            "personality": {"tone": "professional", "language": "en", "name": "Assistant"},
+            "connected_services": {"calendar": False, "n8n": False},
+        }))
+        cache = CustomerSettingsCache(fake_redis, ttl_seconds=120)
+        daemon = HeartbeatDaemon(
+            registry, store, gate, mock_dispatcher,
+            tick_interval=0.05, settings_cache=cache,
+        )
+        trigger = _trigger(priority=Priority.HIGH)
+        daemon._get_behaviors = lambda: []
+        daemon._get_specialist_triggers = AsyncMock(return_value=[trigger])
+        await daemon._tick()
+        mock_dispatcher.dispatch.assert_called()
+
+    async def test_falls_back_to_defaults_without_cache(
+        self, registry, store, gate, mock_dispatcher,
+    ):
+        """Without settings_cache, behavior is identical to before (MEDIUM threshold)."""
+        daemon = HeartbeatDaemon(
+            registry, store, gate, mock_dispatcher, tick_interval=0.05,
+        )
+        # MEDIUM trigger should pass default MEDIUM threshold
+        trigger = _trigger(priority=Priority.MEDIUM)
+        daemon._get_behaviors = lambda: []
+        daemon._get_specialist_triggers = AsyncMock(return_value=[trigger])
+        await daemon._tick()
+        mock_dispatcher.dispatch.assert_called()
 
 
 class TestEARegistryActiveCustomers:
