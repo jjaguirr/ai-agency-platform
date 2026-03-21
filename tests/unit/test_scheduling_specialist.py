@@ -743,3 +743,152 @@ class TestArchitecture:
         assert isinstance(CalendarClient, type(typing.Protocol)) or \
                hasattr(CalendarClient, "_is_protocol") or \
                getattr(CalendarClient, "__protocol_attrs__", None) is not None
+
+
+# --- Proactive V2: conflict detection hook ----------------------------------
+# Optionally takes a ProactiveStateStore. Before create_event, check
+# is_free(start, end); if the slot is occupied, stage a schedule_conflict
+# domain event. The event is STILL CREATED — the notification is FYI, not
+# a block. DomainEventBehavior drains it on the next heartbeat tick.
+
+import fakeredis.aioredis
+from src.proactive.state import ProactiveStateStore
+
+
+@pytest.fixture
+def proactive_state():
+    redis = fakeredis.aioredis.FakeRedis()
+    return ProactiveStateStore(redis)
+
+
+class TestConflictStaging:
+
+    @pytest.mark.asyncio
+    async def test_no_state_store_is_harmless(self, busy_calendar, agency_ctx):
+        """No proactive_state → current behavior, no conflict check."""
+        spec = SchedulingSpecialist(calendar=busy_calendar, clock=_clock)
+        result = await spec.execute_task(
+            # Books right on top of the existing 3pm Acme review.
+            _task("schedule a meeting with John today at 3pm for an hour", agency_ctx)
+        )
+        assert result.status == SpecialistStatus.COMPLETED
+
+    @pytest.mark.asyncio
+    async def test_overlapping_create_stages_conflict_event(
+        self, busy_calendar, proactive_state, agency_ctx,
+    ):
+        spec = SchedulingSpecialist(
+            calendar=busy_calendar, clock=_clock,
+            proactive_state=proactive_state,
+        )
+        # busy_calendar has 3pm-4pm "Acme review" — this books on top of it.
+        result = await spec.execute_task(
+            _task("schedule a meeting with John today at 3pm for an hour", agency_ctx)
+        )
+
+        # The booking still completes. Conflict notification is FYI.
+        assert result.status == SpecialistStatus.COMPLETED
+        assert result.payload["start"] == "2026-03-19T15:00:00"
+
+        events = await proactive_state.drain_domain_events("c")
+        assert len(events) == 1
+        ev = events[0]
+        assert ev["type"] == "schedule_conflict"
+        # Matches the shape _convert_schedule_conflict expects.
+        assert ev["new_event"]["start"] == "2026-03-19T15:00:00"
+        assert "title" in ev["new_event"]
+        conflict_titles = {c["title"] for c in ev["conflicts_with"]}
+        assert "Acme review" in conflict_titles
+
+    @pytest.mark.asyncio
+    async def test_free_slot_stages_nothing(
+        self, busy_calendar, proactive_state, agency_ctx,
+    ):
+        spec = SchedulingSpecialist(
+            calendar=busy_calendar, clock=_clock,
+            proactive_state=proactive_state,
+        )
+        # Tomorrow (Friday) is wide open in busy_calendar.
+        result = await spec.execute_task(
+            _task("schedule a meeting with John tomorrow at 2pm", agency_ctx)
+        )
+        assert result.status == SpecialistStatus.COMPLETED
+        assert await proactive_state.drain_domain_events("c") == []
+
+    @pytest.mark.asyncio
+    async def test_conflict_lists_all_overlapping_events(
+        self, busy_calendar, proactive_state, agency_ctx,
+    ):
+        """busy_calendar: 3pm-4pm Acme, 4pm-4:30 Maria. A 90-minute
+        meeting starting 3:30 hits both."""
+        spec = SchedulingSpecialist(
+            calendar=busy_calendar, clock=_clock,
+            proactive_state=proactive_state,
+        )
+        await spec.execute_task(
+            _task("book a call with Alice today at 3:30pm for 90 minutes", agency_ctx)
+        )
+        events = await proactive_state.drain_domain_events("c")
+        assert len(events) == 1
+        conflict_titles = {c["title"] for c in events[0]["conflicts_with"]}
+        assert conflict_titles == {"Acme review", "1:1 with Maria"}
+
+    @pytest.mark.asyncio
+    async def test_clarification_path_does_not_check_conflicts(
+        self, busy_calendar, proactive_state, agency_ctx,
+    ):
+        """No time parsed → NEEDS_CLARIFICATION before we know when the
+        event would even be, so there's nothing to check against."""
+        spec = SchedulingSpecialist(
+            calendar=busy_calendar, clock=_clock,
+            proactive_state=proactive_state,
+        )
+        result = await spec.execute_task(
+            _task("schedule a meeting with John", agency_ctx)
+        )
+        assert result.status == SpecialistStatus.NEEDS_CLARIFICATION
+        # No is_free call, no event staged.
+        assert await proactive_state.drain_domain_events("c") == []
+        assert ("is_free", ...) not in [(m, ...) for m, _ in busy_calendar.calls]
+
+    @pytest.mark.asyncio
+    async def test_conflict_check_failure_does_not_block_create(
+        self, proactive_state, agency_ctx,
+    ):
+        """is_free blows up → log and skip the hook; the meeting still
+        gets booked. The conflict check is advisory, not authoritative."""
+        class FlakeyCalendar(StubCalendar):
+            async def is_free(self, start, end):
+                raise RuntimeError("calendar API 503")
+
+        cal = FlakeyCalendar()
+        spec = SchedulingSpecialist(
+            calendar=cal, clock=_clock, proactive_state=proactive_state,
+        )
+        result = await spec.execute_task(
+            _task("schedule a meeting with John tomorrow at 2pm", agency_ctx)
+        )
+        assert result.status == SpecialistStatus.COMPLETED
+        # create_event still happened
+        assert any(m == "create_event" for m, _ in cal.calls)
+        # No event staged — we don't know if there was a conflict
+        assert await proactive_state.drain_domain_events("c") == []
+
+    @pytest.mark.asyncio
+    async def test_state_failure_does_not_block_create(
+        self, busy_calendar, agency_ctx,
+    ):
+        """Redis down → meeting still books. Same degradation contract
+        as the finance anomaly hook."""
+        class BrokenStore:
+            async def add_domain_event(self, *a, **kw):
+                raise ConnectionError("redis down")
+
+        spec = SchedulingSpecialist(
+            calendar=busy_calendar, clock=_clock,
+            proactive_state=BrokenStore(),
+        )
+        result = await spec.execute_task(
+            _task("schedule a meeting with John today at 3pm", agency_ctx)
+        )
+        assert result.status == SpecialistStatus.COMPLETED
