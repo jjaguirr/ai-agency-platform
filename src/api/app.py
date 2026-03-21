@@ -21,7 +21,10 @@ from .errors import (
     handle_validation_error,
 )
 from .middleware import CorrelationMiddleware, install_correlation_logging
-from .routes import conversations, health, history, notifications, provisioning, webhooks
+from .routes import (
+    auth_login, conversations, health, history, notifications,
+    provisioning, settings, webhooks,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -89,8 +92,31 @@ def create_app(
     app.include_router(provisioning.router)
     app.include_router(webhooks.router)
     app.include_router(notifications.router)
+    app.include_router(auth_login.router)
+    app.include_router(settings.router)
+
+    # Dashboard static assets at / — mounted AFTER routers so /v1/*
+    # resolves to API handlers before StaticFiles' catch-all kicks in.
+    # Conditional on the build existing: tests and API-only deploys
+    # don't ship dashboard/dist.
+    _mount_dashboard(app)
 
     return app
+
+
+def _mount_dashboard(app: FastAPI) -> None:
+    import pathlib
+    from fastapi.staticfiles import StaticFiles
+
+    dist = pathlib.Path(__file__).resolve().parents[2] / "dashboard" / "dist"
+    if not dist.is_dir():
+        logger.debug("dashboard/dist not found at %s; skipping static mount", dist)
+        return
+
+    # html=True serves index.html for directory requests. The dashboard
+    # uses hash-based routing so all client-side routes resolve to /
+    # and we don't need SPA history-mode fallback.
+    app.mount("/", StaticFiles(directory=str(dist), html=True), name="dashboard")
 
 
 def create_default_app() -> FastAPI:  # pragma: no cover
