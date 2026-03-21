@@ -57,6 +57,31 @@ from .base.specialist import (
     SpecialistResult,
     SpecialistStatus,
 )
+from src.safety.models import AuditEvent, AuditEventType
+
+
+# --- Confirmation parsing ---------------------------------------------------
+#
+# Closed yes-set. Lowercase, strip trailing punctuation, then exact-match
+# against the set — "yes but can we change the time" is NOT "yes" and
+# must cancel. The cost asymmetry matters: a false-negative means the
+# customer has to ask again; a false-positive means we just deleted
+# something they didn't want deleted.
+
+_AFFIRMATIVE = frozenset({
+    "yes", "yep", "yeah",
+    "confirm", "confirmed",
+    "go ahead", "do it", "proceed",
+    "ok", "okay", "sure",
+})
+
+
+def _is_affirmative(text: str) -> bool:
+    normalized = text.lower().strip().strip(".!?,")
+    return normalized in _AFFIRMATIVE
+
+
+
 # Competitive Positioning System
 try:
     from .competitive_positioning import competitive_positioning
@@ -610,6 +635,11 @@ class ExecutiveAssistant:
             except Exception as e:
                 logger.warning(f"Specialist {cls_name} unavailable: {e}")
         self.specialist_timeout = 15.0
+
+        # Optional audit logger — wired by create_default_app. When None
+        # (old construction, unit tests) confirmation events simply don't
+        # audit; the flow itself is unchanged.
+        self.audit_logger = None
 
         # In-memory conversation history. Populated by handle_customer_interaction,
         # lost on LRU eviction from EARegistry — acceptable for now.
@@ -1312,7 +1342,34 @@ The key difference: automation tools give you software to configure. I give you 
             domain = state.active_delegation["domain"]
             original_task = state.active_delegation.get("original_task", last_message)
             prior_turns = list(state.active_delegation.get("prior_turns", []))
-            prior_turns.append({"role": "customer", "content": last_message})
+            pending = state.active_delegation.get("pending_action")
+
+            if pending is not None:
+                # Confirmation resume — parse yes/no before we do anything
+                # else. No pending_action key means this is a clarification
+                # answer and falls through to the existing path unchanged.
+                if not _is_affirmative(last_message):
+                    state.active_delegation = None
+                    await self._audit_confirmation(
+                        AuditEventType.HIGH_RISK_ACTION_DECLINED, domain, pending,
+                    )
+                    state.messages.append(AIMessage(
+                        content="Understood — I've cancelled that.",
+                    ))
+                    return state
+                # Affirmative: carry pending_action back to the specialist
+                # via prior_turns. The specialist reads the stashed IDs
+                # from there rather than re-resolving — the target may
+                # have moved in the meantime.
+                prior_turns.append({
+                    "role": "customer",
+                    "content": last_message,
+                    "confirmed": True,
+                    "pending_action": pending,
+                })
+            else:
+                prior_turns.append({"role": "customer", "content": last_message})
+
             task_description = last_message
         else:
             # LangGraph conditional-edge routers can't mutate state, so the
@@ -1374,6 +1431,25 @@ The key difference: automation tools give you software to configure. I give you 
             state.messages.append(AIMessage(content=result.clarification_question))
             return state
 
+        if result.status == SpecialistStatus.NEEDS_CONFIRMATION:
+            # Same persistence shape as clarification plus pending_action,
+            # which is what disambiguates the two on resume. payload holds
+            # whatever the specialist resolved on turn 1 (event IDs etc.)
+            # so turn 2 can execute without re-doing that work.
+            state.active_delegation = {
+                "domain": domain,
+                "original_task": original_task,
+                "prior_turns": prior_turns + [
+                    {"role": "specialist", "content": result.confirmation_prompt},
+                ],
+                "pending_action": result.payload,
+            }
+            await self._audit_confirmation(
+                AuditEventType.HIGH_RISK_ACTION_REQUESTED, domain, result.payload,
+            )
+            state.messages.append(AIMessage(content=result.confirmation_prompt))
+            return state
+
         # COMPLETED: weave the specialist's structured result into the EA's
         # conversational voice. When an LLM is available we let it phrase;
         # otherwise we fall back to the specialist's summary_for_ea hint.
@@ -1381,6 +1457,32 @@ The key difference: automation tools give you software to configure. I give you 
         response = await self._synthesize_specialist_result(result, state.business_context)
         state.messages.append(AIMessage(content=response))
         return state
+
+    async def _audit_confirmation(
+        self, event_type: AuditEventType, domain: str, pending: dict,
+    ) -> None:
+        """Best-effort audit for confirmation lifecycle events.
+
+        correlation_id is imported locally because the EA can be
+        constructed in contexts where the API middleware module isn't
+        on the import path (offline scripts, some test setups).
+        """
+        if self.audit_logger is None:
+            return
+        try:
+            from src.api.middleware import correlation_id
+            cid = correlation_id.get() or "-"
+        except Exception:
+            cid = "-"
+        try:
+            await self.audit_logger.log(self.customer_id, AuditEvent(
+                timestamp=datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                event_type=event_type,
+                correlation_id=cid,
+                details={"domain": domain, "pending_action": pending},
+            ))
+        except Exception as e:
+            logger.warning(f"Confirmation audit failed (non-blocking): {e}")
 
     async def _synthesize_specialist_result(
         self, result: SpecialistResult, context: BusinessContext

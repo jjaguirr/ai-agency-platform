@@ -20,6 +20,11 @@ if TYPE_CHECKING:
     from src.agents.executive_assistant import BusinessContext
     from src.proactive.triggers import ProactiveTrigger
 
+# ActionRisk lives in safety.models (single source of truth for the
+# serialized enum values) but specialists are where it's set, so
+# re-export it here so specialist code imports from one place.
+from src.safety.models import ActionRisk  # noqa: F401
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,6 +33,7 @@ logger = logging.getLogger(__name__)
 class SpecialistStatus(Enum):
     COMPLETED = "completed"
     NEEDS_CLARIFICATION = "needs_clarification"
+    NEEDS_CONFIRMATION = "needs_confirmation"
     FAILED = "failed"
 
 
@@ -78,6 +84,11 @@ class SpecialistResult:
     summary_for_ea: Optional[str] = None
     clarification_question: Optional[str] = None
     error: Optional[str] = None
+    # Confirmation fields: set when status is NEEDS_CONFIRMATION. payload
+    # carries whatever the specialist needs to execute on the confirmed
+    # follow-up (event IDs, resolved targets) so it doesn't re-resolve.
+    confirmation_prompt: Optional[str] = None
+    action_risk: Optional[ActionRisk] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -88,6 +99,8 @@ class SpecialistResult:
             "summary_for_ea": self.summary_for_ea,
             "clarification_question": self.clarification_question,
             "error": self.error,
+            "confirmation_prompt": self.confirmation_prompt,
+            "action_risk": self.action_risk.value if self.action_risk else None,
         }
 
     @classmethod
@@ -100,6 +113,8 @@ class SpecialistResult:
             summary_for_ea=d.get("summary_for_ea"),
             clarification_question=d.get("clarification_question"),
             error=d.get("error"),
+            confirmation_prompt=d.get("confirmation_prompt"),
+            action_risk=ActionRisk(d["action_risk"]) if d.get("action_risk") else None,
         )
 
 
