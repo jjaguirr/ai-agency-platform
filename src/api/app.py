@@ -22,8 +22,8 @@ from .errors import (
 )
 from .middleware import CorrelationMiddleware, install_correlation_logging
 from .routes import (
-    audit, auth_login, conversations, health, history, notifications,
-    provisioning, settings, webhooks, workflows,
+    analytics, audit, auth_login, conversations, health, history,
+    notifications, provisioning, settings, webhooks, workflows,
 )
 
 logger = logging.getLogger(__name__)
@@ -123,6 +123,7 @@ def create_app(
     app.include_router(settings.router)
     app.include_router(workflows.router)
     app.include_router(audit.router)
+    app.include_router(analytics.router)
 
     # Dashboard static assets at / — mounted AFTER routers so /v1/*
     # resolves to API handlers before StaticFiles' catch-all kicks in.

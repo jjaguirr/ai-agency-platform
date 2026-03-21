@@ -146,6 +146,22 @@ async def post_message(
                 customer_id, conversation_id, exc_info=True,
             )
 
+    # Fire-and-forget: bump today's activity counters for the dashboard.
+    # Runs after persistence so the assistant message count and
+    # delegation count stay consistent — if append_message failed above,
+    # we've already logged the WARNING and the exception was swallowed,
+    # so this still runs. That's the right call: the customer got a
+    # reply, the dashboard should count it.
+    try:
+        from ..activity_counters import incr_messages, incr_delegation
+        redis = request.app.state.redis_client
+        await incr_messages(redis, customer_id)
+        domain = getattr(ea, "last_specialist_domain", None)
+        if domain:
+            await incr_delegation(redis, customer_id, domain)
+    except Exception:
+        logger.debug("activity counter bump failed for customer=%s", customer_id)
+
     # Fire-and-forget: extract follow-ups and update interaction time
     proactive_store = getattr(request.app.state, "proactive_state_store", None)
     if proactive_store is not None:

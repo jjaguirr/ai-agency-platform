@@ -183,3 +183,25 @@ class AuditEventResponse(BaseModel):
 
 class AuditListResponse(BaseModel):
     events: list[AuditEventResponse]
+
+
+# --- Analytics ---------------------------------------------------------------
+
+class ActivitySummary(BaseModel):
+    date: str
+    messages_processed: int
+    delegations_by_domain: dict[str, int]
+    proactive_triggers_sent: int
+
+
+class SpecialistStatus(BaseModel):
+    domain: str
+    registered: bool
+    operational: bool
+    # Why not operational — n8n error text, "not configured", etc.
+    # None when operational=True.
+    detail: Optional[str] = None
+
+
+class SpecialistStatusResponse(BaseModel):
+    specialists: list[SpecialistStatus]
