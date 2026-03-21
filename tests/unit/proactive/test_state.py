@@ -158,3 +158,81 @@ class TestKeyPrefixAndIsolation:
         assert len(follow_ups) == 1
         briefing_time = await store2.get_last_briefing_time(CID)
         assert briefing_time is not None
+
+
+# --- V2: Domain event staging ------------------------------------------------
+
+class TestDomainEvents:
+    """Specialists stage events at detection time; heartbeat drains on tick."""
+
+    async def test_add_then_drain_roundtrip(self, store):
+        await store.add_domain_event(CID, {
+            "type": "finance_anomaly", "amount": 500.0, "baseline": 100.0,
+        })
+        events = await store.drain_domain_events(CID)
+        assert len(events) == 1
+        assert events[0]["type"] == "finance_anomaly"
+        assert events[0]["amount"] == 500.0
+
+    async def test_drain_is_destructive(self, store):
+        await store.add_domain_event(CID, {"type": "x"})
+        await store.drain_domain_events(CID)
+        assert await store.drain_domain_events(CID) == []
+
+    async def test_drain_empty_is_empty_list(self, store):
+        assert await store.drain_domain_events(CID) == []
+
+    async def test_preserves_fifo_order(self, store):
+        await store.add_domain_event(CID, {"type": "a"})
+        await store.add_domain_event(CID, {"type": "b"})
+        await store.add_domain_event(CID, {"type": "c"})
+        events = await store.drain_domain_events(CID)
+        assert [e["type"] for e in events] == ["a", "b", "c"]
+
+    async def test_isolated_per_customer(self, store):
+        await store.add_domain_event(CID, {"type": "mine"})
+        await store.add_domain_event(CID_OTHER, {"type": "theirs"})
+        mine = await store.drain_domain_events(CID)
+        theirs = await store.drain_domain_events(CID_OTHER)
+        assert [e["type"] for e in mine] == ["mine"]
+        assert [e["type"] for e in theirs] == ["theirs"]
+
+
+# --- V2: Transaction baseline ------------------------------------------------
+
+class TestTransactionBaseline:
+    """Running average for finance anomaly detection. Simple count/sum —
+    no decay, no outlier rejection. Fancy enough for 'is this 2× normal?'."""
+
+    async def test_no_transactions_no_baseline(self, store):
+        assert await store.get_transaction_baseline(CID) is None
+
+    async def test_below_min_samples_no_baseline(self, store):
+        # Fewer than 3 samples → None. Avoids noisy early triggers when
+        # a customer's first transaction happens to be large.
+        await store.record_transaction(CID, 100.0)
+        await store.record_transaction(CID, 200.0)
+        assert await store.get_transaction_baseline(CID) is None
+
+    async def test_baseline_is_mean(self, store):
+        await store.record_transaction(CID, 100.0)
+        await store.record_transaction(CID, 200.0)
+        await store.record_transaction(CID, 300.0)
+        baseline = await store.get_transaction_baseline(CID)
+        assert baseline == pytest.approx(200.0)
+
+    async def test_baseline_updates_incrementally(self, store):
+        for _ in range(3):
+            await store.record_transaction(CID, 100.0)
+        assert await store.get_transaction_baseline(CID) == pytest.approx(100.0)
+        await store.record_transaction(CID, 500.0)
+        # (300 + 500) / 4 = 200
+        assert await store.get_transaction_baseline(CID) == pytest.approx(200.0)
+
+    async def test_isolated_per_customer(self, store):
+        for _ in range(3):
+            await store.record_transaction(CID, 100.0)
+        for _ in range(3):
+            await store.record_transaction(CID_OTHER, 1000.0)
+        assert await store.get_transaction_baseline(CID) == pytest.approx(100.0)
+        assert await store.get_transaction_baseline(CID_OTHER) == pytest.approx(1000.0)
