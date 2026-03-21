@@ -23,6 +23,20 @@ except ImportError:
 
 import redis
 from mem0 import Memory
+
+# Personality defaults mirror src.api.schemas.PersonalitySettings. The EA
+# can't import that module (it pulls in pydantic + API-layer concerns) so
+# the dict is duplicated — keep in sync.
+_DEFAULT_PERSONALITY = {"tone": "professional", "language": "en", "name": "Assistant"}
+
+# Tone literals must cover every value of schemas.Tone; the system prompt
+# indexes this dict directly so a miss would KeyError mid-interaction.
+_TONE_GUIDANCE = {
+    "professional": "Maintain a warm, professional, helpful tone.",
+    "friendly": "Keep it casual and friendly — like a colleague, not a service.",
+    "concise": "Be brief. Short answers, no filler, no restating the question.",
+    "detailed": "Be thorough — explain your reasoning and the context behind it.",
+}
 import openai
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
 from langgraph.graph import StateGraph, END
@@ -641,6 +655,12 @@ class ExecutiveAssistant:
         # audit; the flow itself is unchanged.
         self.audit_logger = None
 
+        # Shared db-0 Redis client (same one the /v1/settings route uses).
+        # ExecutiveAssistantMemory opens its own connection to db=hash%16,
+        # so it literally cannot see settings:{customer_id} — the factory
+        # injects this separately, same pattern as audit_logger above.
+        self.settings_redis = None
+
         # In-memory conversation history. Populated by handle_customer_interaction,
         # lost on LRU eviction from EARegistry — acceptable for now.
         self._conversation_histories: dict[str, list[dict]] = {}
@@ -664,8 +684,10 @@ class ExecutiveAssistant:
         # Initialize LangGraph workflow
         self.graph = self._create_conversation_graph()
         
-        self.personality = "professional"
-        self.name = "Sarah"
+        # Loaded from Redis at the top of each handle_customer_interaction.
+        # Seeded with defaults so direct test calls to graph nodes (which
+        # skip that load) still have something to read.
+        self._personality = dict(_DEFAULT_PERSONALITY)
         
         logger.info(f"Enhanced Executive Assistant initialized for customer {customer_id}")
     
@@ -863,8 +885,8 @@ The key difference: automation tools give you software to configure. I give you 
             context = await self.memory.get_business_context()
             
             if not context.business_name:
-                discovery_prompt = """
-                Hi! I'm Sarah, your new Executive Assistant. I'm here to learn about your business 
+                discovery_prompt = f"""
+                Hi! I'm {self._personality['name']}, your new Executive Assistant. I'm here to learn about your business
                 and help automate your daily operations.
                 
                 Let's start with the basics:
@@ -895,24 +917,28 @@ The key difference: automation tools give you software to configure. I give you 
                 - Research and provide business insights
                 """
             
+            p = self._personality
+            tone_line = _TONE_GUIDANCE.get(p["tone"], _TONE_GUIDANCE["professional"])
+            lang_line = (f"\n            - Respond in language: {p['language']}"
+                         if p["language"] != "en" else "")
             system_msg = SystemMessage(content=f"""
-            You are Sarah, an Executive Assistant for {context.business_name or '[Business Name]'}.
-            
+            You are {p['name']}, an Executive Assistant for {context.business_name or '[Business Name]'}.
+
             Business Context:
             - Business: {context.business_name or 'Not yet learned'}
             - Industry: {context.industry or 'Not specified'}
             - Daily Operations: {', '.join(context.daily_operations) if context.daily_operations else 'Learning...'}
             - Current Tools: {', '.join(context.current_tools) if context.current_tools else 'None identified'}
             - Pain Points: {', '.join(context.pain_points) if context.pain_points else 'None identified'}
-            
+
             Your role:
             - Learn about the business through natural conversation
             - Identify automation opportunities
             - Create workflows when appropriate
-            - Maintain a warm, professional, helpful tone
+            - {tone_line}{lang_line}
             - Ask intelligent follow-up questions
             - Remember everything for future conversations
-            
+
             Current Conversation Goal: {state.current_intent.value}
             """)
             
@@ -1469,6 +1495,30 @@ The key difference: automation tools give you software to configure. I give you 
         state.messages.append(AIMessage(content=response))
         return state
 
+    async def _load_personality(self) -> None:
+        """Fetch tone/language/name from settings:{customer_id} in db 0.
+
+        One call per interaction — everything downstream reads
+        self._personality. Any failure (no client, key missing, malformed
+        JSON, Redis down) leaves defaults in place; personality is
+        cosmetic and should never break a turn.
+        """
+        self._personality = dict(_DEFAULT_PERSONALITY)
+        if self.settings_redis is None:
+            return
+        try:
+            raw = await self.settings_redis.get(f"settings:{self.customer_id}")
+            if not raw:
+                return
+            stored = json.loads(raw).get("personality") or {}
+            # Merge stored-over-default so partial settings (just name,
+            # say) don't wipe the others.
+            for k in _DEFAULT_PERSONALITY:
+                if stored.get(k):
+                    self._personality[k] = stored[k]
+        except Exception as e:
+            logger.warning(f"Personality load failed, using defaults: {e}")
+
     async def _audit_confirmation(
         self, event_type: AuditEventType, domain: str, pending: dict,
         *, outcome: Optional[dict] = None,
@@ -1505,12 +1555,12 @@ The key difference: automation tools give you software to configure. I give you 
         """Turn a specialist's structured payload into an EA-voiced response.
 
         The specialist provides summary_for_ea as a hint but the EA owns
-        phrasing. With an LLM we prompt it to speak as Sarah; without, the
-        hint IS the response (it's already prose).
+        phrasing. With an LLM we prompt it to speak as the configured
+        persona; without, the hint IS the response (it's already prose).
         """
         if self.llm and result.summary_for_ea:
             synthesis_prompt = (
-                f"You are Sarah, the Executive Assistant for {context.business_name or 'the customer'}. "
+                f"You are {self._personality['name']}, the Executive Assistant for {context.business_name or 'the customer'}. "
                 f"A specialist on your team just checked something for the customer. "
                 f"Relay this naturally in your own voice — warm, concise, no jargon:\n\n"
                 f"{result.summary_for_ea}\n\n"
@@ -1530,7 +1580,7 @@ The key difference: automation tools give you software to configure. I give you 
         last_message = state.messages[-1].content if state.messages else ""
         
         assistance_prompt = f"""
-        As Sarah, the Executive Assistant for {context.business_name or '[Business Name]'}, 
+        As {self._personality['name']}, the Executive Assistant for {context.business_name or '[Business Name]'},
         provide helpful business assistance for this request: {last_message}
         
         Business Context:
@@ -1577,7 +1627,7 @@ The key difference: automation tools give you software to configure. I give you 
         last_message = state.messages[-1].content if state.messages else ""
         
         clarification_prompt = f"""
-        As Sarah, the Executive Assistant, I need to ask for clarification about: {last_message}
+        As {self._personality['name']}, the Executive Assistant, I need to ask for clarification about: {last_message}
         
         Business Context Available:
         - Business: {context.business_name or 'Not yet identified'}
@@ -1620,6 +1670,10 @@ The key difference: automation tools give you software to configure. I give you 
             conversation_id = str(uuid.uuid4())
         
         try:
+            # One Redis GET. Graph nodes read self._personality — they
+            # don't each hit Redis.
+            await self._load_personality()
+
             # Get business context
             business_context = await self.memory.get_business_context()
 
@@ -1655,7 +1709,7 @@ The key difference: automation tools give you software to configure. I give you 
                     else:
                         response = "I'm here to help! How can I assist you with your business today?"
                 else:
-                    response = "Hello! I'm Sarah, your Executive Assistant. How can I help you today?"
+                    response = f"Hello! I'm {self._personality['name']}, your Executive Assistant. How can I help you today?"
                 
                 # Store conversation context with dict access
                 await self.memory.store_conversation_context(conversation_id, {
@@ -1678,7 +1732,7 @@ The key difference: automation tools give you software to configure. I give you 
                     else:
                         response = "I'm here to help! How can I assist you with your business today?"
                 else:
-                    response = "Hello! I'm Sarah, your Executive Assistant. How can I help you today?"
+                    response = f"Hello! I'm {self._personality['name']}, your Executive Assistant. How can I help you today?"
                 
                 # Store enhanced conversation context
                 await self.memory.store_conversation_context(conversation_id, {

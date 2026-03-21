@@ -18,7 +18,7 @@ import json
 
 import pytest
 import fakeredis.aioredis
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 
 DEFAULT = {"tone": "professional", "language": "en", "name": "Assistant"}
@@ -200,8 +200,9 @@ class TestPersonalityFetchCadence:
             "personality": {"name": "Aria", "tone": "concise", "language": "en"},
         }))
         # Wrap the fake's get so we can count calls without losing behaviour.
+        # Plain Mock, not AsyncMock — real_get is already a coroutine fn.
         real_get = fake_redis.get
-        fake_redis.get = AsyncMock(side_effect=real_get)
+        fake_redis.get = Mock(side_effect=real_get)
         ea.settings_redis = fake_redis
 
         # Short-circuit the graph so we only test the load path.
