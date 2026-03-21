@@ -211,9 +211,10 @@ class TestWebhookCustomerIdValidation:
     def test_path_traversal_rejected(self):
         """
         Starlette normalizes ../ sequences before routing, so this
-        resolves to /etc/passwd → 404 (no route). The customer_id
-        pattern validator never fires. Either 404 or 422 is acceptable
-        — the important thing is the request never reaches the handler.
+        resolves to /etc/passwd → no API route. With StaticFiles
+        mounted at / it reaches the static handler, which 405s a POST.
+        Any of 404/405/422 is acceptable — the important thing is the
+        request never reaches the webhook handler.
         """
         mgr = WhatsAppManager()
         app = _app_with_manager(mgr)
@@ -223,7 +224,7 @@ class TestWebhookCustomerIdValidation:
             "/webhook/whatsapp/../../etc/passwd",
             content=b"x",
         )
-        assert resp.status_code in (404, 422)
+        assert resp.status_code in (404, 405, 422)
 
     def test_empty_customer_id_rejected(self):
         """Empty string doesn't match the pattern."""

@@ -32,6 +32,28 @@ uv run pytest --no-cov --cov=src/agents/ai_ml/workflow_generator --cov-report=te
 uv run pytest
 ```
 
+## Dashboard
+
+Svelte + Vite in `dashboard/`; FastAPI serves the built assets at `/` with the API at `/v1/`. Requires Node 22+.
+
+**Seed a login (once per customer):**
+```bash
+uv run scripts/seed_dashboard_auth.py demo_jewelry
+# → prints the generated secret; use customer_id + secret at the login form
+```
+
+**Full stack (built assets, one process):**
+```bash
+make serve   # builds dashboard/dist, starts uvicorn on :8000
+```
+
+**Dev loop (hot reload, two processes):**
+```bash
+uv run uvicorn src.api.app:create_default_app --factory --reload   # terminal 1
+npm --prefix dashboard run dev                                     # terminal 2 → :5173
+```
+Vite proxies `/v1/*` to `:8000` so the origin is shared and auth headers flow.
+
 ## Version control
 
 Colocated jj + git. Commit with `jj commit -m "..." <paths>` to keep changes scoped — there may be unrelated in-progress work in the working copy.

@@ -1,0 +1,101 @@
+/* Pico does the heavy lifting. A few dashboard-specific tweaks. */
+
+:root {
+  --pico-font-size: 100%;
+  --pico-spacing: 0.75rem;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  border-right: 1px solid var(--pico-muted-border-color);
+  padding: 1.25rem 1rem;
+}
+
+.sidebar nav a {
+  display: block;
+  padding: 0.4rem 0.6rem;
+  border-radius: 4px;
+  text-decoration: none;
+  color: var(--pico-color);
+}
+
+.sidebar nav a.active {
+  background: var(--pico-primary-background);
+  color: var(--pico-primary-inverse);
+}
+
+.content {
+  padding: 1.5rem 2rem;
+  max-width: 1100px;
+}
+
+.grid-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.card {
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 6px;
+  padding: 1rem;
+}
+
+.card h3 {
+  margin-top: 0;
+  font-size: 0.85rem;
+  color: var(--pico-muted-color);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.card .big {
+  font-size: 2rem;
+  font-weight: 600;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 0.5rem;
+}
+.status-dot.ok { background: #16a34a; }
+.status-dot.down { background: #dc2626; }
+
+.muted { color: var(--pico-muted-color); font-size: 0.875rem; }
+.row { display: flex; gap: 1rem; align-items: center; }
+.spacer { flex: 1; }
+
+.conv-item {
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+  cursor: pointer;
+}
+.conv-item:hover { background: var(--pico-card-sectioning-background-color); }
+
+.msg {
+  padding: 0.6rem 0.8rem;
+  margin-bottom: 0.5rem;
+  border-radius: 6px;
+  max-width: 75%;
+}
+.msg.user { background: var(--pico-primary-background); color: var(--pico-primary-inverse); margin-left: auto; }
+.msg.assistant { background: var(--pico-card-sectioning-background-color); }
+
+/* Tablet */
+@media (max-width: 900px) {
+  .app-shell { grid-template-columns: 1fr; }
+  .sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--pico-muted-border-color);
+  }
+  .sidebar nav { display: flex; gap: 0.25rem; flex-wrap: wrap; }
+  .content { padding: 1rem; }
+}

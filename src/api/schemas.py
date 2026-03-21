@@ -100,3 +100,62 @@ class NotificationResponse(BaseModel):
     title: str
     message: str
     created_at: str
+
+
+# --- Dashboard auth -------------------------------------------------------
+
+class LoginRequest(BaseModel):
+    # MVP: pre-shared key per customer. NOT a password — no hashing, no
+    # rotation, no lockout. Replace with OAuth before any customer other
+    # than us logs in. The customer_id format must match what the rest of
+    # the API expects so the minted token is usable.
+    customer_id: str = Field(pattern=_CUSTOMER_ID_PATTERN)
+    secret: str = Field(min_length=1)
+
+
+class LoginResponse(BaseModel):
+    token: str
+    customer_id: str
+
+
+# --- Dashboard settings ---------------------------------------------------
+
+Priority = Literal["LOW", "MEDIUM", "HIGH", "URGENT"]
+Tone = Literal["professional", "friendly", "concise", "detailed"]
+
+
+class WorkingHours(BaseModel):
+    start: str = "09:00"        # HH:MM, local to timezone
+    end: str = "18:00"
+    timezone: str = "UTC"
+
+
+class BriefingSettings(BaseModel):
+    enabled: bool = True
+    time: str = "08:00"         # HH:MM, local to working-hours timezone
+
+
+class ProactiveSettings(BaseModel):
+    priority_threshold: Priority = "MEDIUM"
+    daily_cap: int = Field(default=5, ge=0, le=50)
+    idle_nudge_minutes: int = Field(default=120, ge=0)
+
+
+class PersonalitySettings(BaseModel):
+    tone: Tone = "professional"
+    language: str = "en"
+    name: str = "Assistant"
+
+
+class ConnectedServices(BaseModel):
+    # Display-only; actual OAuth/connection flows are out of scope.
+    calendar: bool = False
+    n8n: bool = False
+
+
+class Settings(BaseModel):
+    working_hours: WorkingHours = Field(default_factory=WorkingHours)
+    briefing: BriefingSettings = Field(default_factory=BriefingSettings)
+    proactive: ProactiveSettings = Field(default_factory=ProactiveSettings)
+    personality: PersonalitySettings = Field(default_factory=PersonalitySettings)
+    connected_services: ConnectedServices = Field(default_factory=ConnectedServices)
