@@ -380,7 +380,7 @@ class TestPersistence:
             stored.setdefault(conversation_id, [])
             return conversation_id
 
-        async def _append(*, customer_id, conversation_id, role, content):
+        async def _append(*, customer_id, conversation_id, role, content, metadata=None):
             stored[conversation_id].append({
                 "role": role, "content": content,
                 "timestamp": f"2026-03-19T10:00:0{len(stored[conversation_id])}+00:00",

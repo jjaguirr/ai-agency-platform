@@ -135,13 +135,19 @@ class ConversationRepository:
         limit: int = 50,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """Newest-first by updated_at. Covered by
-        idx_conversations_customer_updated."""
+        """Newest-first by updated_at with message count and specialist domains."""
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
-                "SELECT id, channel, created_at, updated_at "
-                "FROM conversations WHERE customer_id = $1 "
-                "ORDER BY updated_at DESC, id LIMIT $2 OFFSET $3",
+                "SELECT c.id, c.channel, c.created_at, c.updated_at, "
+                "  COUNT(m.id) AS message_count, "
+                "  ARRAY_REMOVE(ARRAY_AGG(DISTINCT m.metadata->>'specialist_domain') "
+                "    FILTER (WHERE m.metadata->>'specialist_domain' IS NOT NULL), NULL) "
+                "    AS specialist_domains "
+                "FROM conversations c "
+                "LEFT JOIN messages m ON m.conversation_id = c.id "
+                "WHERE c.customer_id = $1 "
+                "GROUP BY c.id "
+                "ORDER BY c.updated_at DESC, c.id LIMIT $2 OFFSET $3",
                 customer_id, limit, offset,
             )
         return [
@@ -150,6 +156,8 @@ class ConversationRepository:
                 "channel": r["channel"],
                 "created_at": _iso(r["created_at"]),
                 "updated_at": _iso(r["updated_at"]),
+                "message_count": r["message_count"],
+                "specialist_domains": list(r["specialist_domains"] or []),
             }
             for r in rows
         ]
@@ -163,6 +171,7 @@ class ConversationRepository:
         conversation_id: str,
         role: str,
         content: str,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """
         Append one message and bump the conversation's updated_at.
@@ -172,20 +181,24 @@ class ConversationRepository:
         to someone else, the NOT EXISTS subquery makes the INSERT a
         no-op and the FK constraint catches the case where it doesn't
         exist at all.
+
+        metadata is optional JSONB — used to tag specialist domain etc.
         """
+        import json as _json
+        meta_json = _json.dumps(metadata) if metadata else None
         async with self._pool.acquire() as conn:
             async with conn.transaction():
                 # Guarded insert: only if conversation belongs to this
                 # customer. A bare INSERT would let customer B append
                 # to customer A's conversation if B guessed the ID.
                 result = await conn.execute(
-                    "INSERT INTO messages (conversation_id, role, content) "
-                    "SELECT $1, $2, $3 "
+                    "INSERT INTO messages (conversation_id, role, content, metadata) "
+                    "SELECT $1, $2, $3, $4::jsonb "
                     "WHERE EXISTS ("
                     "  SELECT 1 FROM conversations "
-                    "  WHERE id = $1 AND customer_id = $4"
+                    "  WHERE id = $1 AND customer_id = $5"
                     ")",
-                    conversation_id, role, content, customer_id,
+                    conversation_id, role, content, meta_json, customer_id,
                 )
                 # "INSERT 0 1" on success, "INSERT 0 0" on tenant mismatch.
                 # The FK violation (conversation_id nonexistent) surfaces

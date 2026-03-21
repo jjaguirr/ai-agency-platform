@@ -77,6 +77,8 @@ class ConversationSummary(BaseModel):
     channel: str
     created_at: str
     updated_at: str
+    message_count: int = 0
+    specialist_domains: list[str] = Field(default_factory=list)
 
 
 class ConversationListResponse(BaseModel):

@@ -128,11 +128,16 @@ async def post_message(
                 role="user",
                 content=req.message,
             )
+            # Tag assistant message with specialist domain if one handled it.
+            meta = None
+            if hasattr(ea, "last_delegation_domain") and ea.last_delegation_domain:
+                meta = {"specialist_domain": ea.last_delegation_domain}
             await repo.append_message(
                 customer_id=customer_id,
                 conversation_id=conversation_id,
                 role="assistant",
                 content=response_text,
+                metadata=meta,
             )
         except Exception:
             logger.warning(

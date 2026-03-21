@@ -672,6 +672,10 @@ class ExecutiveAssistant:
         # create_default_app, same pattern as audit_logger. None in tests
         # that don't care about personality — defaults apply.
         self.settings_redis = None
+
+        # Set after each completed delegation so the route can tag the
+        # persisted message with the specialist domain. Reset per interaction.
+        self.last_delegation_domain: str | None = None
         
         logger.info(f"Enhanced Executive Assistant initialized for customer {customer_id}")
     
@@ -1470,6 +1474,7 @@ The key difference: automation tools give you software to configure. I give you 
         # conversational voice. When an LLM is available we let it phrase;
         # otherwise we fall back to the specialist's summary_for_ea hint.
         state.active_delegation = None
+        self.last_delegation_domain = domain
         # Analytics: increment delegation counter (fire-and-forget)
         await self._increment_delegation_counter(domain)
         response = await self._synthesize_specialist_result(result, state.business_context)
@@ -1663,6 +1668,9 @@ The key difference: automation tools give you software to configure. I give you 
         """
         if not conversation_id:
             conversation_id = str(uuid.uuid4())
+
+        # Reset per-interaction state
+        self.last_delegation_domain = None
 
         # Single Redis GET — cached on self for this request.
         await self._load_personality()
