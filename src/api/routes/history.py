@@ -41,7 +41,10 @@ async def list_conversations(
         # route). Empty result rather than 500.
         return ConversationListResponse(conversations=[])
 
-    convs = await repo.list_conversations(
+    # Enriched variant adds message_count + specialist_domains per row
+    # via a LATERAL aggregation. Same ordering/paging contract as the
+    # plain list_conversations — this is a strict superset.
+    convs = await repo.list_conversations_enriched(
         customer_id=customer_id, limit=limit, offset=offset)
     return ConversationListResponse(conversations=convs)
 
