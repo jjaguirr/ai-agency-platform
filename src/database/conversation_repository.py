@@ -134,22 +134,45 @@ class ConversationRepository:
         customer_id: str,
         limit: int = 50,
         offset: int = 0,
+        topic: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         """Newest-first by updated_at. Covered by
-        idx_conversations_customer_updated."""
-        async with self._pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT id, channel, created_at, updated_at "
-                "FROM conversations WHERE customer_id = $1 "
-                "ORDER BY updated_at DESC, id LIMIT $2 OFFSET $3",
-                customer_id, limit, offset,
+        idx_conversations_customer_updated.
+
+        Optional topic filter hits the GIN index on topics[] — cheaper
+        than a seq scan once the table grows past a few thousand rows.
+        Two query strings rather than dynamic SQL: the planner sees
+        distinct shapes and caches both plans.
+        """
+        if topic is not None:
+            sql = (
+                "SELECT id, channel, created_at, updated_at, "
+                "       summary, topics, quality_flags "
+                "FROM conversations "
+                "WHERE customer_id = $1 AND $2 = ANY(topics) "
+                "ORDER BY updated_at DESC, id LIMIT $3 OFFSET $4"
             )
+            params = (customer_id, topic, limit, offset)
+        else:
+            sql = (
+                "SELECT id, channel, created_at, updated_at, "
+                "       summary, topics, quality_flags "
+                "FROM conversations WHERE customer_id = $1 "
+                "ORDER BY updated_at DESC, id LIMIT $2 OFFSET $3"
+            )
+            params = (customer_id, limit, offset)
+
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(sql, *params)
         return [
             {
                 "id": r["id"],
                 "channel": r["channel"],
                 "created_at": _iso(r["created_at"]),
                 "updated_at": _iso(r["updated_at"]),
+                "summary": r["summary"],
+                "topics": list(r["topics"] or []),
+                "quality_flags": list(r["quality_flags"] or []),
             }
             for r in rows
         ]

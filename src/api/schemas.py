@@ -77,6 +77,11 @@ class ConversationSummary(BaseModel):
     channel: str
     created_at: str
     updated_at: str
+    # Intelligence fields — populated by the background sweep after the
+    # conversation goes idle. None/empty until then.
+    summary: Optional[str] = None
+    topics: list[str] = Field(default_factory=list)
+    quality_flags: list[str] = Field(default_factory=list)
 
 
 class ConversationListResponse(BaseModel):
