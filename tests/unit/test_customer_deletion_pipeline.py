@@ -38,10 +38,18 @@ from src.security.customer_deletion_pipeline import (
 REPO_ROOT = Path(__file__).parents[2]
 SCHEMA_MAIN = REPO_ROOT / "src" / "database" / "schema.sql"
 SCHEMA_MEM = REPO_ROOT / "src" / "memory" / "schema.sql"
+MIGRATIONS_DIR = REPO_ROOT / "src" / "database" / "migrations"
 
 # Tables with a customer_id column that are deliberately excluded from
 # deletion because they form the compliance audit trail.
 AUDIT_SURVIVOR_TABLES = {"gdpr_compliance_audit", "customer_deletion_operations"}
+
+# Tables with a customer_id column that are deleted via ON DELETE CASCADE
+# from *another* customer-keyed table, not directly by the pipeline. These
+# need exemption from the "every customer_id table must be in a pipeline
+# list" check. Messages cascades from conversations; conversations itself
+# IS in PG_VARCHAR_TABLES.
+FK_CASCADE_COVERED_TABLES: set[str] = set()
 
 
 def _extract_table_defs(sql: str) -> dict[str, str]:
@@ -58,6 +66,9 @@ def _extract_table_defs(sql: str) -> dict[str, str]:
 def schema_tables() -> dict[str, str]:
     defs = _extract_table_defs(SCHEMA_MAIN.read_text())
     defs.update(_extract_table_defs(SCHEMA_MEM.read_text()))
+    # Migrations can introduce new tables; they must also be covered.
+    for mig in sorted(MIGRATIONS_DIR.glob("*.sql")):
+        defs.update(_extract_table_defs(mig.read_text()))
     return defs
 
 
@@ -277,8 +288,11 @@ class TestSchemaContract:
         assert table in schema_tables, f"{table} not found in schema.sql"
         body = schema_tables[table]
 
-        assert re.search(r"\bcustomer_id\s+VARCHAR", body, re.IGNORECASE), (
-            f"{table}.customer_id is not VARCHAR — pipeline passes str, may type-mismatch"
+        # Pipeline passes a Python str. TEXT and VARCHAR both accept that;
+        # what we're guarding against is a UUID-typed customer_id that
+        # would need a cast.
+        assert re.search(r"\bcustomer_id\s+(VARCHAR|TEXT)", body, re.IGNORECASE), (
+            f"{table}.customer_id is not VARCHAR/TEXT — pipeline passes str, may type-mismatch"
         )
         # No FK to customers on the customer_id column
         cid_decl = re.search(r"customer_id\b[^,\n]*", body, re.IGNORECASE).group(0)

@@ -34,6 +34,7 @@ def create_app(
     orchestrator: Any,
     whatsapp_manager: Any,
     redis_client: Any,
+    conversation_repo: Optional[Any] = None,
     lifespan: Optional[Lifespan] = None,
     proactive_state_store: Any = None,
 ) -> FastAPI:
@@ -44,10 +45,16 @@ def create_app(
     request.app.state.<dep>. No module-level singletons — keeps tests
     hermetic.
 
+    `conversation_repo` is Optional so pre-storage tests (webhooks,
+    provisioning, errors) don't need to construct one. Routes that
+    require it check for None and degrade to in-memory behaviour or
+    skip the persistence side effect. Production always supplies one.
+
     `lifespan` is passed straight to FastAPI's constructor (the documented
     mechanism) rather than patching router internals after construction.
     Tests omit it; production supplies one that initialises the port
-    allocator and closes Redis on shutdown.
+    allocator, verifies conversation tables exist, and closes Redis +
+    Postgres on shutdown.
     """
     app = FastAPI(
         title="AI Agency Platform API",
@@ -60,6 +67,7 @@ def create_app(
     app.state.orchestrator = orchestrator
     app.state.whatsapp_manager = whatsapp_manager
     app.state.redis_client = redis_client
+    app.state.conversation_repo = conversation_repo
     app.state.proactive_state_store = proactive_state_store
 
     # Structured error handling. All paths converge on {type, detail}.
@@ -98,18 +106,25 @@ def create_default_app() -> FastAPI:  # pragma: no cover
     """
     from contextlib import asynccontextmanager
 
+    import asyncpg
     import redis.asyncio as aioredis
 
     from src.agents.executive_assistant import ExecutiveAssistant
     from src.communication.whatsapp import WhatsAppConfig
     from src.communication.whatsapp_manager import WhatsAppManager
+    from src.database.conversation_repository import (
+        ConversationRepository, SchemaNotReadyError,
+    )
     from src.infrastructure.infrastructure_orchestrator import InfrastructureOrchestrator
     from src.infrastructure.port_allocator import create_port_allocator
-    from src.utils.config import RedisConfig
+    from src.utils.config import DatabaseConfig, RedisConfig
 
     # --- Redis ---
     redis_cfg = RedisConfig.from_env()
     redis_client = aioredis.from_url(redis_cfg.url)
+
+    # --- Postgres (conversation storage) ---
+    db_cfg = DatabaseConfig.from_env()
 
     # --- EA registry ---
     # Size-bound caps worst-case EA memory at max × sizeof(one EA).
@@ -137,6 +152,11 @@ def create_default_app() -> FastAPI:  # pragma: no cover
     allocator = PortAllocator()
     orchestrator = InfrastructureOrchestrator(port_allocator=allocator)
 
+    # Pool is created inside the lifespan — asyncpg needs a running
+    # event loop. Stash it in a one-slot list so the shutdown branch
+    # can close what the startup branch opened.
+    pg_pool_box: list[asyncpg.Pool] = []
+
     # --- Proactive intelligence ---
     from src.proactive.state import ProactiveStateStore
     from src.proactive.gate import NoiseGate
@@ -151,24 +171,47 @@ def create_default_app() -> FastAPI:  # pragma: no cover
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        # Postgres pool + schema check. A missing table is fatal: the
+        # API can't serve /v1/conversations without it, and silently
+        # dropping messages is worse than refusing to start.
+        pool = await asyncpg.create_pool(db_cfg.url, min_size=2, max_size=10)
+        pg_pool_box.append(pool)
+        repo = ConversationRepository(pool)
+        try:
+            await repo.check_schema()
+        except SchemaNotReadyError as e:
+            await pool.close()
+            raise RuntimeError(
+                f"Conversation storage not ready: {e}"
+            ) from e
+        _app.state.conversation_repo = repo
+
         try:
             await allocator.initialize()
         except Exception:
             logger.exception("Port allocator init failed; provisioning will degrade")
+
         try:
             await heartbeat.start()
             _app.state.heartbeat = heartbeat
         except Exception:
             logger.exception("Heartbeat daemon failed to start; proactive features disabled")
+
         yield
+
         await heartbeat.stop()
         await redis_client.aclose()
+        if pg_pool_box:
+            await pg_pool_box[0].close()
 
     return create_app(
         ea_registry=ea_registry,
         orchestrator=orchestrator,
         whatsapp_manager=wa_manager,
         redis_client=redis_client,
+        # Placeholder — lifespan swaps in the real repo once the pool
+        # is up. Routes tolerate None during the startup window.
+        conversation_repo=None,
         proactive_state_store=proactive_store,
         lifespan=lifespan,
     )
