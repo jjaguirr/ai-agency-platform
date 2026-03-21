@@ -5,7 +5,7 @@ Channel values mirror ConversationChannel enum in executive_assistant.py.
 We declare them as a Literal here rather than importing the enum to keep
 the schema layer independent of agent internals.
 """
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -166,3 +166,20 @@ class WorkflowResponse(BaseModel):
     name: str
     status: str
     created_at: str
+
+
+# --- Audit -------------------------------------------------------------------
+# Wire shape mirrors AuditEvent.to_dict() exactly: event_type is the enum
+# .value string, details is an opaque dict. The route hands the dict
+# straight through rather than reconstructing an AuditEvent just to
+# re-serialize it — one fewer place for field drift.
+
+class AuditEventResponse(BaseModel):
+    timestamp: str
+    event_type: str
+    correlation_id: str
+    details: dict[str, Any]
+
+
+class AuditListResponse(BaseModel):
+    events: list[AuditEventResponse]

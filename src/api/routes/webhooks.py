@@ -51,13 +51,38 @@ async def whatsapp_webhook(
         body, request.headers.get("content-type", ""),
     )
 
+    pipeline = getattr(request.app.state, "safety_pipeline", None)
+
     # Build an EA handler bound to this customer's EA instance.
     # Timeout prevents a hung EA from blocking Twilio's retry window —
     # non-2xx causes duplicate message storms.
+    #
+    # The safety pipeline wraps this the same way it wraps the
+    # conversations route, but with one wrinkle: the return value here
+    # exits sideways via _handle_incoming → channel.send_message, so a
+    # HIGH-risk short-circuit returns the fallback string rather than
+    # an HTTP response, and MessageTooLongError is swallowed (Twilio
+    # doesn't want a 422 — it wants a 200 so it doesn't retry).
     async def ea_handler(*, message: str, conversation_id: str) -> str:
+        if pipeline is not None:
+            try:
+                decision = await pipeline.scan_input(message, customer_id)
+            except Exception:
+                # Over-length or pipeline failure — log and drop. A
+                # WhatsApp message over 4000 chars is almost certainly
+                # not legitimate customer traffic anyway.
+                logger.warning(
+                    "Safety pipeline rejected inbound WhatsApp for "
+                    "customer=%s conv=%s", customer_id, conversation_id,
+                )
+                return ""
+            if not decision.proceed:
+                return decision.safe_response
+            message = decision.sanitized_message
+
         ea = await ea_registry.get(customer_id)
         try:
-            return await asyncio.wait_for(
+            response_text = await asyncio.wait_for(
                 ea.handle_customer_interaction(
                     message=message,
                     channel=ConversationChannel.WHATSAPP,
@@ -71,6 +96,11 @@ async def whatsapp_webhook(
                 customer_id, conversation_id, EA_CALL_TIMEOUT,
             )
             return ""
+
+        if pipeline is not None:
+            response_text = await pipeline.scan_output(response_text, customer_id)
+
+        return response_text
 
     for event in events:
         if isinstance(event, IncomingMessage):
