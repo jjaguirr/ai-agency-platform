@@ -185,8 +185,10 @@ class StorageConfig:
 # deleted explicitly since they won't cascade from customers(id). Source:
 # src/memory/schema.sql, customer_business_context in src/database/schema.sql,
 # and conversations in src/database/migrations/001_conversations.sql.
-# Note: `messages` cascades from `conversations` via FK, so deleting
-# conversations here cleans both.
+# Note: `messages` and `delegations` cascade from `conversations` via FK,
+# so deleting conversations cleans all three. `delegations` is listed anyway
+# so the schema-contract test sees it covered — the explicit DELETE is a
+# no-op after the cascade but harmless.
 PG_VARCHAR_TABLES: list[str] = [
     "customer_business_context",
     "customer_memory_audit",
@@ -194,6 +196,7 @@ PG_VARCHAR_TABLES: list[str] = [
     "sla_violation_alerts",
     "customer_memory_stats",
     "conversations",
+    "delegations",
 ]
 
 # Tables in the main schema with UUID FK to customers(id). These cascade when
