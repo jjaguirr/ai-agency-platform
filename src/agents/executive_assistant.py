@@ -1470,6 +1470,8 @@ The key difference: automation tools give you software to configure. I give you 
         # conversational voice. When an LLM is available we let it phrase;
         # otherwise we fall back to the specialist's summary_for_ea hint.
         state.active_delegation = None
+        # Analytics: increment delegation counter (fire-and-forget)
+        await self._increment_delegation_counter(domain)
         response = await self._synthesize_specialist_result(result, state.business_context)
         state.messages.append(AIMessage(content=response))
         return state
@@ -1503,6 +1505,21 @@ The key difference: automation tools give you software to configure. I give you 
             ))
         except Exception as e:
             logger.warning(f"Confirmation audit failed (non-blocking): {e}")
+
+    async def _increment_delegation_counter(self, domain: str) -> None:
+        """Bump the daily delegation counter in Redis. Fire-and-forget."""
+        if self.settings_redis is None:
+            return
+        try:
+            from datetime import date as _date
+            day = _date.today().isoformat()
+            key = f"analytics:{self.customer_id}:{day}:delegations"
+            pipe = self.settings_redis.pipeline()
+            pipe.hincrby(key, domain, 1)
+            pipe.expire(key, 172800)  # 48h TTL
+            await pipe.execute()
+        except Exception:
+            pass
 
     async def _synthesize_specialist_result(
         self, result: SpecialistResult, context: BusinessContext

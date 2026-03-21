@@ -174,6 +174,29 @@ class WorkflowResponse(BaseModel):
 # straight through rather than reconstructing an AuditEvent just to
 # re-serialize it — one fewer place for field drift.
 
+# --- Analytics ---------------------------------------------------------------
+
+class ActivitySummaryResponse(BaseModel):
+    date: str
+    messages_processed: int = 0
+    specialist_delegations: dict[str, int] = Field(default_factory=dict)
+    proactive_triggers_sent: int = 0
+
+
+class SpecialistStatusItem(BaseModel):
+    domain: str
+    registered: bool
+    operational: bool
+    n8n_connected: Optional[bool] = None
+
+
+class SpecialistStatusResponse(BaseModel):
+    specialists: list[SpecialistStatusItem]
+
+
+# --- Audit -------------------------------------------------------------------
+
+
 class AuditEventResponse(BaseModel):
     timestamp: str
     event_type: str

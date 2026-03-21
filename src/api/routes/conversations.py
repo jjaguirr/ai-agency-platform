@@ -141,6 +141,19 @@ async def post_message(
                 customer_id, conversation_id, exc_info=True,
             )
 
+    # --- Analytics counter (fire-and-forget) ----------------------------
+    try:
+        from datetime import date
+        redis = request.app.state.redis_client
+        day = date.today().isoformat()
+        key = f"analytics:{customer_id}:{day}:messages"
+        pipe = redis.pipeline()
+        pipe.incr(key)
+        pipe.expire(key, 172800)  # 48h TTL
+        await pipe.execute()
+    except Exception:
+        pass
+
     # Fire-and-forget: extract follow-ups and update interaction time
     proactive_store = getattr(request.app.state, "proactive_state_store", None)
     if proactive_store is not None:
