@@ -235,9 +235,11 @@ def create_default_app() -> FastAPI:  # pragma: no cover
     proactive_store = ProactiveStateStore(redis_client)
     noise_gate = NoiseGate(proactive_store)
     dispatcher = DefaultOutboundDispatcher(wa_manager, proactive_store)
-    heartbeat = HeartbeatDaemon(
-        ea_registry, proactive_store, noise_gate, dispatcher,
-    )
+
+    # --- Conversation intelligence ---
+    from src.intelligence.config import IntelligenceConfig
+
+    intel_cfg = IntelligenceConfig.from_env()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -255,6 +257,47 @@ def create_default_app() -> FastAPI:  # pragma: no cover
                 f"Conversation storage not ready: {e}"
             ) from e
         _app.state.conversation_repo = repo
+
+        # Wire conversation intelligence components (need pool)
+        from src.intelligence.delegation_recorder import DelegationRecorder
+        from src.intelligence.summarizer import ConversationSummarizer
+        from src.intelligence.quality import QualityAnalyzer
+        from src.intelligence.analytics import AnalyticsService
+        from src.intelligence.sweep import IntelligenceSweep
+
+        recorder = DelegationRecorder(pool)
+        _app.state.delegation_recorder = recorder
+        _app.state.analytics_service = AnalyticsService(pool)
+
+        # Wire recorder into EA factory
+        ea_registry.set_post_create_hook(
+            lambda ea: setattr(ea, "delegation_recorder", recorder)
+        )
+
+        # Build intelligence sweep (needs LLM)
+        intelligence_sweep = None
+        try:
+            if _os.getenv("OPENAI_API_KEY"):
+                from langchain_openai import ChatOpenAI
+                llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=300)
+                summarizer = ConversationSummarizer(llm=llm, max_messages=intel_cfg.summary_max_messages)
+                quality_analyzer = QualityAnalyzer(intel_cfg)
+                intelligence_sweep = IntelligenceSweep(
+                    conversation_repo=repo,
+                    delegation_recorder=recorder,
+                    summarizer=summarizer,
+                    quality_analyzer=quality_analyzer,
+                    config=intel_cfg,
+                )
+            else:
+                logger.warning("No OpenAI API key — intelligence sweep disabled")
+        except Exception:
+            logger.exception("Failed to initialize intelligence sweep")
+
+        heartbeat = HeartbeatDaemon(
+            ea_registry, proactive_store, noise_gate, dispatcher,
+            intelligence_sweep=intelligence_sweep,
+        )
 
         try:
             await allocator.initialize()

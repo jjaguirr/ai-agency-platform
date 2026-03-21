@@ -193,7 +193,8 @@ PG_VARCHAR_TABLES: list[str] = [
     "memory_performance_metrics",
     "sla_violation_alerts",
     "customer_memory_stats",
-    "conversations",
+    "delegation_records",  # FK cascade from conversations, but counted for reporting
+    "conversations",  # must come after delegation_records (or rely on FK cascade)
 ]
 
 # Tables in the main schema with UUID FK to customers(id). These cascade when

@@ -33,7 +33,7 @@ class SchemaNotReadyError(RuntimeError):
     UndefinedTableError traceback."""
 
 
-_REQUIRED_TABLES = ("conversations", "messages")
+_REQUIRED_TABLES = ("conversations", "messages", "delegation_records")
 
 
 def _iso(ts: datetime) -> str:
