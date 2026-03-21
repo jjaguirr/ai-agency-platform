@@ -250,6 +250,59 @@ class SchedulingSpecialist(SpecialistAgent):
 
     # --- Execution ----------------------------------------------------------
 
+    # --- Proactive conflict detection ----------------------------------------
+
+    async def proactive_check(
+        self, customer_id: str, context: "BusinessContext",
+    ) -> Optional["ProactiveTrigger"]:
+        if self._calendar is None:
+            return None
+
+        from src.proactive.triggers import Priority, ProactiveTrigger
+
+        now = self._clock()
+        window_end = now + timedelta(hours=24)
+
+        try:
+            events = await self._calendar.list_events(now, window_end)
+        except Exception:
+            logger.warning("Calendar list_events failed for customer=%s", customer_id)
+            return None
+
+        if len(events) < 2:
+            return None
+
+        # Sort by start time
+        sorted_events = sorted(events, key=lambda e: e.start)
+
+        # Walk pairs looking for overlap
+        for i in range(len(sorted_events) - 1):
+            a = sorted_events[i]
+            b = sorted_events[i + 1]
+            if a.end > b.start:
+                ids = sorted([a.id, b.id])
+                return ProactiveTrigger(
+                    domain="scheduling",
+                    trigger_type="scheduling_conflict",
+                    priority=Priority.HIGH,
+                    title=f"Conflict: {a.title} / {b.title}",
+                    payload={
+                        "events": [
+                            {"id": a.id, "title": a.title, "start": a.start.isoformat(), "end": a.end.isoformat()},
+                            {"id": b.id, "title": b.title, "start": b.start.isoformat(), "end": b.end.isoformat()},
+                        ],
+                    },
+                    suggested_message=(
+                        f"Heads up — \"{a.title}\" and \"{b.title}\" overlap. "
+                        f"Want me to reschedule one of them?"
+                    ),
+                    cooldown_key=f"scheduling:conflict:{ids[0]}:{ids[1]}",
+                )
+
+        return None
+
+    # --- Task execution -----------------------------------------------------
+
     async def execute_task(self, task: SpecialistTask) -> SpecialistResult:
         if self._calendar is None:
             return SpecialistResult(
