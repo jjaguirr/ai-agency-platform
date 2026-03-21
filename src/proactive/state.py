@@ -117,6 +117,46 @@ class ProactiveStateStore:
             for item in raw_items
         ]
 
+    # -- Transaction tracking (for finance anomaly detection) ----------------
+
+    _TXN_CAP = 100
+    _TXN_TTL = 7776000  # 90 days
+
+    async def record_transaction(
+        self, customer_id: str, amount: float, category: str,
+    ) -> None:
+        key = _key(customer_id, "transactions")
+        entry = json.dumps({
+            "amount": amount,
+            "category": category,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+        pipe = self._r.pipeline()
+        pipe.rpush(key, entry)
+        pipe.ltrim(key, -self._TXN_CAP, -1)
+        pipe.expire(key, self._TXN_TTL)
+        await pipe.execute()
+
+    async def get_transaction_stats(self, customer_id: str) -> Dict[str, Any]:
+        key = _key(customer_id, "transactions")
+        raw = await self._r.lrange(key, 0, -1)
+        if not raw:
+            return {"count": 0, "total": 0.0, "average": 0.0}
+        amounts = []
+        for item in raw:
+            decoded = item.decode() if isinstance(item, bytes) else item
+            amounts.append(json.loads(decoded)["amount"])
+        total = sum(amounts)
+        return {"count": len(amounts), "total": total, "average": total / len(amounts)}
+
+    async def get_latest_transaction(self, customer_id: str) -> Optional[Dict[str, Any]]:
+        key = _key(customer_id, "transactions")
+        raw = await self._r.lindex(key, -1)
+        if raw is None:
+            return None
+        decoded = raw.decode() if isinstance(raw, bytes) else raw
+        return json.loads(decoded)
+
     # -- Notification lifecycle (persistent, with status) --------------------
 
     _NOTIF_TTL = 604800  # 7 days

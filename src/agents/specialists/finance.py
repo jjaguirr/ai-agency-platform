@@ -165,8 +165,15 @@ _INCOME_PATTERNS = [
 
 class FinanceSpecialist(SpecialistAgent):
 
-    def __init__(self, stock_client: Optional[StockPriceClient] = None):
+    def __init__(
+        self,
+        stock_client: Optional[StockPriceClient] = None,
+        state_store=None,
+        anomaly_threshold: float = 2.0,
+    ):
         self._stock_client = stock_client
+        self._state_store = state_store
+        self._anomaly_threshold = anomaly_threshold
 
     @property
     def domain(self) -> str:
@@ -238,6 +245,52 @@ class FinanceSpecialist(SpecialistAgent):
         if self._is_summary_query(text):
             return self._handle_summary(task)
         return self._handle_expense_entry(task)
+
+    # --- Proactive anomaly detection ----------------------------------------
+
+    async def proactive_check(
+        self, customer_id: str, context: "BusinessContext",
+    ) -> Optional["ProactiveTrigger"]:
+        if self._state_store is None:
+            return None
+
+        from src.proactive.triggers import Priority, ProactiveTrigger
+
+        stats = await self._state_store.get_transaction_stats(customer_id)
+        if stats["count"] < 2:
+            return None
+
+        latest = await self._state_store.get_latest_transaction(customer_id)
+        if latest is None:
+            return None
+
+        avg = stats["average"]
+        amount = latest["amount"]
+        if avg <= 0:
+            return None
+
+        ratio = amount / avg
+        if ratio < self._anomaly_threshold:
+            return None
+
+        return ProactiveTrigger(
+            domain="finance",
+            trigger_type="finance_anomaly",
+            priority=Priority.HIGH,
+            title=f"Unusual spending: ${amount:,.2f}",
+            payload={
+                "amount": amount,
+                "average": avg,
+                "ratio": round(ratio, 2),
+                "category": latest.get("category", "unknown"),
+            },
+            suggested_message=(
+                f"Heads up — a recent expense of ${amount:,.2f} is "
+                f"{ratio:.1f}x your average of ${avg:,.2f}. "
+                f"Want me to look into it?"
+            ),
+            cooldown_key=f"finance:anomaly:{customer_id}",
+        )
 
     # --- Intent routing (internal) ------------------------------------------
 
