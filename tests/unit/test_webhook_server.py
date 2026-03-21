@@ -198,6 +198,102 @@ class TestStatusCallbackFlow:
         assert status == MessageStatus.DELIVERED
 
 
+class TestWhatsAppSplitting:
+    """Long responses must be split at sentence boundaries and sent as multiple messages."""
+
+    def test_long_response_split_into_multiple_sends(self):
+        """Response over 1600 chars → multiple send_text calls, each ≤ 1600."""
+        long_response = ". ".join([f"Sentence number {i}" for i in range(120)]) + "."
+        assert len(long_response) > 1600
+
+        incoming = IncomingMessage(
+            provider_message_id="SM_split",
+            from_number="+15551234567",
+            to_number="+14155238886",
+            body="Give me a long answer",
+        )
+        mgr, provider = _manager_with_mock_provider(parse_result=[incoming])
+        ea = _ea_handler(response=long_response)
+        app = build_app(manager=mgr, ea_handler=ea)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/webhook/whatsapp/cust_a", content=b"x",
+            headers={"X-Twilio-Signature": "sig"},
+        )
+
+        assert resp.status_code == 200
+        assert provider.send_text.call_count > 1
+        for call in provider.send_text.call_args_list:
+            assert len(call.kwargs["body"]) <= 1600
+
+    def test_short_response_single_send(self):
+        """Response under 1600 chars → exactly one send_text call."""
+        incoming = IncomingMessage(
+            provider_message_id="SM_short",
+            from_number="+15551234567",
+            to_number="+14155238886",
+            body="Quick question",
+        )
+        mgr, provider = _manager_with_mock_provider(parse_result=[incoming])
+        ea = _ea_handler(response="Short reply.")
+        app = build_app(manager=mgr, ea_handler=ea)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/webhook/whatsapp/cust_a", content=b"x",
+            headers={"X-Twilio-Signature": "sig"},
+        )
+
+        assert resp.status_code == 200
+        provider.send_text.assert_called_once()
+
+    def test_split_chunks_reconstruct_original(self):
+        """Concatenated chunks (with space join) preserve all content."""
+        long_response = ". ".join([f"Sentence {i}" for i in range(120)]) + "."
+        incoming = IncomingMessage(
+            provider_message_id="SM_recon",
+            from_number="+15551234567",
+            to_number="+14155238886",
+            body="long please",
+        )
+        mgr, provider = _manager_with_mock_provider(parse_result=[incoming])
+        ea = _ea_handler(response=long_response)
+        app = build_app(manager=mgr, ea_handler=ea)
+        client = TestClient(app)
+
+        client.post(
+            "/webhook/whatsapp/cust_a", content=b"x",
+            headers={"X-Twilio-Signature": "sig"},
+        )
+
+        sent_bodies = [c.kwargs["body"] for c in provider.send_text.call_args_list]
+        rejoined = " ".join(sent_bodies)
+        # All sentences present in the output
+        for i in range(120):
+            assert f"Sentence {i}" in rejoined
+
+    def test_empty_response_sends_empty(self):
+        """Empty EA response → one send with empty string (same as before splitting)."""
+        incoming = IncomingMessage(
+            provider_message_id="SM_empty",
+            from_number="+15551234567",
+            to_number="+14155238886",
+            body="say nothing",
+        )
+        mgr, provider = _manager_with_mock_provider(parse_result=[incoming])
+        ea = _ea_handler(response="")
+        app = build_app(manager=mgr, ea_handler=ea)
+        client = TestClient(app)
+
+        client.post(
+            "/webhook/whatsapp/cust_a", content=b"x",
+            headers={"X-Twilio-Signature": "sig"},
+        )
+
+        provider.send_text.assert_called_once()
+
+
 class TestHealthEndpoint:
     def test_health_returns_200(self):
         app = build_app(manager=WhatsAppManager(), ea_handler=_ea_handler())

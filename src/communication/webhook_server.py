@@ -18,6 +18,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 
 from .whatsapp import IncomingMessage, StatusUpdate
 from .whatsapp_manager import WhatsAppManager
+from src.safety.splitter import split_for_whatsapp
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +102,8 @@ async def _handle_incoming(channel, event: IncomingMessage,
         response_text = _FALLBACK_REPLY
 
     try:
-        await channel.send_message(base_msg.from_number, response_text)
+        for chunk in split_for_whatsapp(response_text):
+            await channel.send_message(base_msg.from_number, chunk)
     except Exception:
         logger.exception(
             "Failed to send reply for customer=%s to=%s",
