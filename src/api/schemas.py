@@ -82,6 +82,9 @@ class ConversationSummary(BaseModel):
     # mocks predating this feature) validating cleanly.
     message_count: int = 0
     specialist_domains: list[str] = Field(default_factory=list)
+    summary: Optional[str] = None
+    tags: list[str] = []
+    quality_signals: Optional[dict[str, Any]] = None
 
 
 class ConversationListResponse(BaseModel):
