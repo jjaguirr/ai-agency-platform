@@ -134,22 +134,39 @@ class ConversationRepository:
         customer_id: str,
         limit: int = 50,
         offset: int = 0,
+        tags: Optional[list[str]] = None,
     ) -> list[dict[str, Any]]:
         """Newest-first by updated_at. Covered by
         idx_conversations_customer_updated."""
-        async with self._pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT id, channel, created_at, updated_at "
+        if tags:
+            sql = (
+                "SELECT id, channel, created_at, updated_at, "
+                "       summary, tags, quality_signals "
                 "FROM conversations WHERE customer_id = $1 "
-                "ORDER BY updated_at DESC, id LIMIT $2 OFFSET $3",
-                customer_id, limit, offset,
+                "AND tags @> $4::text[] "
+                "ORDER BY updated_at DESC, id LIMIT $2 OFFSET $3"
             )
+            args = [customer_id, limit, offset, tags]
+        else:
+            sql = (
+                "SELECT id, channel, created_at, updated_at, "
+                "       summary, tags, quality_signals "
+                "FROM conversations WHERE customer_id = $1 "
+                "ORDER BY updated_at DESC, id LIMIT $2 OFFSET $3"
+            )
+            args = [customer_id, limit, offset]
+
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(sql, *args)
         return [
             {
                 "id": r["id"],
                 "channel": r["channel"],
                 "created_at": _iso(r["created_at"]),
                 "updated_at": _iso(r["updated_at"]),
+                "summary": r["summary"],
+                "tags": list(r["tags"]) if r["tags"] else [],
+                "quality_signals": dict(r["quality_signals"]) if r["quality_signals"] else {},
             }
             for r in rows
         ]
@@ -300,6 +317,63 @@ class ConversationRepository:
              "timestamp": _iso(r["timestamp"])}
             for r in rows
         ]
+
+    # ─── intelligence ─────────────────────────────────────────────────────
+
+    async def get_conversations_needing_summary(
+        self,
+        *,
+        idle_threshold_minutes: int = 30,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Conversations idle longer than threshold with no summary.
+
+        Cross-tenant: used by the background sweep, not tenant-scoped API.
+        """
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, customer_id, updated_at "
+                "FROM conversations "
+                "WHERE summary IS NULL "
+                "  AND updated_at < now() - make_interval(mins => $1) "
+                "ORDER BY updated_at ASC "
+                "LIMIT $2",
+                idle_threshold_minutes, limit,
+            )
+        return [
+            {
+                "id": r["id"],
+                "customer_id": r["customer_id"],
+                "updated_at": _iso(r["updated_at"]),
+            }
+            for r in rows
+        ]
+
+    async def set_summary(
+        self,
+        *,
+        conversation_id: str,
+        summary: str,
+    ) -> None:
+        """Write the LLM-generated summary to the conversation."""
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE conversations SET summary = $1 WHERE id = $2",
+                summary, conversation_id,
+            )
+
+    async def set_quality_signals(
+        self,
+        *,
+        conversation_id: str,
+        signals: dict,
+    ) -> None:
+        """Write quality signal flags to the conversation."""
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE conversations SET quality_signals = $1::jsonb WHERE id = $2",
+                signals, conversation_id,
+            )
 
     # ─── GDPR ────────────────────────────────────────────────────────────
 
