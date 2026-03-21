@@ -18,6 +18,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 
 from .whatsapp import IncomingMessage, StatusUpdate
 from .whatsapp_manager import WhatsAppManager
+from src.safety.splitter import split_for_whatsapp
 
 logger = logging.getLogger(__name__)
 
@@ -100,13 +101,21 @@ async def _handle_incoming(channel, event: IncomingMessage,
         )
         response_text = _FALLBACK_REPLY
 
-    try:
-        await channel.send_message(base_msg.from_number, response_text)
-    except Exception:
-        logger.exception(
-            "Failed to send reply for customer=%s to=%s",
-            channel.customer_id, base_msg.from_number,
-        )
+    # Twilio truncates past ~1600 chars. split_for_whatsapp breaks at
+    # sentence boundaries; short replies come back as [text] so the
+    # common case is still one send. Each chunk is sent independently —
+    # one network blip drops that chunk but the rest go out, which beats
+    # the alternative (customer gets nothing).
+    for chunk in split_for_whatsapp(response_text):
+        if not chunk:
+            continue
+        try:
+            await channel.send_message(base_msg.from_number, chunk)
+        except Exception:
+            logger.exception(
+                "Failed to send reply chunk for customer=%s to=%s",
+                channel.customer_id, base_msg.from_number,
+            )
 
 
 # --- Production entrypoint ------------------------------------------------
