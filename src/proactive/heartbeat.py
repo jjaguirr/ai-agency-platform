@@ -111,7 +111,7 @@ class HeartbeatDaemon:
         for cid, triggers in zip(customer_ids, results):
             for trigger in triggers:
                 config = NoiseConfig()  # TODO: per-customer config from BusinessContext
-                decision = await self._gate.evaluate(cid, trigger, config)
+                decision = await self._gate.evaluate(cid, trigger, config, now=self._clock())
                 if decision.allowed:
                     try:
                         await self._dispatcher.dispatch(cid, trigger)
