@@ -148,6 +148,9 @@ class TestFollowUpTracker:
         assert "email Sarah" in results[0].suggested_message or "contract" in results[0].suggested_message
 
 
+_WEEK_MIN = 7 * 24 * 60
+
+
 class TestIdleNudge:
     async def test_triggers_after_idle_period(self, store):
         behavior = IdleNudgeBehavior(
@@ -162,7 +165,7 @@ class TestIdleNudge:
         )
         # Has pending follow-ups
         await store.add_follow_up(CID, {"id": "fu_1", "commitment": "call John"})
-        cfg = BehaviorConfig(idle_days=7)
+        cfg = BehaviorConfig(idle_nudge_minutes=_WEEK_MIN)
         result = await behavior.check(CID, cfg)
         assert result is not None
         assert result.trigger_type == "idle_nudge"
@@ -177,7 +180,7 @@ class TestIdleNudge:
             datetime(2026, 3, 19, 10, 0, tzinfo=timezone.utc).isoformat(),
         )
         await store.add_follow_up(CID, {"id": "fu_1", "commitment": "call John"})
-        cfg = BehaviorConfig(idle_days=7)
+        cfg = BehaviorConfig(idle_nudge_minutes=_WEEK_MIN)
         result = await behavior.check(CID, cfg)
         assert result is None
 
@@ -190,7 +193,7 @@ class TestIdleNudge:
             datetime(2026, 3, 18, 10, 0, tzinfo=timezone.utc).isoformat(),
         )
         # No follow-ups
-        cfg = BehaviorConfig(idle_days=7)
+        cfg = BehaviorConfig(idle_nudge_minutes=_WEEK_MIN)
         result = await behavior.check(CID, cfg)
         assert result is None
 
@@ -203,7 +206,7 @@ class TestIdleNudge:
             datetime(2026, 3, 18, 10, 0, tzinfo=timezone.utc).isoformat(),
         )
         await store.add_follow_up(CID, {"id": "fu_1", "commitment": "call John"})
-        cfg = BehaviorConfig(idle_days=7)
+        cfg = BehaviorConfig(idle_nudge_minutes=_WEEK_MIN)
 
         # First check triggers
         result = await behavior.check(CID, cfg)
@@ -219,6 +222,190 @@ class TestIdleNudge:
             store, clock=_clock(datetime(2026, 3, 26, 10, 0, tzinfo=timezone.utc))
         )
         await store.add_follow_up(CID, {"id": "fu_1", "commitment": "call John"})
-        cfg = BehaviorConfig(idle_days=7)
+        cfg = BehaviorConfig(idle_nudge_minutes=_WEEK_MIN)
+        result = await behavior.check(CID, cfg)
+        assert result is None
+
+
+# --- V2: briefing personalization ---------------------------------------------
+
+BRIEFING_TIME = datetime(2026, 3, 19, 8, 5, tzinfo=timezone.utc)
+
+
+class TestBriefingPersonalization:
+    """Morning briefing respects per-customer tone, enabled flag, and
+    gracefully degrades when optional data sources fail."""
+
+    async def _briefing(self, store, cfg):
+        behavior = MorningBriefingBehavior(store, clock=_clock(BRIEFING_TIME))
+        await store.add_follow_up(CID, {"id": "fu_1", "commitment": "call John"})
+        return await behavior.check(CID, cfg)
+
+    async def test_disabled_briefing_returns_none(self, store):
+        cfg = BehaviorConfig(briefing_hour=8, briefing_enabled=False)
+        result = await self._briefing(store, cfg)
+        assert result is None
+
+    async def test_enabled_by_default(self, store):
+        cfg = BehaviorConfig(briefing_hour=8)
+        result = await self._briefing(store, cfg)
+        assert result is not None
+
+    async def test_professional_tone(self, store):
+        cfg = BehaviorConfig(briefing_hour=8, tone="professional")
+        result = await self._briefing(store, cfg)
+        # Professional: no exclamation, formal register
+        assert "!" not in result.suggested_message.split("\n")[0]
+        assert "Good morning" in result.suggested_message
+
+    async def test_friendly_tone(self, store):
+        cfg = BehaviorConfig(briefing_hour=8, tone="friendly")
+        result = await self._briefing(store, cfg)
+        assert "!" in result.suggested_message
+
+    async def test_concise_tone(self, store):
+        cfg = BehaviorConfig(briefing_hour=8, tone="concise")
+        result = await self._briefing(store, cfg)
+        # Concise: no "Good morning" preamble
+        first_line = result.suggested_message.split("\n")[0]
+        assert "Good morning" not in first_line
+
+    async def test_ea_name_in_signature(self, store):
+        cfg = BehaviorConfig(briefing_hour=8, ea_name="Sarah")
+        result = await self._briefing(store, cfg)
+        assert "Sarah" in result.suggested_message
+
+    async def test_default_ea_name_not_signed(self, store):
+        """The placeholder 'Assistant' shouldn't appear — it's generic."""
+        cfg = BehaviorConfig(briefing_hour=8, ea_name="Assistant")
+        result = await self._briefing(store, cfg)
+        assert "— Assistant" not in result.suggested_message
+
+    async def test_language_carried_in_payload(self, store):
+        """Language is passed downstream for actual translation — out of
+        scope here, just verify it's propagated."""
+        cfg = BehaviorConfig(briefing_hour=8, language="es")
+        result = await self._briefing(store, cfg)
+        assert result.payload.get("language") == "es"
+
+
+class TestBriefingSources:
+    """Briefing assembles content from pluggable sources. A failing
+    source is skipped — don't fail the briefing because one specialist
+    domain is unavailable."""
+
+    async def test_extra_sources_included(self, store):
+        async def events_source(cid: str) -> str:
+            return "2 meetings today."
+
+        behavior = MorningBriefingBehavior(
+            store, clock=_clock(BRIEFING_TIME),
+            extra_sources=[events_source],
+        )
+        await store.add_follow_up(CID, {"id": "fu_1", "commitment": "call John"})
+        cfg = BehaviorConfig(briefing_hour=8)
+        result = await behavior.check(CID, cfg)
+        assert "2 meetings today" in result.suggested_message
+
+    async def test_failing_source_skipped(self, store):
+        async def boom(cid: str) -> str:
+            raise RuntimeError("finance service down")
+
+        behavior = MorningBriefingBehavior(
+            store, clock=_clock(BRIEFING_TIME),
+            extra_sources=[boom],
+        )
+        await store.add_follow_up(CID, {"id": "fu_1", "commitment": "call John"})
+        cfg = BehaviorConfig(briefing_hour=8)
+        result = await behavior.check(CID, cfg)
+        # Briefing still fires with follow-ups
+        assert result is not None
+        assert "call John" in result.suggested_message
+
+    async def test_source_returning_none_skipped(self, store):
+        async def empty(cid: str) -> None:
+            return None  # no data from this domain
+
+        behavior = MorningBriefingBehavior(
+            store, clock=_clock(BRIEFING_TIME),
+            extra_sources=[empty],
+        )
+        await store.add_follow_up(CID, {"id": "fu_1", "commitment": "call John"})
+        cfg = BehaviorConfig(briefing_hour=8)
+        result = await behavior.check(CID, cfg)
+        assert result is not None
+
+    async def test_all_sources_empty_returns_none(self, store):
+        """No follow-ups, no source data → nothing to brief."""
+        async def empty(cid: str) -> None:
+            return None
+
+        behavior = MorningBriefingBehavior(
+            store, clock=_clock(BRIEFING_TIME),
+            extra_sources=[empty],
+        )
+        # No follow-ups seeded
+        cfg = BehaviorConfig(briefing_hour=8)
+        result = await behavior.check(CID, cfg)
+        assert result is None
+
+    async def test_extra_source_without_follow_ups_still_briefs(self, store):
+        """A source with data should trigger briefing even if follow-ups
+        are empty — graceful partial content."""
+        async def finance(cid: str) -> str:
+            return "Budget: $12k remaining this month."
+
+        behavior = MorningBriefingBehavior(
+            store, clock=_clock(BRIEFING_TIME),
+            extra_sources=[finance],
+        )
+        # No follow-ups
+        cfg = BehaviorConfig(briefing_hour=8)
+        result = await behavior.check(CID, cfg)
+        assert result is not None
+        assert "$12k" in result.suggested_message
+
+
+# --- V2: idle nudge in minutes -----------------------------------------------
+
+class TestIdleNudgeMinutes:
+    """V2 aligns IdleNudgeBehavior with the dashboard settings schema,
+    which uses idle_nudge_minutes (not days)."""
+
+    async def test_triggers_after_configured_minutes(self, store):
+        now = datetime(2026, 3, 19, 12, 0, tzinfo=timezone.utc)
+        behavior = IdleNudgeBehavior(store, clock=_clock(now))
+        # Last interaction 3 hours (180 min) ago
+        await store._r.set(
+            f"proactive:{CID}:last_interaction",
+            datetime(2026, 3, 19, 9, 0, tzinfo=timezone.utc).isoformat(),
+        )
+        await store.add_follow_up(CID, {"id": "fu_1", "commitment": "x"})
+        cfg = BehaviorConfig(idle_nudge_minutes=120)
+        result = await behavior.check(CID, cfg)
+        assert result is not None
+
+    async def test_does_not_trigger_before_configured_minutes(self, store):
+        now = datetime(2026, 3, 19, 10, 30, tzinfo=timezone.utc)
+        behavior = IdleNudgeBehavior(store, clock=_clock(now))
+        # 90 minutes ago
+        await store._r.set(
+            f"proactive:{CID}:last_interaction",
+            datetime(2026, 3, 19, 9, 0, tzinfo=timezone.utc).isoformat(),
+        )
+        await store.add_follow_up(CID, {"id": "fu_1", "commitment": "x"})
+        cfg = BehaviorConfig(idle_nudge_minutes=120)
+        result = await behavior.check(CID, cfg)
+        assert result is None
+
+    async def test_zero_minutes_disables_nudge(self, store):
+        now = datetime(2026, 3, 19, 12, 0, tzinfo=timezone.utc)
+        behavior = IdleNudgeBehavior(store, clock=_clock(now))
+        await store._r.set(
+            f"proactive:{CID}:last_interaction",
+            datetime(2026, 3, 18, 9, 0, tzinfo=timezone.utc).isoformat(),
+        )
+        await store.add_follow_up(CID, {"id": "fu_1", "commitment": "x"})
+        cfg = BehaviorConfig(idle_nudge_minutes=0)
         result = await behavior.check(CID, cfg)
         assert result is None
