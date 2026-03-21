@@ -82,6 +82,21 @@ class DelegationRecorder:
                 tags, conversation_id, customer_id,
             )
 
+    async def get_delegation_statuses(
+        self,
+        *,
+        conversation_id: str,
+        customer_id: str,
+    ) -> list[str]:
+        """Return the status of each delegation in a conversation."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT status FROM delegation_records "
+                "WHERE conversation_id = $1 AND customer_id = $2",
+                conversation_id, customer_id,
+            )
+        return [r["status"] for r in rows]
+
     async def delete_customer_data(self, *, customer_id: str) -> int:
         """GDPR: delete all delegation_records for a customer."""
         async with self._pool.acquire() as conn:
