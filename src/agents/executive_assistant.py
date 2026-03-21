@@ -665,7 +665,13 @@ class ExecutiveAssistant:
         self.graph = self._create_conversation_graph()
         
         self.personality = "professional"
-        self.name = "Sarah"
+        self.name = "Assistant"
+        self.language = "en"
+
+        # Async Redis client for fetching settings (DB 0). Injected by
+        # create_default_app, same pattern as audit_logger. None in tests
+        # that don't care about personality — defaults apply.
+        self.settings_redis = None
         
         logger.info(f"Enhanced Executive Assistant initialized for customer {customer_id}")
     
@@ -863,8 +869,8 @@ The key difference: automation tools give you software to configure. I give you 
             context = await self.memory.get_business_context()
             
             if not context.business_name:
-                discovery_prompt = """
-                Hi! I'm Sarah, your new Executive Assistant. I'm here to learn about your business 
+                discovery_prompt = f"""
+                Hi! I'm {self.name}, your new Executive Assistant. I'm here to learn about your business
                 and help automate your daily operations.
                 
                 Let's start with the basics:
@@ -896,7 +902,7 @@ The key difference: automation tools give you software to configure. I give you 
                 """
             
             system_msg = SystemMessage(content=f"""
-            You are Sarah, an Executive Assistant for {context.business_name or '[Business Name]'}.
+            You are {self.name}, an Executive Assistant for {context.business_name or '[Business Name]'}.
             
             Business Context:
             - Business: {context.business_name or 'Not yet learned'}
@@ -1504,12 +1510,12 @@ The key difference: automation tools give you software to configure. I give you 
         """Turn a specialist's structured payload into an EA-voiced response.
 
         The specialist provides summary_for_ea as a hint but the EA owns
-        phrasing. With an LLM we prompt it to speak as Sarah; without, the
+        phrasing. With an LLM we prompt it to speak as self.name; without, the
         hint IS the response (it's already prose).
         """
         if self.llm and result.summary_for_ea:
             synthesis_prompt = (
-                f"You are Sarah, the Executive Assistant for {context.business_name or 'the customer'}. "
+                f"You are {self.name}, the Executive Assistant for {context.business_name or 'the customer'}. "
                 f"A specialist on your team just checked something for the customer. "
                 f"Relay this naturally in your own voice — warm, concise, no jargon:\n\n"
                 f"{result.summary_for_ea}\n\n"
@@ -1529,7 +1535,7 @@ The key difference: automation tools give you software to configure. I give you 
         last_message = state.messages[-1].content if state.messages else ""
         
         assistance_prompt = f"""
-        As Sarah, the Executive Assistant for {context.business_name or '[Business Name]'}, 
+        As {self.name}, the Executive Assistant for {context.business_name or '[Business Name]'}, 
         provide helpful business assistance for this request: {last_message}
         
         Business Context:
@@ -1576,7 +1582,7 @@ The key difference: automation tools give you software to configure. I give you 
         last_message = state.messages[-1].content if state.messages else ""
         
         clarification_prompt = f"""
-        As Sarah, the Executive Assistant, I need to ask for clarification about: {last_message}
+        As {self.name}, the Executive Assistant, I need to ask for clarification about: {last_message}
         
         Business Context Available:
         - Business: {context.business_name or 'Not yet identified'}
@@ -1606,9 +1612,32 @@ The key difference: automation tools give you software to configure. I give you 
         """Return message history for a conversation, or None if unknown."""
         return self._conversation_histories.get(conversation_id)
 
+    async def _load_personality(self) -> None:
+        """Fetch personality settings from Redis (DB 0) once per request.
+
+        Overwrites self.name, self.personality, self.language for the
+        duration of this interaction. Falls back to defaults on any
+        failure — Redis down, missing key, bad JSON.
+        """
+        if self.settings_redis is None:
+            return
+        try:
+            raw = await self.settings_redis.get(f"settings:{self.customer_id}")
+            if raw is None:
+                return
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8")
+            settings = json.loads(raw)
+            p = settings.get("personality", {})
+            self.name = p.get("name", self.name)
+            self.personality = p.get("tone", self.personality)
+            self.language = p.get("language", self.language)
+        except Exception as e:
+            logger.warning(f"Personality fetch failed for {self.customer_id}, using defaults: {e}")
+
     async def handle_customer_interaction(
-        self, 
-        message: str, 
+        self,
+        message: str,
         channel: ConversationChannel,
         conversation_id: str = None
     ) -> str:
@@ -1617,7 +1646,10 @@ The key difference: automation tools give you software to configure. I give you 
         """
         if not conversation_id:
             conversation_id = str(uuid.uuid4())
-        
+
+        # Single Redis GET — cached on self for this request.
+        await self._load_personality()
+
         try:
             # Get business context
             business_context = await self.memory.get_business_context()
@@ -1654,7 +1686,7 @@ The key difference: automation tools give you software to configure. I give you 
                     else:
                         response = "I'm here to help! How can I assist you with your business today?"
                 else:
-                    response = "Hello! I'm Sarah, your Executive Assistant. How can I help you today?"
+                    response = f"Hello! I'm {self.name}, your Executive Assistant. How can I help you today?"
                 
                 # Store conversation context with dict access
                 await self.memory.store_conversation_context(conversation_id, {
@@ -1677,7 +1709,7 @@ The key difference: automation tools give you software to configure. I give you 
                     else:
                         response = "I'm here to help! How can I assist you with your business today?"
                 else:
-                    response = "Hello! I'm Sarah, your Executive Assistant. How can I help you today?"
+                    response = f"Hello! I'm {self.name}, your Executive Assistant. How can I help you today?"
                 
                 # Store enhanced conversation context
                 await self.memory.store_conversation_context(conversation_id, {
@@ -1712,7 +1744,7 @@ The key difference: automation tools give you software to configure. I give you 
     async def initialize_welcome_call(self, phone_number: str) -> Dict:
         """Initialize sophisticated welcome call with enhanced onboarding"""
         welcome_message = f"""
-        Hi! This is Sarah, your new Executive Assistant from AI Agency Platform.
+        Hi! This is {self.name}, your new Executive Assistant from AI Agency Platform.
         
         I'm calling to welcome you and start learning about your business so I can begin 
         helping you immediately. I specialize in:

@@ -201,6 +201,10 @@ def create_default_app() -> FastAPI:  # pragma: no cover
         # NEEDS_CONFIRMATION lifecycle events land in the same
         # Redis trail as the pipeline's injection/redaction events.
         ea.audit_logger = audit_logger
+        # Personality settings live in Redis DB 0 (the shared async
+        # client). The EA's own redis_client uses a customer-hashed DB,
+        # so we inject the DB-0 client separately.
+        ea.settings_redis = redis_client
         return ea
 
     ea_registry = EARegistry(factory=_ea_factory, max_size=ea_max)
