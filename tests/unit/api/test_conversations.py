@@ -380,7 +380,8 @@ class TestPersistence:
             stored.setdefault(conversation_id, [])
             return conversation_id
 
-        async def _append(*, customer_id, conversation_id, role, content):
+        async def _append(*, customer_id, conversation_id, role, content,
+                          specialist_domain=None):
             stored[conversation_id].append({
                 "role": role, "content": content,
                 "timestamp": f"2026-03-19T10:00:0{len(stored[conversation_id])}+00:00",
@@ -420,3 +421,82 @@ class TestPersistence:
         }
         assert body["messages"][1]["role"] == "assistant"
         assert body["messages"][1]["content"] == "EA reply"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# specialist_domain tagging — route plumbs ea.last_specialist_domain
+# ─────────────────────────────────────────────────────────────────────────────
+# The EA sets last_specialist_domain after _delegate_to_specialist runs.
+# The route reads it post-interaction and passes it ONLY on the assistant
+# append — user messages are never specialist-authored.
+
+class TestSpecialistDomainPersistence:
+    def test_assistant_append_carries_ea_last_specialist_domain(
+            self, mock_ea, auth_headers):
+        # mock_ea is an AsyncMock — attribute access normally returns a
+        # child AsyncMock (truthy). Set a real string so the assertion
+        # is meaningful.
+        mock_ea.last_specialist_domain = "scheduling"
+        mock_ea.handle_customer_interaction = AsyncMock(
+            return_value="Meeting booked for 3pm")
+        repo = AsyncMock()
+        client = TestClient(_app(mock_ea, repo=repo))
+
+        resp = client.post(
+            "/v1/conversations/message",
+            json={"message": "book a meeting", "channel": "chat",
+                  "conversation_id": "conv_d"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+
+        calls = repo.append_message.await_args_list
+        assert len(calls) == 2
+        user_kw, asst_kw = calls[0].kwargs, calls[1].kwargs
+
+        assert asst_kw["role"] == "assistant"
+        assert asst_kw["specialist_domain"] == "scheduling"
+
+        # User message must NOT be tagged — the customer isn't a specialist.
+        # Either omitted or explicitly None; both are acceptable.
+        assert user_kw["role"] == "user"
+        assert user_kw.get("specialist_domain") is None
+
+    def test_assistant_append_gets_none_when_ea_reports_none(
+            self, mock_ea, auth_headers):
+        """General-assistance reply, no delegation → domain None."""
+        mock_ea.last_specialist_domain = None
+        mock_ea.handle_customer_interaction = AsyncMock(
+            return_value="Happy to help")
+        repo = AsyncMock()
+        client = TestClient(_app(mock_ea, repo=repo))
+
+        client.post(
+            "/v1/conversations/message",
+            json={"message": "hi", "channel": "chat"},
+            headers=auth_headers,
+        )
+
+        asst_kw = repo.append_message.await_args_list[1].kwargs
+        assert asst_kw["specialist_domain"] is None
+
+    def test_missing_attribute_on_ea_does_not_break_route(
+            self, auth_headers):
+        """getattr default → None. Older EA fixtures / mocks that predate
+        this feature must not TypeError the route."""
+        ea = MagicMock()  # plain MagicMock, no last_specialist_domain set
+        # Delete the auto-generated child mock so getattr actually misses.
+        del ea.last_specialist_domain
+        ea.handle_customer_interaction = AsyncMock(return_value="reply")
+        repo = AsyncMock()
+        client = TestClient(_app(ea, repo=repo))
+
+        resp = client.post(
+            "/v1/conversations/message",
+            json={"message": "hi", "channel": "chat"},
+            headers=auth_headers,
+        )
+
+        assert resp.status_code == 200
+        asst_kw = repo.append_message.await_args_list[1].kwargs
+        assert asst_kw["specialist_domain"] is None
