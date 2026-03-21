@@ -21,7 +21,7 @@ from .errors import (
     handle_validation_error,
 )
 from .middleware import CorrelationMiddleware, install_correlation_logging
-from .routes import conversations, health, history, provisioning, webhooks
+from .routes import conversations, health, history, notifications, provisioning, webhooks
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,7 @@ def create_app(
     redis_client: Any,
     conversation_repo: Optional[Any] = None,
     lifespan: Optional[Lifespan] = None,
+    proactive_state_store: Any = None,
 ) -> FastAPI:
     """
     Build the API with all dependencies injected.
@@ -67,6 +68,7 @@ def create_app(
     app.state.whatsapp_manager = whatsapp_manager
     app.state.redis_client = redis_client
     app.state.conversation_repo = conversation_repo
+    app.state.proactive_state_store = proactive_state_store
 
     # Structured error handling. All paths converge on {type, detail}.
     # Order: specific-first so the Exception catch-all doesn't shadow
@@ -86,6 +88,7 @@ def create_app(
     app.include_router(history.router)
     app.include_router(provisioning.router)
     app.include_router(webhooks.router)
+    app.include_router(notifications.router)
 
     return app
 
@@ -154,6 +157,18 @@ def create_default_app() -> FastAPI:  # pragma: no cover
     # can close what the startup branch opened.
     pg_pool_box: list[asyncpg.Pool] = []
 
+    # --- Proactive intelligence ---
+    from src.proactive.state import ProactiveStateStore
+    from src.proactive.gate import NoiseGate
+    from src.proactive.heartbeat import HeartbeatDaemon, DefaultOutboundDispatcher
+
+    proactive_store = ProactiveStateStore(redis_client)
+    noise_gate = NoiseGate(proactive_store)
+    dispatcher = DefaultOutboundDispatcher(wa_manager, proactive_store)
+    heartbeat = HeartbeatDaemon(
+        ea_registry, proactive_store, noise_gate, dispatcher,
+    )
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         # Postgres pool + schema check. A missing table is fatal: the
@@ -176,8 +191,15 @@ def create_default_app() -> FastAPI:  # pragma: no cover
         except Exception:
             logger.exception("Port allocator init failed; provisioning will degrade")
 
+        try:
+            await heartbeat.start()
+            _app.state.heartbeat = heartbeat
+        except Exception:
+            logger.exception("Heartbeat daemon failed to start; proactive features disabled")
+
         yield
 
+        await heartbeat.stop()
         await redis_client.aclose()
         if pg_pool_box:
             await pg_pool_box[0].close()
@@ -190,5 +212,6 @@ def create_default_app() -> FastAPI:  # pragma: no cover
         # Placeholder — lifespan swaps in the real repo once the pool
         # is up. Routes tolerate None during the startup window.
         conversation_repo=None,
+        proactive_state_store=proactive_store,
         lifespan=lifespan,
     )

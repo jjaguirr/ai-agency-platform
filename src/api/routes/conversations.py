@@ -116,4 +116,13 @@ async def post_message(
                 customer_id, conversation_id, exc_info=True,
             )
 
+    # Fire-and-forget: extract follow-ups and update interaction time
+    proactive_store = getattr(request.app.state, "proactive_state_store", None)
+    if proactive_store is not None:
+        from src.proactive.inbound import process_inbound_message
+        try:
+            await process_inbound_message(customer_id, req.message, proactive_store)
+        except Exception:
+            logger.debug("Proactive inbound hook failed for customer=%s", customer_id)
+
     return MessageResponse(response=response_text, conversation_id=conversation_id)
