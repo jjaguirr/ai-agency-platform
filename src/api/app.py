@@ -228,13 +228,19 @@ def create_default_app() -> FastAPI:  # pragma: no cover
     from src.proactive.state import ProactiveStateStore
     from src.proactive.gate import NoiseGate
     from src.proactive.heartbeat import HeartbeatDaemon, DefaultOutboundDispatcher
+    from src.proactive.settings_cache import CustomerSettingsCache
+    from src.workflows.store import WorkflowStore
 
     proactive_store = ProactiveStateStore(redis_client)
     noise_gate = NoiseGate(proactive_store)
     dispatcher = DefaultOutboundDispatcher(wa_manager, proactive_store)
+    settings_cache = CustomerSettingsCache(redis_client)
+    workflow_store = WorkflowStore(redis_client)
     heartbeat = HeartbeatDaemon(
         ea_registry, proactive_store, noise_gate, dispatcher,
+        settings_cache=settings_cache,
     )
+    heartbeat.set_workflow_store(workflow_store)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):

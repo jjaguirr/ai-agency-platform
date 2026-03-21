@@ -21,6 +21,7 @@ from .gate import GateDecision, NoiseConfig, NoiseGate
 from .settings_cache import CustomerConfig, CustomerSettingsCache
 from .state import ProactiveStateStore
 from .triggers import ProactiveTrigger
+from .workflow_health import WorkflowHealthBehavior
 
 logger = logging.getLogger(__name__)
 
@@ -51,8 +52,13 @@ class HeartbeatDaemon:
         self._customer_timeout = customer_timeout
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._settings_cache = settings_cache
+        self._workflow_store = None
         self._task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
+
+    def set_workflow_store(self, workflow_store) -> None:
+        """Set the workflow store for workflow health checks. Called after init."""
+        self._workflow_store = workflow_store
 
     @property
     def is_running(self) -> bool:
@@ -192,11 +198,14 @@ class HeartbeatDaemon:
 
     def _get_behaviors(self) -> list:
         clock = self._clock
-        return [
+        behaviors: list = [
             MorningBriefingBehavior(self._state, clock=clock),
             FollowUpTrackerBehavior(self._state, clock=clock),
             IdleNudgeBehavior(self._state, clock=clock),
         ]
+        if self._workflow_store is not None:
+            behaviors.append(WorkflowHealthBehavior(self._workflow_store))
+        return behaviors
 
     async def _get_specialist_triggers(
         self, customer_id: str,
