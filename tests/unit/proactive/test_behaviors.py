@@ -6,6 +6,7 @@ from src.proactive.behaviors import (
     MorningBriefingBehavior,
     FollowUpTrackerBehavior,
     IdleNudgeBehavior,
+    DomainEventBehavior,
     BehaviorConfig,
 )
 from src.proactive.state import ProactiveStateStore
@@ -409,3 +410,81 @@ class TestIdleNudgeMinutes:
         cfg = BehaviorConfig(idle_nudge_minutes=0)
         result = await behavior.check(CID, cfg)
         assert result is None
+
+
+# --- V2: Domain events → triggers --------------------------------------------
+
+class TestDomainEventBehavior:
+    """Converts staged domain events into ProactiveTrigger. Drain is
+    destructive — each event fires once."""
+
+    async def test_empty_queue_returns_empty_list(self, store):
+        behavior = DomainEventBehavior(store)
+        assert await behavior.check(CID) == []
+
+    async def test_finance_anomaly_maps_to_high_priority(self, store):
+        await store.add_domain_event(CID, {
+            "type": "finance_anomaly",
+            "amount": 500.0,
+            "baseline": 100.0,
+            "category": "operations",
+        })
+        behavior = DomainEventBehavior(store)
+        triggers = await behavior.check(CID)
+        assert len(triggers) == 1
+        t = triggers[0]
+        assert t.domain == "finance"
+        assert t.trigger_type == "finance_anomaly"
+        assert t.priority == Priority.HIGH
+        assert "$500" in t.suggested_message or "500" in t.suggested_message
+        assert t.payload["amount"] == 500.0
+        assert t.cooldown_key is not None  # prevent re-fire on redelivery
+
+    async def test_schedule_conflict_maps_to_high_priority(self, store):
+        await store.add_domain_event(CID, {
+            "type": "schedule_conflict",
+            "new_event": {"title": "Board meeting", "start": "2026-03-20T10:00"},
+            "conflicts_with": [{"title": "Standup", "start": "2026-03-20T10:00"}],
+        })
+        behavior = DomainEventBehavior(store)
+        triggers = await behavior.check(CID)
+        assert len(triggers) == 1
+        t = triggers[0]
+        assert t.domain == "scheduling"
+        assert t.trigger_type == "schedule_conflict"
+        assert t.priority == Priority.HIGH
+        assert "Board meeting" in t.suggested_message
+        assert "Standup" in t.suggested_message
+
+    async def test_unknown_type_gets_medium_priority_fallback(self, store):
+        await store.add_domain_event(CID, {
+            "type": "never_seen_this",
+            "detail": "something",
+        })
+        behavior = DomainEventBehavior(store)
+        triggers = await behavior.check(CID)
+        assert len(triggers) == 1
+        assert triggers[0].priority == Priority.MEDIUM
+        assert triggers[0].domain == "ea"
+
+    async def test_multiple_events_all_converted(self, store):
+        await store.add_domain_event(CID, {"type": "finance_anomaly", "amount": 1})
+        await store.add_domain_event(CID, {"type": "schedule_conflict"})
+        behavior = DomainEventBehavior(store)
+        triggers = await behavior.check(CID)
+        assert len(triggers) == 2
+
+    async def test_drains_on_check(self, store):
+        """Second check on same tick returns empty — events consumed."""
+        await store.add_domain_event(CID, {"type": "finance_anomaly", "amount": 1})
+        behavior = DomainEventBehavior(store)
+        first = await behavior.check(CID)
+        second = await behavior.check(CID)
+        assert len(first) == 1
+        assert second == []
+
+    async def test_event_without_type_skipped(self, store):
+        await store.add_domain_event(CID, {"not_a_type": "oops"})
+        behavior = DomainEventBehavior(store)
+        triggers = await behavior.check(CID)
+        assert triggers == []
