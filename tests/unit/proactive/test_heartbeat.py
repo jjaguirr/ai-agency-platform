@@ -234,3 +234,164 @@ class TestEARegistryActiveCustomers:
         ids = reg.active_customer_ids()
         ids.append("fake")
         assert "fake" not in reg.active_customer_ids()
+
+
+# --- Per-customer settings (V2) ---------------------------------------------
+
+import json
+from src.proactive.settings_loader import CustomerSettingsLoader
+
+
+async def _seed_settings(redis, cid: str, settings: dict) -> None:
+    await redis.set(f"settings:{cid}", json.dumps(settings))
+
+
+@pytest.fixture
+def loader(fake_redis):
+    return CustomerSettingsLoader(fake_redis, ttl_seconds=1)
+
+
+class TestPerCustomerConfig:
+    """Heartbeat reads per-customer NoiseConfig from the settings loader,
+    replacing the hardcoded NoiseConfig() at the gate-evaluation site."""
+
+    async def test_high_threshold_customer_suppresses_medium_trigger(
+        self, fake_redis, registry, store, gate, mock_dispatcher, loader,
+    ):
+        # cust_1's settings set threshold to HIGH
+        await _seed_settings(fake_redis, "cust_1", {
+            "proactive": {"priority_threshold": "HIGH"},
+        })
+        daemon = HeartbeatDaemon(
+            registry, store, gate, mock_dispatcher,
+            settings_loader=loader,
+        )
+        # MEDIUM trigger — would pass the old hardcoded MEDIUM threshold,
+        # but should be suppressed by this customer's HIGH threshold.
+        medium = _trigger(priority=Priority.MEDIUM)
+        daemon._get_behaviors = lambda: []
+        daemon._get_specialist_triggers = AsyncMock(return_value=[medium])
+        await daemon._tick()
+        mock_dispatcher.dispatch.assert_not_called()
+
+    async def test_low_threshold_customer_allows_low_trigger(
+        self, fake_redis, registry, store, gate, mock_dispatcher, loader,
+    ):
+        await _seed_settings(fake_redis, "cust_1", {
+            "proactive": {"priority_threshold": "LOW"},
+        })
+        daemon = HeartbeatDaemon(
+            registry, store, gate, mock_dispatcher,
+            settings_loader=loader,
+        )
+        low = _trigger(priority=Priority.LOW)
+        daemon._get_behaviors = lambda: []
+        daemon._get_specialist_triggers = AsyncMock(return_value=[low])
+        await daemon._tick()
+        mock_dispatcher.dispatch.assert_called_once()
+
+    async def test_missing_settings_falls_back_to_defaults(
+        self, fake_redis, registry, store, gate, mock_dispatcher, loader,
+    ):
+        # No settings seeded — loader returns Settings() defaults.
+        daemon = HeartbeatDaemon(
+            registry, store, gate, mock_dispatcher,
+            settings_loader=loader,
+        )
+        # MEDIUM passes default MEDIUM threshold
+        medium = _trigger(priority=Priority.MEDIUM)
+        daemon._get_behaviors = lambda: []
+        daemon._get_specialist_triggers = AsyncMock(return_value=[medium])
+        await daemon._tick()
+        mock_dispatcher.dispatch.assert_called_once()
+
+    async def test_no_loader_injected_uses_hardcoded_defaults(
+        self, registry, store, gate, mock_dispatcher,
+    ):
+        """Backward compat — daemon without a loader still works."""
+        daemon = HeartbeatDaemon(
+            registry, store, gate, mock_dispatcher,
+        )
+        medium = _trigger(priority=Priority.MEDIUM)
+        daemon._get_behaviors = lambda: []
+        daemon._get_specialist_triggers = AsyncMock(return_value=[medium])
+        await daemon._tick()
+        mock_dispatcher.dispatch.assert_called_once()
+
+    async def test_different_customers_get_different_configs(
+        self, fake_redis, store, gate, mock_dispatcher, loader,
+    ):
+        # Two customers, different thresholds
+        await _seed_settings(fake_redis, "cust_strict", {
+            "proactive": {"priority_threshold": "HIGH"},
+        })
+        await _seed_settings(fake_redis, "cust_relaxed", {
+            "proactive": {"priority_threshold": "LOW"},
+        })
+
+        reg = EARegistry(factory=MagicMock(), max_size=10)
+        reg._instances["cust_strict"] = MagicMock()
+        reg._instances["cust_relaxed"] = MagicMock()
+
+        daemon = HeartbeatDaemon(
+            reg, store, gate, mock_dispatcher,
+            settings_loader=loader,
+        )
+        # Both customers produce a LOW trigger
+        low = _trigger(priority=Priority.LOW)
+        daemon._get_behaviors = lambda: []
+        daemon._get_specialist_triggers = AsyncMock(return_value=[low])
+        await daemon._tick()
+
+        # Only cust_relaxed's trigger dispatched (strict's LOW < HIGH)
+        dispatched_to = [
+            call.args[0] for call in mock_dispatcher.dispatch.call_args_list
+        ]
+        assert "cust_relaxed" in dispatched_to
+        assert "cust_strict" not in dispatched_to
+
+    async def test_daily_cap_from_settings(
+        self, fake_redis, registry, store, gate, mock_dispatcher, loader,
+    ):
+        await _seed_settings(fake_redis, "cust_1", {
+            "proactive": {"daily_cap": 1, "priority_threshold": "LOW"},
+        })
+        daemon = HeartbeatDaemon(
+            registry, store, gate, mock_dispatcher,
+            settings_loader=loader,
+        )
+        # Two triggers — cap of 1 means only first gets through
+        t1 = _trigger(priority=Priority.MEDIUM)
+        t2 = _trigger(priority=Priority.MEDIUM)
+        daemon._get_behaviors = lambda: []
+        daemon._get_specialist_triggers = AsyncMock(return_value=[t1, t2])
+        await daemon._tick()
+        assert mock_dispatcher.dispatch.call_count == 1
+
+    async def test_behavior_config_passed_to_behaviors(
+        self, fake_redis, registry, store, gate, mock_dispatcher, loader,
+    ):
+        """Behaviors invoked with config signature receive the per-customer
+        BehaviorConfig, not a default one."""
+        await _seed_settings(fake_redis, "cust_1", {
+            "briefing": {"enabled": False, "time": "06:00"},
+        })
+        daemon = HeartbeatDaemon(
+            registry, store, gate, mock_dispatcher,
+            settings_loader=loader,
+        )
+
+        captured = []
+
+        class SpyBehavior:
+            async def check(self, cid, config):
+                captured.append(config)
+                return None
+
+        daemon._get_behaviors = lambda: [SpyBehavior()]
+        daemon._get_specialist_triggers = AsyncMock(return_value=[])
+        await daemon._tick()
+
+        assert len(captured) == 1
+        assert captured[0].briefing_enabled is False
+        assert captured[0].briefing_hour == 6
