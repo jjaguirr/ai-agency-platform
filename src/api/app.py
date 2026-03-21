@@ -21,7 +21,7 @@ from .errors import (
     handle_validation_error,
 )
 from .middleware import CorrelationMiddleware, install_correlation_logging
-from .routes import conversations, health, history, notifications, provisioning, webhooks
+from .routes import conversations, health, history, notifications, provisioning, webhooks, workflows
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,7 @@ def create_app(
     conversation_repo: Optional[Any] = None,
     lifespan: Optional[Lifespan] = None,
     proactive_state_store: Any = None,
+    workflow_tracker: Any = None,
 ) -> FastAPI:
     """
     Build the API with all dependencies injected.
@@ -69,6 +70,7 @@ def create_app(
     app.state.redis_client = redis_client
     app.state.conversation_repo = conversation_repo
     app.state.proactive_state_store = proactive_state_store
+    app.state.workflow_tracker = workflow_tracker
 
     # Structured error handling. All paths converge on {type, detail}.
     # Order: specific-first so the Exception catch-all doesn't shadow
@@ -89,6 +91,7 @@ def create_app(
     app.include_router(provisioning.router)
     app.include_router(webhooks.router)
     app.include_router(notifications.router)
+    app.include_router(workflows.router)
 
     return app
 

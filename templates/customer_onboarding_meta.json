@@ -1,0 +1,7 @@
+{
+  "name": "Customer Onboarding Sequence",
+  "description": "Automated onboarding flow for new customers including welcome messages and discovery calls",
+  "required_integrations": ["whatsapp", "email"],
+  "category": "customer_success",
+  "tags": ["onboarding", "customer", "welcome", "discovery", "whatsapp", "email"]
+}

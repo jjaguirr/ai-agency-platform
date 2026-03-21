@@ -1,0 +1,7 @@
+{
+  "name": "Lead Qualification Pipeline",
+  "description": "Automatically qualify and route incoming leads from landing pages",
+  "required_integrations": ["webhook", "clearbit", "linkedin", "whatsapp"],
+  "category": "sales",
+  "tags": ["lead", "qualification", "sales", "pipeline", "webhook", "routing"]
+}

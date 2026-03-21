@@ -55,12 +55,16 @@ class TestAllSpecialistsRegister:
         ea = make_ea()
         assert ea.delegation_registry.get("scheduling") is not None
 
-    def test_exactly_three_registered(self, make_ea):
+    def test_workflows_registered(self, make_ea):
+        ea = make_ea()
+        assert ea.delegation_registry.get("workflows") is not None
+
+    def test_exactly_four_registered(self, make_ea):
         ea = make_ea()
         reg = ea.delegation_registry
-        domains = {d for d in ("social_media", "finance", "scheduling")
+        domains = {d for d in ("social_media", "finance", "scheduling", "workflows")
                    if reg.get(d) is not None}
-        assert domains == {"social_media", "finance", "scheduling"}
+        assert domains == {"social_media", "finance", "scheduling", "workflows"}
 
 
 # --- Independent import guards ----------------------------------------------
@@ -138,11 +142,27 @@ class TestImportGuards:
             else:
                 sys.modules.pop(dotted, None)
 
+    def test_workflow_import_failure_isolated(self, make_ea):
+        dotted = "src.agents.specialists.workflow"
+        saved = sys.modules.pop(dotted, None)
+        sys.modules[dotted] = None
+        try:
+            ea = make_ea()
+            assert ea.delegation_registry.get("workflows") is None
+            assert ea.delegation_registry.get("social_media") is not None
+            assert ea.delegation_registry.get("finance") is not None
+            assert ea.delegation_registry.get("scheduling") is not None
+        finally:
+            if saved is not None:
+                sys.modules[dotted] = saved
+            else:
+                sys.modules.pop(dotted, None)
+
     def test_all_imports_fail_ea_still_initializes(self, make_ea):
         """Worst case: every specialist module is broken. EA comes up with
         an empty registry — no specialists, but no crash either."""
         saved = {}
-        for mod in ("social_media", "finance", "scheduling"):
+        for mod in ("social_media", "finance", "scheduling", "workflow"):
             dotted = f"src.agents.specialists.{mod}"
             saved[dotted] = sys.modules.pop(dotted, None)
             sys.modules[dotted] = None
@@ -151,6 +171,7 @@ class TestImportGuards:
             assert ea.delegation_registry.get("social_media") is None
             assert ea.delegation_registry.get("finance") is None
             assert ea.delegation_registry.get("scheduling") is None
+            assert ea.delegation_registry.get("workflows") is None
         finally:
             for dotted, orig in saved.items():
                 if orig is not None:
@@ -169,3 +190,11 @@ class TestFrameworkUntouched:
         src = inspect.getsource(base)
         assert "scheduling" not in src.lower()
         assert "calendar" not in src.lower()
+
+    def test_specialist_base_has_no_workflow_references(self):
+        """Adding workflows required zero changes to the framework."""
+        import inspect
+        import src.agents.base.specialist as base
+        src = inspect.getsource(base)
+        assert "workflow" not in src.lower()
+        assert "n8n" not in src.lower()

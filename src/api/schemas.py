@@ -100,3 +100,10 @@ class NotificationResponse(BaseModel):
     title: str
     message: str
     created_at: str
+
+
+class WorkflowSummaryResponse(BaseModel):
+    workflow_id: str
+    name: str
+    status: str
+    created_at: str

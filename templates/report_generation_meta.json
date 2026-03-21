@@ -1,0 +1,7 @@
+{
+  "name": "Weekly Business Report",
+  "description": "Automated weekly business report generation and distribution via email",
+  "required_integrations": ["email", "metrics_api"],
+  "category": "reporting",
+  "tags": ["report", "weekly", "email", "metrics", "schedule", "business", "analytics"]
+}

@@ -1,0 +1,7 @@
+{
+  "name": "Social Media Post Automation",
+  "description": "Automatically schedule and post content across social media platforms",
+  "required_integrations": ["instagram", "facebook"],
+  "category": "marketing",
+  "tags": ["social", "instagram", "facebook", "content", "marketing", "post", "schedule"]
+}

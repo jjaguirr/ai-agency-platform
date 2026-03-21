@@ -1,0 +1,7 @@
+{
+  "name": "Appointment Scheduling",
+  "description": "Handle appointment booking, reminders, and rescheduling via calendar integration",
+  "required_integrations": ["google-calendar"],
+  "category": "operations",
+  "tags": ["appointment", "scheduling", "calendar", "booking", "reminder", "meeting"]
+}

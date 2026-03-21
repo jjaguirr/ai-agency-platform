@@ -1,0 +1,7 @@
+{
+  "name": "Client Follow-Up Automation",
+  "description": "Automated follow-up emails based on client interaction triggers after meetings",
+  "required_integrations": ["email", "crm"],
+  "category": "client_management",
+  "tags": ["followup", "email", "client", "meeting", "crm", "automation"]
+}

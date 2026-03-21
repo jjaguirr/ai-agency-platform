@@ -3,6 +3,9 @@
 .claude_dev_active
 claude-dev
 
+# Mutation testing artifacts
+mutants/
+
 # Environment Variables - NEVER COMMIT SECRETS
 .env
 .env.local

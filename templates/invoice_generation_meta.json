@@ -1,0 +1,7 @@
+{
+  "name": "Invoice Generation",
+  "description": "Generate and send invoices based on completed work or recurring schedules",
+  "required_integrations": ["email", "accounting"],
+  "category": "finance",
+  "tags": ["invoice", "billing", "finance", "email", "accounting", "schedule", "payment"]
+}
