@@ -1,30 +1,27 @@
 """
 Dashboard analytics — today's activity counts + specialist health grid.
+Conversation intelligence analytics — topic breakdown, specialist performance.
 
 GET /v1/analytics/activity
     → {date, messages_processed, delegations_by_domain, proactive_triggers_sent}
-    Read-only Redis counters. Zeros for fresh customers.
-
 GET /v1/analytics/specialists
     → {specialists: [{domain, registered, operational, detail}, ...]}
-    Fixed four-domain list. registered = module imports cleanly;
-    operational = registered AND external deps reachable. Only workflows
-    has an external probe today (n8n list_workflows()).
-
-Both are read-only landing-page endpoints: no failure mode is allowed to
-500 them. Probe errors become operational=False with detail populated;
-counter errors become zeros.
+GET /v1/analytics
+    → conversation intelligence (topic breakdown, specialist metrics, trends)
 """
 import asyncio
 import importlib
 import logging
 from datetime import date
+from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from ..activity_counters import get_today
 from ..auth import get_current_customer
-from ..schemas import ActivitySummary, SpecialistStatus, SpecialistStatusResponse
+from ..schemas import (
+    ActivitySummary, AnalyticsResponse, SpecialistStatus, SpecialistStatusResponse,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/analytics", tags=["analytics"])
@@ -73,9 +70,6 @@ async def get_specialist_status(
 
 
 async def _probe(domain: str, n8n) -> SpecialistStatus:
-    # registered = "the code is there". An optional-dep ImportError at
-    # module top level (e.g., someone ships a specialist that needs a
-    # lib the container doesn't have) shows up here as False + detail.
     try:
         importlib.import_module(f"src.agents.specialists.{domain}")
         registered = True
@@ -85,10 +79,6 @@ async def _probe(domain: str, n8n) -> SpecialistStatus:
             detail=f"import failed: {e}",
         )
 
-    # operational = registered AND external service reachable. Only
-    # workflows has a service to talk to today; the other three are
-    # pure-Python until someone wires a calendar API / accounting API /
-    # social platform client, at which point add a probe branch here.
     if domain != "workflows":
         return SpecialistStatus(
             domain=domain, registered=registered, operational=registered,
@@ -101,11 +91,42 @@ async def _probe(domain: str, n8n) -> SpecialistStatus:
         )
 
     try:
-        # Same 2s cap as the settings probe — the dashboard loads both
-        # on the same page, so a slow n8n shouldn't cost 4s.
         await asyncio.wait_for(n8n.list_workflows(), timeout=2.0)
         return SpecialistStatus(domain=domain, registered=True, operational=True)
     except Exception as e:
         return SpecialistStatus(
             domain=domain, registered=True, operational=False, detail=str(e),
         )
+
+
+# --- Conversation intelligence analytics ------------------------------------
+
+Period = Literal["24h", "7d", "30d", "custom"]
+
+
+@router.get("", response_model=AnalyticsResponse)
+async def get_analytics(
+    request: Request,
+    customer_id: str = Depends(get_current_customer),
+    period: Period = Query("7d"),
+    start: Optional[str] = Query(None),
+    end: Optional[str] = Query(None),
+):
+    svc = getattr(request.app.state, "analytics_service", None)
+    if svc is None:
+        raise HTTPException(status_code=503, detail="Analytics service unavailable")
+
+    from src.intelligence.analytics import compute_time_range
+
+    try:
+        range_start, range_end = compute_time_range(
+            period, start=start, end=end,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return await svc.get_analytics(
+        customer_id=customer_id,
+        start=range_start,
+        end=range_end,
+    )

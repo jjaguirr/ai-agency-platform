@@ -43,6 +43,7 @@ def create_app(
     safety_pipeline: Optional[Any] = None,
     safety_config: Optional[Any] = None,
     n8n_client: Optional[Any] = None,
+    analytics_service: Optional[Any] = None,
 ) -> FastAPI:
     """
     Build the API with all dependencies injected.
@@ -84,6 +85,7 @@ def create_app(
     # to report live connected_services.n8n instead of the stored bool.
     # The analytics specialist-status endpoint reuses this same client.
     app.state.n8n_client = n8n_client
+    app.state.analytics_service = analytics_service
 
     # Structured error handling. All paths converge on {type, detail}.
     # Order: specific-first so the Exception catch-all doesn't shadow
