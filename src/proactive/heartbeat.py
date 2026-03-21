@@ -13,6 +13,7 @@ from typing import Callable, List, Optional, Protocol, runtime_checkable
 
 from .behaviors import (
     BehaviorConfig,
+    DomainEventBehavior,
     FollowUpTrackerBehavior,
     IdleNudgeBehavior,
     MorningBriefingBehavior,
@@ -213,6 +214,7 @@ class HeartbeatDaemon:
             MorningBriefingBehavior(self._state, clock=clock),
             FollowUpTrackerBehavior(self._state, clock=clock),
             IdleNudgeBehavior(self._state, clock=clock),
+            DomainEventBehavior(self._state),
         ]
 
     async def _get_specialist_triggers(

@@ -235,3 +235,98 @@ class IdleNudgeBehavior:
             suggested_message=f"Hi! It's been {span} since we last spoke. You have {len(follow_ups)} pending item(s) — want to catch up?",
             cooldown_key=cooldown_key,
         )
+
+
+class DomainEventBehavior:
+    """Drain the domain-event queue and convert each event to a trigger.
+
+    Specialists stage events synchronously at detection time (finance
+    anomaly during expense processing, schedule conflict during event
+    creation). This behavior is the bridge to the noise gate: events sit
+    in Redis until the next heartbeat tick, then get the same
+    threshold/quiet-hours/cap treatment as every other trigger.
+    """
+
+    def __init__(self, state_store: ProactiveStateStore) -> None:
+        self._state = state_store
+
+    async def check(self, customer_id: str) -> List[ProactiveTrigger]:
+        events = await self._state.drain_domain_events(customer_id)
+        triggers: list[ProactiveTrigger] = []
+        for event in events:
+            etype = event.get("type")
+            if not etype:
+                logger.warning(
+                    "Domain event without type for customer=%s: %r; dropping",
+                    customer_id, event,
+                )
+                continue
+            converter = _EVENT_CONVERTERS.get(etype, _convert_unknown)
+            triggers.append(converter(event))
+        return triggers
+
+
+def _convert_finance_anomaly(event: dict) -> ProactiveTrigger:
+    amount = event.get("amount", 0)
+    baseline = event.get("baseline")
+    category = event.get("category", "")
+    msg = f"Heads up: a ${amount:g} expense"
+    if category:
+        msg += f" ({category})"
+    msg += " looks unusual"
+    if baseline:
+        msg += f" — about {amount/baseline:.1f}× your typical spend"
+    msg += ". Want me to look into it?"
+    # Cooldown keyed on amount+category so the same anomaly doesn't
+    # re-fire if the event somehow gets re-staged, but a different
+    # anomaly on the same day still gets through.
+    return ProactiveTrigger(
+        domain="finance",
+        trigger_type="finance_anomaly",
+        priority=Priority.HIGH,
+        title="Unusual expense",
+        payload=event,
+        suggested_message=msg,
+        cooldown_key=f"finance_anomaly:{amount:g}:{category}",
+    )
+
+
+def _convert_schedule_conflict(event: dict) -> ProactiveTrigger:
+    new_event = event.get("new_event", {})
+    conflicts = event.get("conflicts_with", [])
+    new_title = new_event.get("title", "a new event")
+    conflict_titles = ", ".join(
+        c.get("title", "an existing event") for c in conflicts
+    ) or "an existing event"
+    msg = (
+        f"Calendar conflict: '{new_title}' overlaps with {conflict_titles}. "
+        f"Want me to reschedule one of them?"
+    )
+    return ProactiveTrigger(
+        domain="scheduling",
+        trigger_type="schedule_conflict",
+        priority=Priority.HIGH,
+        title="Calendar conflict",
+        payload=event,
+        suggested_message=msg,
+        cooldown_key=f"schedule_conflict:{new_event.get('start', new_title)}",
+    )
+
+
+def _convert_unknown(event: dict) -> ProactiveTrigger:
+    etype = event.get("type", "unknown")
+    return ProactiveTrigger(
+        domain="ea",
+        trigger_type=etype,
+        priority=Priority.MEDIUM,
+        title=f"Notice: {etype}",
+        payload=event,
+        suggested_message=f"Something came up in {etype}: {event}",
+        cooldown_key=None,
+    )
+
+
+_EVENT_CONVERTERS: dict[str, Callable[[dict], ProactiveTrigger]] = {
+    "finance_anomaly": _convert_finance_anomaly,
+    "schedule_conflict": _convert_schedule_conflict,
+}
