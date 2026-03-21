@@ -824,3 +824,195 @@ class TestPortfolioValuation:
         assert "httpx" not in source
         assert "aiohttp" not in source
         assert "requests" not in source
+
+
+# --- Proactive V2: anomaly detection hook -----------------------------------
+# The specialist optionally takes a ProactiveStateStore. When present,
+# every completed expense entry records the amount into the transaction
+# baseline, and if the amount exceeds 2× that baseline a domain event is
+# staged. The heartbeat's DomainEventBehavior drains the queue on its
+# next tick and routes the notification through the noise gate.
+#
+# The hook is side-channel only — it never changes the SpecialistResult.
+# A Redis outage degrades to "no anomaly detection," not "can't track
+# expenses."
+
+import fakeredis.aioredis
+from src.proactive.state import ProactiveStateStore
+
+
+@pytest.fixture
+def proactive_state():
+    redis = fakeredis.aioredis.FakeRedis()
+    return ProactiveStateStore(redis)
+
+
+def _expense_task(description: str, ctx, cid: str = "cust_anomaly") -> SpecialistTask:
+    return SpecialistTask(
+        description=description,
+        customer_id=cid,
+        business_context=ctx,
+        domain_memories=[],
+    )
+
+
+class TestAnomalyStaging:
+
+    @pytest.mark.asyncio
+    async def test_no_state_store_is_harmless(self, retail_ctx):
+        """No proactive_state injected → nothing staged, nothing breaks.
+        Current construction sites all pass no store, so this is the
+        backward-compat contract."""
+        fs = FinanceSpecialist()  # no proactive_state kwarg
+        result = await fs.execute_task(
+            _expense_task("track $9,999 payment to Acme Corp", retail_ctx),
+        )
+        assert result.status == SpecialistStatus.COMPLETED
+        assert result.payload["amount"] == 9999.0
+
+    @pytest.mark.asyncio
+    async def test_expense_above_2x_baseline_stages_event(
+        self, proactive_state, retail_ctx,
+    ):
+        cid = "cust_anomaly"
+        # Seed baseline: 3 transactions averaging $100
+        for _ in range(3):
+            await proactive_state.record_transaction(cid, 100.0)
+
+        fs = FinanceSpecialist(proactive_state=proactive_state)
+        result = await fs.execute_task(
+            _expense_task("track $250 payment to Acme Corp", retail_ctx, cid),
+        )
+
+        # The expense itself still completes normally — anomaly detection
+        # is a side channel.
+        assert result.status == SpecialistStatus.COMPLETED
+        assert result.payload["amount"] == 250.0
+
+        events = await proactive_state.drain_domain_events(cid)
+        assert len(events) == 1
+        ev = events[0]
+        assert ev["type"] == "finance_anomaly"
+        assert ev["amount"] == 250.0
+        assert ev["baseline"] == pytest.approx(100.0)
+        # Category flows through so DomainEventBehavior can build a
+        # meaningful cooldown key.
+        assert "category" in ev
+
+    @pytest.mark.asyncio
+    async def test_expense_below_threshold_stages_nothing(
+        self, proactive_state, retail_ctx,
+    ):
+        cid = "cust_anomaly"
+        for _ in range(3):
+            await proactive_state.record_transaction(cid, 100.0)
+
+        fs = FinanceSpecialist(proactive_state=proactive_state)
+        await fs.execute_task(
+            _expense_task("track $150 payment to Acme Corp", retail_ctx, cid),
+        )
+
+        # 1.5× baseline → not anomalous
+        assert await proactive_state.drain_domain_events(cid) == []
+
+    @pytest.mark.asyncio
+    async def test_no_baseline_yet_stages_nothing(
+        self, proactive_state, retail_ctx,
+    ):
+        """Baseline needs ≥3 samples. A customer's very first expense
+        mustn't trigger an anomaly against an empty history — everything
+        looks huge compared to zero."""
+        cid = "cust_fresh"
+        fs = FinanceSpecialist(proactive_state=proactive_state)
+        await fs.execute_task(
+            _expense_task("track $5,000 payment to Acme Corp", retail_ctx, cid),
+        )
+        assert await proactive_state.drain_domain_events(cid) == []
+
+    @pytest.mark.asyncio
+    async def test_completed_expense_records_transaction(
+        self, proactive_state, retail_ctx,
+    ):
+        """Every completed expense feeds the baseline, anomalous or not.
+        Three normal expenses → baseline becomes available."""
+        cid = "cust_building"
+        fs = FinanceSpecialist(proactive_state=proactive_state)
+
+        assert await proactive_state.get_transaction_baseline(cid) is None
+
+        for amt in (100, 110, 90):
+            await fs.execute_task(
+                _expense_task(f"track ${amt} payment to Acme Corp", retail_ctx, cid),
+            )
+
+        baseline = await proactive_state.get_transaction_baseline(cid)
+        assert baseline == pytest.approx(100.0)
+
+    @pytest.mark.asyncio
+    async def test_clarification_result_does_not_record(
+        self, proactive_state, retail_ctx,
+    ):
+        """NEEDS_CLARIFICATION → no amount extracted → nothing to record,
+        nothing to flag. Proves the hook is guarded on COMPLETED status."""
+        cid = "cust_vague"
+        fs = FinanceSpecialist(proactive_state=proactive_state)
+        result = await fs.execute_task(
+            _expense_task("I spent some money on stuff", retail_ctx, cid),
+        )
+        assert result.status == SpecialistStatus.NEEDS_CLARIFICATION
+        assert await proactive_state.get_transaction_baseline(cid) is None
+        assert await proactive_state.drain_domain_events(cid) == []
+
+    @pytest.mark.asyncio
+    async def test_state_failure_does_not_break_expense_tracking(
+        self, retail_ctx,
+    ):
+        """The proactive hook is best-effort. A dead Redis must not turn
+        a working expense tracker into a broken one."""
+        class BrokenStore:
+            async def record_transaction(self, *a, **kw):
+                raise ConnectionError("redis down")
+            async def get_transaction_baseline(self, *a, **kw):
+                raise ConnectionError("redis down")
+            async def add_domain_event(self, *a, **kw):
+                raise ConnectionError("redis down")
+
+        fs = FinanceSpecialist(proactive_state=BrokenStore())
+        result = await fs.execute_task(
+            _expense_task("track $100 payment to Acme Corp", retail_ctx),
+        )
+        assert result.status == SpecialistStatus.COMPLETED
+        assert result.payload["amount"] == 100.0
+
+    @pytest.mark.asyncio
+    async def test_summary_query_does_not_record(
+        self, proactive_state, retail_ctx,
+    ):
+        """Summary queries mention dollar amounts but aren't new
+        transactions. Recording them would poison the baseline."""
+        cid = "cust_summary"
+        fs = FinanceSpecialist(proactive_state=proactive_state)
+        await fs.execute_task(SpecialistTask(
+            description="how much did I spend on marketing last month?",
+            customer_id=cid,
+            business_context=retail_ctx,
+            domain_memories=[{"content": "$500 Facebook ads"}],
+        ))
+        # No transaction recorded — baseline stays empty.
+        assert await proactive_state.get_transaction_baseline(cid) is None
+
+    @pytest.mark.asyncio
+    async def test_events_isolated_per_customer(
+        self, proactive_state, retail_ctx,
+    ):
+        for _ in range(3):
+            await proactive_state.record_transaction("cust_a", 100.0)
+            await proactive_state.record_transaction("cust_b", 100.0)
+
+        fs = FinanceSpecialist(proactive_state=proactive_state)
+        await fs.execute_task(
+            _expense_task("track $300 payment to Acme Corp", retail_ctx, "cust_a"),
+        )
+
+        assert len(await proactive_state.drain_domain_events("cust_a")) == 1
+        assert await proactive_state.drain_domain_events("cust_b") == []
