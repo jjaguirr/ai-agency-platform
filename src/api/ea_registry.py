@@ -116,6 +116,10 @@ class EARegistry:
         """Evict a cached EA (e.g. on customer config change)."""
         self._instances.pop(customer_id, None)
 
+    def active_customer_ids(self) -> list[str]:
+        """Snapshot of currently cached customer IDs for heartbeat iteration."""
+        return list(self._instances.keys())
+
     def __contains__(self, customer_id: str) -> bool:
         return customer_id in self._instances
 

@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.agents.executive_assistant import BusinessContext
+    from src.proactive.triggers import ProactiveTrigger
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +128,17 @@ class SpecialistAgent(ABC):
     @abstractmethod
     async def execute_task(self, task: SpecialistTask) -> SpecialistResult:
         """Do the work. May raise — the registry catches and converts to FAILED."""
+
+    async def proactive_check(
+        self, customer_id: str, context: "BusinessContext"
+    ) -> Optional["ProactiveTrigger"]:
+        """Optional proactive check — override to generate triggers on each heartbeat tick.
+
+        Returns None by default. Specialists that implement proactive behavior
+        (e.g., anomaly detection, periodic reports) override this. The heartbeat
+        daemon calls it for every active customer on each tick.
+        """
+        return None
 
 
 # --- Registry ---------------------------------------------------------------
