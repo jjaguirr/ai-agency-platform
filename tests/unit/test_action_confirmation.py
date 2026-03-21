@@ -590,6 +590,59 @@ class TestConfirmationAudit:
         assert event.event_type == AuditEventType.HIGH_RISK_ACTION_DECLINED
 
     @pytest.mark.asyncio
+    async def test_confirmation_confirmed_audits(self, ea):
+        audit = AsyncMock()
+        ea.audit_logger = audit
+
+        spec = _confirmation_specialist()
+        ea.delegation_registry = DelegationRegistry()
+        ea.delegation_registry.register(spec)
+
+        state = _state("yes", active_delegation={
+            "domain": "scheduling", "original_task": "cancel X",
+            "prior_turns": [{"role": "specialist", "content": "Sure?"}],
+            "pending_action": {"event_id": "e", "title": "Acme review"},
+        })
+
+        await ea._delegate_to_specialist(state)
+
+        # CONFIRMED must have been logged (in addition to any other events).
+        from src.safety.models import AuditEventType
+        confirmed_calls = [
+            c for c in audit.log.await_args_list
+            if c.args[1].event_type == AuditEventType.HIGH_RISK_ACTION_CONFIRMED
+        ]
+        assert len(confirmed_calls) == 1
+        event = confirmed_calls[0].args[1]
+        assert event.details["domain"] == "scheduling"
+
+    @pytest.mark.asyncio
+    async def test_confirmed_audit_includes_outcome(self, ea):
+        audit = AsyncMock()
+        ea.audit_logger = audit
+
+        spec = _confirmation_specialist()
+        ea.delegation_registry = DelegationRegistry()
+        ea.delegation_registry.register(spec)
+
+        state = _state("yes", active_delegation={
+            "domain": "scheduling", "original_task": "cancel X",
+            "prior_turns": [{"role": "specialist", "content": "Sure?"}],
+            "pending_action": {"event_id": "e"},
+        })
+
+        await ea._delegate_to_specialist(state)
+
+        from src.safety.models import AuditEventType
+        confirmed_calls = [
+            c for c in audit.log.await_args_list
+            if c.args[1].event_type == AuditEventType.HIGH_RISK_ACTION_CONFIRMED
+        ]
+        event = confirmed_calls[0].args[1]
+        # Outcome should include the specialist result status
+        assert "outcome" in event.details
+
+    @pytest.mark.asyncio
     async def test_no_audit_logger_works_fine(self, ea):
         # ea.audit_logger defaults to None — existing construction must
         # keep working without any audit wiring.

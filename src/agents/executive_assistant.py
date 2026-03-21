@@ -1382,6 +1382,7 @@ The key difference: automation tools give you software to configure. I give you 
             original_task = last_message
             prior_turns = []
             task_description = last_message
+            pending = None
 
         specialist = self.delegation_registry.get(domain) if domain else None
         if specialist is None:
@@ -1410,6 +1411,15 @@ The key difference: automation tools give you software to configure. I give you 
         result = await self.delegation_registry.execute(
             specialist, task, timeout=self.specialist_timeout
         )
+
+        # Log CONFIRMED when a previously-gated action has been executed.
+        # pending is set only on confirmation-resume paths; its presence
+        # means the customer said yes and the specialist just ran.
+        if pending is not None:
+            await self._audit_confirmation(
+                AuditEventType.HIGH_RISK_ACTION_CONFIRMED, domain, pending,
+                outcome=result.status.value,
+            )
 
         if result.status == SpecialistStatus.FAILED:
             logger.info(
@@ -1460,6 +1470,7 @@ The key difference: automation tools give you software to configure. I give you 
 
     async def _audit_confirmation(
         self, event_type: AuditEventType, domain: str, pending: dict,
+        *, outcome: str | None = None,
     ) -> None:
         """Best-effort audit for confirmation lifecycle events.
 
@@ -1474,12 +1485,15 @@ The key difference: automation tools give you software to configure. I give you 
             cid = correlation_id.get() or "-"
         except Exception:
             cid = "-"
+        details: dict = {"domain": domain, "pending_action": pending}
+        if outcome is not None:
+            details["outcome"] = outcome
         try:
             await self.audit_logger.log(self.customer_id, AuditEvent(
                 timestamp=datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ"),
                 event_type=event_type,
                 correlation_id=cid,
-                details={"domain": domain, "pending_action": pending},
+                details=details,
             ))
         except Exception as e:
             logger.warning(f"Confirmation audit failed (non-blocking): {e}")
