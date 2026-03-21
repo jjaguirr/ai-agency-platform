@@ -105,6 +105,12 @@ class NotificationResponse(BaseModel):
     title: str
     message: str
     created_at: str
+    status: str = "pending"
+
+
+class SnoozeRequest(BaseModel):
+    # One week cap — anything longer and "snooze" is really "dismiss."
+    minutes: int = Field(default=60, ge=1, le=10080)
 
 
 # --- Dashboard auth -------------------------------------------------------
