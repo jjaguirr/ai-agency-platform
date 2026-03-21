@@ -161,13 +161,15 @@ class TestHistoryResponses:
 class TestListConversations:
     def test_list_returns_customers_conversations(self):
         repo = AsyncMock()
-        repo.list_conversations = AsyncMock(return_value=[
+        repo.list_conversations_enriched = AsyncMock(return_value=[
             {"id": "conv_a", "channel": "chat",
              "created_at": "2026-03-19T09:00:00+00:00",
-             "updated_at": "2026-03-19T10:00:00+00:00"},
+             "updated_at": "2026-03-19T10:00:00+00:00",
+             "message_count": 6, "specialist_domains": ["finance"]},
             {"id": "conv_b", "channel": "email",
              "created_at": "2026-03-19T08:00:00+00:00",
-             "updated_at": "2026-03-19T09:30:00+00:00"},
+             "updated_at": "2026-03-19T09:30:00+00:00",
+             "message_count": 2, "specialist_domains": []},
         ])
         client = TestClient(_app(repo))
         tok = create_token("cust_list")
@@ -181,8 +183,9 @@ class TestListConversations:
         assert len(body["conversations"]) == 2
         assert body["conversations"][0]["id"] == "conv_a"
 
-        repo.list_conversations.assert_awaited_once()
-        assert repo.list_conversations.await_args.kwargs["customer_id"] == "cust_list"
+        repo.list_conversations_enriched.assert_awaited_once()
+        kw = repo.list_conversations_enriched.await_args.kwargs
+        assert kw["customer_id"] == "cust_list"
 
     def test_list_requires_auth(self):
         client = TestClient(_app())
@@ -191,7 +194,7 @@ class TestListConversations:
 
     def test_list_pagination_params(self):
         repo = AsyncMock()
-        repo.list_conversations = AsyncMock(return_value=[])
+        repo.list_conversations_enriched = AsyncMock(return_value=[])
         client = TestClient(_app(repo))
         tok = create_token("cust_list")
 
@@ -200,6 +203,51 @@ class TestListConversations:
             headers={"Authorization": f"Bearer {tok}"},
         )
 
-        kwargs = repo.list_conversations.await_args.kwargs
+        kwargs = repo.list_conversations_enriched.await_args.kwargs
         assert kwargs["limit"] == 10
         assert kwargs["offset"] == 20
+
+    def test_list_includes_message_count_and_domains(self):
+        """The dashboard fields — this is the whole point of WS6."""
+        repo = AsyncMock()
+        repo.list_conversations_enriched = AsyncMock(return_value=[
+            {"id": "conv_x", "channel": "chat",
+             "created_at": "2026-03-19T09:00:00+00:00",
+             "updated_at": "2026-03-19T10:00:00+00:00",
+             "message_count": 12,
+             "specialist_domains": ["finance", "scheduling"]},
+        ])
+        client = TestClient(_app(repo))
+        tok = create_token("cust_list")
+
+        resp = client.get(
+            "/v1/conversations",
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+        assert resp.status_code == 200
+        c = resp.json()["conversations"][0]
+        assert c["message_count"] == 12
+        assert set(c["specialist_domains"]) == {"finance", "scheduling"}
+
+    def test_list_tolerates_repo_rows_without_new_fields(self):
+        """Schema defaults — a repo that hasn't been updated (or a test
+        mock predating this feature) returns old-shape dicts. The
+        response model fills message_count=0, specialist_domains=[]
+        rather than 500-ing on pydantic validation."""
+        repo = AsyncMock()
+        repo.list_conversations_enriched = AsyncMock(return_value=[
+            {"id": "conv_old", "channel": "chat",
+             "created_at": "2026-03-19T09:00:00+00:00",
+             "updated_at": "2026-03-19T10:00:00+00:00"},
+        ])
+        client = TestClient(_app(repo))
+        tok = create_token("cust_list")
+
+        resp = client.get(
+            "/v1/conversations",
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+        assert resp.status_code == 200
+        c = resp.json()["conversations"][0]
+        assert c["message_count"] == 0
+        assert c["specialist_domains"] == []

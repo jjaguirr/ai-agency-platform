@@ -22,8 +22,8 @@ from .errors import (
 )
 from .middleware import CorrelationMiddleware, install_correlation_logging
 from .routes import (
-    audit, auth_login, conversations, health, history, notifications,
-    provisioning, settings, webhooks, workflows,
+    analytics, audit, auth_login, conversations, health, history,
+    notifications, provisioning, settings, webhooks, workflows,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,7 @@ def create_app(
     proactive_state_store: Any = None,
     safety_pipeline: Optional[Any] = None,
     safety_config: Optional[Any] = None,
+    n8n_client: Optional[Any] = None,
 ) -> FastAPI:
     """
     Build the API with all dependencies injected.
@@ -79,6 +80,10 @@ def create_app(
     # safety_config is separate: it gates the rate-limit middleware
     # below, which is an independent concern from input/output scanning.
     app.state.safety_pipeline = safety_pipeline
+    # Optional — when present, GET /v1/settings probes list_workflows()
+    # to report live connected_services.n8n instead of the stored bool.
+    # The analytics specialist-status endpoint reuses this same client.
+    app.state.n8n_client = n8n_client
 
     # Structured error handling. All paths converge on {type, detail}.
     # Order: specific-first so the Exception catch-all doesn't shadow
@@ -118,6 +123,7 @@ def create_app(
     app.include_router(settings.router)
     app.include_router(workflows.router)
     app.include_router(audit.router)
+    app.include_router(analytics.router)
 
     # Dashboard static assets at / — mounted AFTER routers so /v1/*
     # resolves to API handlers before StaticFiles' catch-all kicks in.
@@ -201,9 +207,23 @@ def create_default_app() -> FastAPI:  # pragma: no cover
         # NEEDS_CONFIRMATION lifecycle events land in the same
         # Redis trail as the pipeline's injection/redaction events.
         ea.audit_logger = audit_logger
+        # The EA's own memory client is on db=hash(customer_id)%16.
+        # Personality settings live in db 0, so hand it the shared client.
+        ea.settings_redis = redis_client
         return ea
 
     ea_registry = EARegistry(factory=_ea_factory, max_size=ea_max)
+
+    # --- n8n client (optional) ---
+    # Built from env if configured; absent otherwise. N8N_BASE_URL without
+    # N8N_API_KEY is a misconfiguration — let it be None and the probe skips.
+    n8n_url = _os.environ.get("N8N_BASE_URL")
+    n8n_key = _os.environ.get("N8N_API_KEY")
+    if n8n_url and n8n_key:
+        from src.workflows.client import N8nClient
+        n8n_client = N8nClient(n8n_url, n8n_key)
+    else:
+        n8n_client = None
 
     # --- WhatsApp manager ---
     wa_manager = WhatsAppManager()
@@ -282,5 +302,6 @@ def create_default_app() -> FastAPI:  # pragma: no cover
         proactive_state_store=proactive_store,
         safety_pipeline=safety_pipeline,
         safety_config=safety_cfg,
+        n8n_client=n8n_client,
         lifespan=lifespan,
     )

@@ -25,7 +25,7 @@ import pytest_asyncio
 asyncpg = pytest.importorskip("asyncpg")
 
 REPO_ROOT = Path(__file__).parents[2]
-MIGRATION = REPO_ROOT / "src" / "database" / "migrations" / "001_conversations.sql"
+MIGRATIONS_DIR = REPO_ROOT / "src" / "database" / "migrations"
 
 
 def _dsn() -> str:
@@ -39,10 +39,11 @@ def _dsn() -> str:
     return f"postgresql://{user}:{pw}@{host}:{port}/{db}"
 
 
-# Migration is idempotent so re-applying per-test is harmless; cheaper
+# Migrations are idempotent so re-applying per-test is harmless; cheaper
 # than fighting pytest-asyncio's event-loop-scope rules for a handful
-# of integration tests.
-_MIGRATION_SQL = MIGRATION.read_text()
+# of integration tests. Sorted glob so 001 runs before 002 — file naming
+# is the ordering contract.
+_MIGRATION_SQL = [p.read_text() for p in sorted(MIGRATIONS_DIR.glob("*.sql"))]
 
 
 @pytest_asyncio.fixture
@@ -53,7 +54,7 @@ async def pool():
     except (OSError, asyncpg.PostgresError) as e:
         pytest.skip(f"Postgres unavailable at {dsn!r}: {e}")
 
-    # Apply migration. schema_migrations may not exist in a bare test DB,
+    # Apply migrations. schema_migrations may not exist in a bare test DB,
     # so ensure it's present first (idempotent CREATE).
     async with p.acquire() as conn:
         await conn.execute(
@@ -62,7 +63,8 @@ async def pool():
             "  description TEXT,"
             "  applied_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP)"
         )
-        await conn.execute(_MIGRATION_SQL)
+        for sql in _MIGRATION_SQL:
+            await conn.execute(sql)
 
     yield p
     await p.close()
@@ -527,3 +529,164 @@ class TestSchemaCheck:
             async with pool.acquire() as conn:
                 await conn.execute(
                     "ALTER TABLE conversations_hidden RENAME TO conversations")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# specialist_domain tagging + enriched conversation list (migration 002)
+# ─────────────────────────────────────────────────────────────────────────────
+# The conversations route tags assistant messages with which specialist
+# handled the turn. The dashboard's conversation list aggregates these
+# into per-conversation domain sets + message counts.
+
+class TestSpecialistDomain:
+    async def test_append_with_specialist_domain_round_trips(
+            self, repo, pool, cust, conv):
+        cid = conv()
+        await repo.create_conversation(
+            customer_id=cust, conversation_id=cid, channel="chat")
+        await repo.append_message(
+            customer_id=cust, conversation_id=cid,
+            role="assistant", content="Your balance is $1000",
+            specialist_domain="finance",
+        )
+
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT specialist_domain FROM messages "
+                "WHERE conversation_id = $1", cid,
+            )
+        assert row["specialist_domain"] == "finance"
+
+    async def test_append_without_specialist_domain_stores_null(
+            self, repo, pool, cust, conv):
+        """Default behaviour — user messages and general-assistance
+        replies pass no domain. Existing call sites don't change."""
+        cid = conv()
+        await repo.create_conversation(
+            customer_id=cust, conversation_id=cid, channel="chat")
+        await repo.append_message(
+            customer_id=cust, conversation_id=cid,
+            role="user", content="hello",
+        )
+
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT specialist_domain FROM messages "
+                "WHERE conversation_id = $1", cid,
+            )
+        assert row["specialist_domain"] is None
+
+
+class TestListConversationsEnriched:
+    async def test_returns_message_count_and_distinct_domains(
+            self, repo, cust, conv):
+        cid = conv()
+        await repo.create_conversation(
+            customer_id=cust, conversation_id=cid, channel="chat")
+        # Two finance turns, one scheduling, one untagged user message.
+        await repo.append_message(
+            customer_id=cust, conversation_id=cid,
+            role="user", content="check my accounts")
+        await repo.append_message(
+            customer_id=cust, conversation_id=cid,
+            role="assistant", content="...", specialist_domain="finance")
+        await repo.append_message(
+            customer_id=cust, conversation_id=cid,
+            role="assistant", content="...", specialist_domain="finance")
+        await repo.append_message(
+            customer_id=cust, conversation_id=cid,
+            role="assistant", content="...", specialist_domain="scheduling")
+
+        rows = await repo.list_conversations_enriched(
+            customer_id=cust, limit=10, offset=0)
+
+        assert len(rows) == 1
+        r = rows[0]
+        assert r["id"] == cid
+        assert r["message_count"] == 4
+        # DISTINCT — finance appears once despite two messages.
+        # NULL from the user message is filtered out.
+        assert set(r["specialist_domains"]) == {"finance", "scheduling"}
+
+    async def test_empty_conversation_reports_zero_and_empty_list(
+            self, repo, cust, conv):
+        """No messages → count 0, domains []. Not NULL, not a
+        single-element [None] — the LATERAL join's COALESCE handles this."""
+        cid = conv()
+        await repo.create_conversation(
+            customer_id=cust, conversation_id=cid, channel="chat")
+
+        rows = await repo.list_conversations_enriched(
+            customer_id=cust, limit=10, offset=0)
+
+        assert len(rows) == 1
+        assert rows[0]["message_count"] == 0
+        assert rows[0]["specialist_domains"] == []
+
+    async def test_all_null_domains_yields_empty_list(
+            self, repo, cust, conv):
+        """Conversation with only general-assistance replies — no
+        specialist ever engaged. domains must be [], not [None]."""
+        cid = conv()
+        await repo.create_conversation(
+            customer_id=cust, conversation_id=cid, channel="chat")
+        await repo.append_message(
+            customer_id=cust, conversation_id=cid,
+            role="user", content="hi")
+        await repo.append_message(
+            customer_id=cust, conversation_id=cid,
+            role="assistant", content="hello")
+
+        rows = await repo.list_conversations_enriched(
+            customer_id=cust, limit=10, offset=0)
+
+        assert rows[0]["message_count"] == 2
+        assert rows[0]["specialist_domains"] == []
+
+    async def test_tenant_isolation(self, repo, pool, cust, conv):
+        """Customer A's enriched list doesn't include B's conversations."""
+        other = f"test_conv_other_{uuid.uuid4().hex[:12]}"
+        cid_a = conv("mine")
+        cid_b = conv("theirs")
+        try:
+            await repo.create_conversation(
+                customer_id=cust, conversation_id=cid_a, channel="chat")
+            await repo.create_conversation(
+                customer_id=other, conversation_id=cid_b, channel="chat")
+            await repo.append_message(
+                customer_id=other, conversation_id=cid_b,
+                role="assistant", content="x", specialist_domain="finance")
+
+            rows = await repo.list_conversations_enriched(
+                customer_id=cust, limit=10, offset=0)
+
+            ids = {r["id"] for r in rows}
+            assert cid_a in ids
+            assert cid_b not in ids
+        finally:
+            async with pool.acquire() as c:
+                await c.execute(
+                    "DELETE FROM conversations WHERE customer_id = $1", other)
+
+    async def test_ordered_by_updated_at_desc(self, repo, cust, conv):
+        """Same ordering contract as list_conversations — most-recent first.
+        append_message bumps updated_at, so the conversation we touch
+        last sorts first."""
+        cid_old = conv("old")
+        cid_new = conv("new")
+        await repo.create_conversation(
+            customer_id=cust, conversation_id=cid_old, channel="chat")
+        await repo.create_conversation(
+            customer_id=cust, conversation_id=cid_new, channel="chat")
+        # Touch cid_old last → it should sort first.
+        await repo.append_message(
+            customer_id=cust, conversation_id=cid_new,
+            role="user", content="first")
+        await repo.append_message(
+            customer_id=cust, conversation_id=cid_old,
+            role="user", content="second")
+
+        rows = await repo.list_conversations_enriched(
+            customer_id=cust, limit=10, offset=0)
+
+        assert [r["id"] for r in rows] == [cid_old, cid_new]

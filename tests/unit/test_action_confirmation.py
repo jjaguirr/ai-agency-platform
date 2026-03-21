@@ -605,3 +605,121 @@ class TestConfirmationAudit:
         # Must not raise.
         out = await ea._delegate_to_specialist(state)
         assert out.active_delegation is not None
+
+    @pytest.mark.asyncio
+    async def test_confirmation_affirmed_fires_confirmed_event(self, ea):
+        """Customer says yes → specialist executes → CONFIRMED lands in audit.
+
+        REQUESTED and DECLINED cover the ask and the abort; this closes the
+        triangle. Fires *after* the specialist returns COMPLETED so the event
+        means "the thing happened", not "the customer said yes but then the
+        specialist blew up".
+        """
+        audit = AsyncMock()
+        ea.audit_logger = audit
+
+        spec = _confirmation_specialist()
+        ea.delegation_registry = DelegationRegistry()
+        ea.delegation_registry.register(spec)
+
+        state = _state("yes", active_delegation={
+            "domain": "scheduling",
+            "original_task": "cancel the Acme meeting",
+            "prior_turns": [{"role": "specialist", "content": "Confirm cancel?"}],
+            "pending_action": {"event_id": "evt_1", "title": "Acme review"},
+        })
+
+        await ea._delegate_to_specialist(state)
+
+        audit.log.assert_awaited()
+        event = audit.log.await_args.args[1]
+        from src.safety.models import AuditEventType
+        assert event.event_type == AuditEventType.HIGH_RISK_ACTION_CONFIRMED
+        assert event.details["domain"] == "scheduling"
+
+    @pytest.mark.asyncio
+    async def test_confirmed_event_carries_action_and_outcome(self, ea):
+        """Details: what was confirmed + what the specialist actually did."""
+        audit = AsyncMock()
+        ea.audit_logger = audit
+
+        on_confirm = SpecialistResult(
+            status=SpecialistStatus.COMPLETED, domain="scheduling",
+            payload={"cancelled_id": "evt_1", "title": "Acme review"},
+            confidence=0.9, summary_for_ea="Cancelled.",
+            action_risk=ActionRisk.HIGH,
+        )
+        spec = _confirmation_specialist(on_confirm=on_confirm)
+        ea.delegation_registry = DelegationRegistry()
+        ea.delegation_registry.register(spec)
+
+        state = _state("confirm", active_delegation={
+            "domain": "scheduling", "original_task": "cancel Acme",
+            "prior_turns": [{"role": "specialist", "content": "Sure?"}],
+            "pending_action": {"event_id": "evt_1", "title": "Acme review"},
+        })
+
+        await ea._delegate_to_specialist(state)
+
+        event = audit.log.await_args.args[1]
+        details = event.details
+        # The original pending payload (what was about to happen).
+        assert details["pending_action"]["event_id"] == "evt_1"
+        # The specialist's result payload (what actually happened).
+        assert details["outcome"]["cancelled_id"] == "evt_1"
+
+    @pytest.mark.asyncio
+    async def test_fresh_completion_without_confirmation_fires_nothing(self, ea):
+        """A specialist that completes on turn 1 (no confirmation gate)
+        must NOT fire CONFIRMED — that event specifically means a customer
+        affirmatively approved a high-risk action."""
+        audit = AsyncMock()
+        ea.audit_logger = audit
+
+        spec = MagicMock(spec=SpecialistAgent)
+        spec.domain = "finance"
+        spec.assess_task.return_value = TaskAssessment(confidence=0.9)
+        spec.execute_task = AsyncMock(return_value=SpecialistResult(
+            status=SpecialistStatus.COMPLETED, domain="finance",
+            payload={"balance": 1000}, confidence=0.9,
+            summary_for_ea="Balance is $1000.",
+        ))
+        ea.delegation_registry = DelegationRegistry()
+        ea.delegation_registry.register(spec)
+
+        state = _state("what's my balance")
+        state.delegation_target = "finance"
+
+        await ea._delegate_to_specialist(state)
+
+        audit.log.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_specialist_failure_after_yes_fires_nothing(self, ea):
+        """Customer confirms but specialist fails → CONFIRMED must not fire.
+        The action didn't happen."""
+        audit = AsyncMock()
+        ea.audit_logger = audit
+
+        spec = MagicMock(spec=SpecialistAgent)
+        spec.domain = "scheduling"
+        spec.assess_task.return_value = TaskAssessment(confidence=0.9)
+        spec.execute_task = AsyncMock(return_value=SpecialistResult(
+            status=SpecialistStatus.FAILED, domain="scheduling",
+            payload={}, confidence=0.0, error="calendar API down",
+        ))
+        ea.delegation_registry = DelegationRegistry()
+        ea.delegation_registry.register(spec)
+
+        # Patch the fallback so we don't recurse into general_assistance.
+        ea._handle_general_assistance = AsyncMock(side_effect=lambda s: s)
+
+        state = _state("yes", active_delegation={
+            "domain": "scheduling", "original_task": "cancel X",
+            "prior_turns": [{"role": "specialist", "content": "Sure?"}],
+            "pending_action": {"event_id": "e"},
+        })
+
+        await ea._delegate_to_specialist(state)
+
+        audit.log.assert_not_awaited()

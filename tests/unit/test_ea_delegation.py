@@ -401,3 +401,128 @@ class TestRoutingGate:
         match = ea.delegation_registry.route(state.messages[-1].content, state.business_context)
         assert match is not None
         assert match.specialist.domain == "social_media"
+
+
+# --- last_specialist_domain: surfaced for persistence layer -----------------
+# The conversations route needs to know which specialist handled a turn
+# so it can tag the stored assistant message. The EA can't return it
+# (handle_customer_interaction → str is a frozen contract) so it's
+# exposed as a post-call instance attribute, reset per interaction.
+
+class TestLastSpecialistDomain:
+    def test_defaults_to_none_at_construction(self, ea):
+        """Fresh EA, never delegated → None. Mirrors audit_logger/
+        settings_redis injection pattern."""
+        assert ea.last_specialist_domain is None
+
+    @pytest.mark.asyncio
+    async def test_set_on_completed(self, ea, state):
+        spec = _make_specialist(domain="social_media")
+        ea.delegation_registry = DelegationRegistry()
+        ea.delegation_registry.register(spec)
+        state.delegation_target = "social_media"
+
+        await ea._delegate_to_specialist(state)
+
+        assert ea.last_specialist_domain == "social_media"
+
+    @pytest.mark.asyncio
+    async def test_set_on_needs_clarification(self, ea, state):
+        """Mid-flight delegation still counts — the specialist engaged,
+        the assistant message is the specialist's question. Dashboard
+        should show this conversation touched that domain."""
+        spec = _make_specialist(
+            domain="scheduling",
+            result=SpecialistResult(
+                status=SpecialistStatus.NEEDS_CLARIFICATION,
+                domain="scheduling",
+                payload={},
+                confidence=0.7,
+                summary_for_ea="",
+                clarification_question="Which calendar?",
+            ),
+        )
+        ea.delegation_registry = DelegationRegistry()
+        ea.delegation_registry.register(spec)
+        state.delegation_target = "scheduling"
+
+        await ea._delegate_to_specialist(state)
+
+        assert ea.last_specialist_domain == "scheduling"
+
+    @pytest.mark.asyncio
+    async def test_set_on_needs_confirmation(self, ea, state):
+        spec = _make_specialist(
+            domain="finance",
+            result=SpecialistResult(
+                status=SpecialistStatus.NEEDS_CONFIRMATION,
+                domain="finance",
+                payload={"action": "transfer", "amount": 5000},
+                confidence=0.9,
+                summary_for_ea="",
+                confirmation_prompt="Transfer $5000?",
+            ),
+        )
+        ea.delegation_registry = DelegationRegistry()
+        ea.delegation_registry.register(spec)
+        state.delegation_target = "finance"
+
+        await ea._delegate_to_specialist(state)
+
+        assert ea.last_specialist_domain == "finance"
+
+    @pytest.mark.asyncio
+    async def test_none_on_failed_fallback(self, ea, state):
+        """FAILED → EA handles via general_assistance. The specialist
+        didn't produce the response, so don't tag it."""
+        spec = _make_specialist(
+            domain="social_media",
+            result=SpecialistResult(
+                status=SpecialistStatus.FAILED,
+                domain="social_media",
+                payload={},
+                confidence=0.0,
+                summary_for_ea="",
+                error="API timeout",
+            ),
+        )
+        ea.delegation_registry = DelegationRegistry()
+        ea.delegation_registry.register(spec)
+        state.delegation_target = "social_media"
+
+        await ea._delegate_to_specialist(state)
+
+        assert ea.last_specialist_domain is None
+
+    @pytest.mark.asyncio
+    async def test_none_when_no_specialist_registered(self, ea, state):
+        """Target domain not in registry → general_assistance fallback."""
+        ea.delegation_registry = DelegationRegistry()  # empty
+        state.delegation_target = "nonexistent"
+
+        await ea._delegate_to_specialist(state)
+
+        assert ea.last_specialist_domain is None
+
+    @pytest.mark.asyncio
+    async def test_reset_at_top_of_each_interaction(self, ea):
+        """Stale domain from the previous turn must not leak. If this
+        turn goes to general_assistance, the stored message should be
+        tagged None, not whatever the last turn's specialist was.
+
+        Safe under the one-EA-per-customer contract: WhatsApp/chat
+        serialise turns, so there's no concurrent interaction racing
+        the reset.
+        """
+        from src.agents.executive_assistant import ConversationChannel
+
+        ea.last_specialist_domain = "finance"  # leftover from a prior turn
+        ea.graph.ainvoke = AsyncMock(return_value={
+            "messages": [MagicMock(content="general reply")],
+        })
+
+        await ea.handle_customer_interaction(
+            message="hi", channel=ConversationChannel.CHAT, conversation_id="c1",
+        )
+
+        assert ea.last_specialist_domain is None

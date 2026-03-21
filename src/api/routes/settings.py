@@ -11,6 +11,7 @@ those consumers is out of scope here; this route only owns storage.
 PUT is whole-document replace, not PATCH. The dashboard always submits
 the full form so partial updates aren't needed yet.
 """
+import asyncio
 import json
 import logging
 
@@ -33,12 +34,31 @@ async def get_settings(
     redis = request.app.state.redis_client
     raw = await redis.get(_REDIS_KEY.format(customer_id=customer_id))
     if raw is None:
-        return Settings()
-    if isinstance(raw, bytes):
-        raw = raw.decode("utf-8")
-    # model_validate tolerates extra keys we've since removed and fills
-    # defaults for keys we've since added — forward-compatible storage.
-    return Settings.model_validate(json.loads(raw))
+        settings = Settings()
+    else:
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        # model_validate tolerates extra keys we've since removed and fills
+        # defaults for keys we've since added — forward-compatible storage.
+        settings = Settings.model_validate(json.loads(raw))
+
+    # Live n8n probe. The stored bool is whatever the customer last PUT,
+    # which means nothing — override with reality when a client is wired.
+    # No client → stored value passes through (tests that assert exact
+    # PUT/GET roundtrip rely on this). Calendar stays stored; there's no
+    # calendar integration to probe yet.
+    n8n = getattr(request.app.state, "n8n_client", None)
+    if n8n is not None:
+        try:
+            await asyncio.wait_for(n8n.list_workflows(), timeout=2.0)
+            settings.connected_services.n8n = True
+        except Exception as e:
+            # TimeoutError, N8nError, N8nAuthError, anything — this is a
+            # dashboard landing page, it doesn't get to 500 over n8n.
+            logger.debug("n8n health probe failed for %s: %s", customer_id, e)
+            settings.connected_services.n8n = False
+
+    return settings
 
 
 @router.put("", response_model=Settings)

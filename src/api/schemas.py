@@ -77,6 +77,11 @@ class ConversationSummary(BaseModel):
     channel: str
     created_at: str
     updated_at: str
+    # Dashboard enrichment — populated by list_conversations_enriched's
+    # LATERAL aggregation. Defaults keep old-shape repo dicts (and test
+    # mocks predating this feature) validating cleanly.
+    message_count: int = 0
+    specialist_domains: list[str] = Field(default_factory=list)
 
 
 class ConversationListResponse(BaseModel):
@@ -183,3 +188,25 @@ class AuditEventResponse(BaseModel):
 
 class AuditListResponse(BaseModel):
     events: list[AuditEventResponse]
+
+
+# --- Analytics ---------------------------------------------------------------
+
+class ActivitySummary(BaseModel):
+    date: str
+    messages_processed: int
+    delegations_by_domain: dict[str, int]
+    proactive_triggers_sent: int
+
+
+class SpecialistStatus(BaseModel):
+    domain: str
+    registered: bool
+    operational: bool
+    # Why not operational — n8n error text, "not configured", etc.
+    # None when operational=True.
+    detail: Optional[str] = None
+
+
+class SpecialistStatusResponse(BaseModel):
+    specialists: list[SpecialistStatus]
