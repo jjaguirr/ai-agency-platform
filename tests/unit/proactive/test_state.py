@@ -111,29 +111,137 @@ class TestDailyCount:
         assert await store.get_daily_count(CID) == 2
 
 
-class TestPendingNotifications:
+def _notif(nid: str, **extra) -> dict:
+    base = {
+        "id": nid, "domain": "ea", "trigger_type": "test",
+        "priority": "MEDIUM", "title": "t", "message": "m",
+        "created_at": "2026-03-19T08:00:00+00:00",
+    }
+    base.update(extra)
+    return base
+
+
+_NOW = datetime(2026, 3, 19, 10, 0, tzinfo=timezone.utc)
+
+
+class TestNotificationLifecycle:
+    """V2: notifications are a hash with per-item status. GET is
+    non-destructive — the customer explicitly marks read/snoozed/dismissed.
+    pop_pending_notifications is gone."""
+
     async def test_empty_initially(self, store):
-        assert await store.pop_pending_notifications(CID) == []
+        assert await store.list_pending_notifications(CID, now=_NOW) == []
 
-    async def test_add_and_pop(self, store):
-        notif = {"id": "n_1", "message": "Good morning!", "priority": "MEDIUM"}
-        await store.add_pending_notification(CID, notif)
-        result = await store.pop_pending_notifications(CID)
+    async def test_add_shows_as_pending(self, store):
+        await store.add_pending_notification(CID, _notif("n_1", message="Hi"))
+        result = await store.list_pending_notifications(CID, now=_NOW)
         assert len(result) == 1
-        assert result[0]["message"] == "Good morning!"
+        assert result[0]["id"] == "n_1"
+        assert result[0]["message"] == "Hi"
+        assert result[0]["status"] == "pending"
 
-    async def test_pop_clears_notifications(self, store):
-        await store.add_pending_notification(CID, {"id": "n_1", "message": "Hello"})
-        await store.pop_pending_notifications(CID)
-        assert await store.pop_pending_notifications(CID) == []
+    async def test_list_is_non_destructive(self, store):
+        await store.add_pending_notification(CID, _notif("n_1"))
+        first = await store.list_pending_notifications(CID, now=_NOW)
+        second = await store.list_pending_notifications(CID, now=_NOW)
+        assert len(first) == 1
+        assert len(second) == 1
 
-    async def test_multiple_notifications_preserved_order(self, store):
-        await store.add_pending_notification(CID, {"id": "n_1", "message": "First"})
-        await store.add_pending_notification(CID, {"id": "n_2", "message": "Second"})
-        result = await store.pop_pending_notifications(CID)
-        assert len(result) == 2
-        assert result[0]["message"] == "First"
-        assert result[1]["message"] == "Second"
+    async def test_add_without_id_generates_one(self, store):
+        """DefaultOutboundDispatcher used id(trigger) which is useless
+        across processes. Store owns ID generation now."""
+        await store.add_pending_notification(CID, {
+            "domain": "ea", "trigger_type": "t", "priority": "LOW",
+            "title": "x", "message": "y", "created_at": "2026-03-19T00:00:00+00:00",
+        })
+        result = await store.list_pending_notifications(CID, now=_NOW)
+        assert len(result) == 1
+        assert result[0]["id"]  # non-empty
+
+    # --- Read ---------------------------------------------------------------
+
+    async def test_mark_read_excludes_from_pending(self, store):
+        await store.add_pending_notification(CID, _notif("n_1"))
+        ok = await store.mark_notification_read(CID, "n_1")
+        assert ok is True
+        assert await store.list_pending_notifications(CID, now=_NOW) == []
+
+    async def test_mark_read_nonexistent_returns_false(self, store):
+        ok = await store.mark_notification_read(CID, "n_ghost")
+        assert ok is False
+
+    async def test_mark_read_wrong_customer_returns_false(self, store):
+        await store.add_pending_notification(CID, _notif("n_1"))
+        ok = await store.mark_notification_read(CID_OTHER, "n_1")
+        assert ok is False
+        # Original customer still sees it.
+        assert len(await store.list_pending_notifications(CID, now=_NOW)) == 1
+
+    # --- Snooze -------------------------------------------------------------
+
+    async def test_snooze_hides_until_deadline(self, store):
+        await store.add_pending_notification(CID, _notif("n_1"))
+        until = _NOW + timedelta(hours=1)
+        ok = await store.snooze_notification(CID, "n_1", until)
+        assert ok is True
+        # Before snooze deadline → hidden.
+        assert await store.list_pending_notifications(CID, now=_NOW) == []
+
+    async def test_snooze_reappears_after_deadline(self, store):
+        await store.add_pending_notification(CID, _notif("n_1"))
+        until = _NOW + timedelta(hours=1)
+        await store.snooze_notification(CID, "n_1", until)
+
+        later = _NOW + timedelta(hours=2)
+        result = await store.list_pending_notifications(CID, now=later)
+        assert len(result) == 1
+        assert result[0]["id"] == "n_1"
+        assert result[0]["status"] == "snoozed"
+
+    async def test_snooze_nonexistent_returns_false(self, store):
+        ok = await store.snooze_notification(
+            CID, "n_ghost", _NOW + timedelta(hours=1),
+        )
+        assert ok is False
+
+    # --- Dismiss ------------------------------------------------------------
+
+    async def test_dismiss_removes_permanently(self, store):
+        await store.add_pending_notification(CID, _notif("n_1"))
+        ok = await store.dismiss_notification(CID, "n_1")
+        assert ok is True
+        assert await store.list_pending_notifications(CID, now=_NOW) == []
+        # Still gone far in the future — no snooze-style reappearance.
+        much_later = _NOW + timedelta(days=365)
+        assert await store.list_pending_notifications(CID, now=much_later) == []
+
+    async def test_dismiss_nonexistent_returns_false(self, store):
+        assert await store.dismiss_notification(CID, "n_ghost") is False
+
+    async def test_dismiss_isolated_per_customer(self, store):
+        await store.add_pending_notification(CID, _notif("n_1"))
+        await store.add_pending_notification(CID_OTHER, _notif("n_1"))
+        await store.dismiss_notification(CID, "n_1")
+        # Other customer's n_1 untouched.
+        assert len(await store.list_pending_notifications(CID_OTHER, now=_NOW)) == 1
+
+    # --- Mixed state --------------------------------------------------------
+
+    async def test_mixed_statuses_filter_correctly(self, store):
+        await store.add_pending_notification(CID, _notif("n_pending"))
+        await store.add_pending_notification(CID, _notif("n_read"))
+        await store.add_pending_notification(CID, _notif("n_snoozed"))
+        await store.add_pending_notification(CID, _notif("n_dismissed"))
+
+        await store.mark_notification_read(CID, "n_read")
+        await store.snooze_notification(
+            CID, "n_snoozed", _NOW + timedelta(hours=1),
+        )
+        await store.dismiss_notification(CID, "n_dismissed")
+
+        result = await store.list_pending_notifications(CID, now=_NOW)
+        ids = {n["id"] for n in result}
+        assert ids == {"n_pending"}
 
 
 class TestKeyPrefixAndIsolation:
@@ -158,3 +266,81 @@ class TestKeyPrefixAndIsolation:
         assert len(follow_ups) == 1
         briefing_time = await store2.get_last_briefing_time(CID)
         assert briefing_time is not None
+
+
+# --- V2: Domain event staging ------------------------------------------------
+
+class TestDomainEvents:
+    """Specialists stage events at detection time; heartbeat drains on tick."""
+
+    async def test_add_then_drain_roundtrip(self, store):
+        await store.add_domain_event(CID, {
+            "type": "finance_anomaly", "amount": 500.0, "baseline": 100.0,
+        })
+        events = await store.drain_domain_events(CID)
+        assert len(events) == 1
+        assert events[0]["type"] == "finance_anomaly"
+        assert events[0]["amount"] == 500.0
+
+    async def test_drain_is_destructive(self, store):
+        await store.add_domain_event(CID, {"type": "x"})
+        await store.drain_domain_events(CID)
+        assert await store.drain_domain_events(CID) == []
+
+    async def test_drain_empty_is_empty_list(self, store):
+        assert await store.drain_domain_events(CID) == []
+
+    async def test_preserves_fifo_order(self, store):
+        await store.add_domain_event(CID, {"type": "a"})
+        await store.add_domain_event(CID, {"type": "b"})
+        await store.add_domain_event(CID, {"type": "c"})
+        events = await store.drain_domain_events(CID)
+        assert [e["type"] for e in events] == ["a", "b", "c"]
+
+    async def test_isolated_per_customer(self, store):
+        await store.add_domain_event(CID, {"type": "mine"})
+        await store.add_domain_event(CID_OTHER, {"type": "theirs"})
+        mine = await store.drain_domain_events(CID)
+        theirs = await store.drain_domain_events(CID_OTHER)
+        assert [e["type"] for e in mine] == ["mine"]
+        assert [e["type"] for e in theirs] == ["theirs"]
+
+
+# --- V2: Transaction baseline ------------------------------------------------
+
+class TestTransactionBaseline:
+    """Running average for finance anomaly detection. Simple count/sum —
+    no decay, no outlier rejection. Fancy enough for 'is this 2× normal?'."""
+
+    async def test_no_transactions_no_baseline(self, store):
+        assert await store.get_transaction_baseline(CID) is None
+
+    async def test_below_min_samples_no_baseline(self, store):
+        # Fewer than 3 samples → None. Avoids noisy early triggers when
+        # a customer's first transaction happens to be large.
+        await store.record_transaction(CID, 100.0)
+        await store.record_transaction(CID, 200.0)
+        assert await store.get_transaction_baseline(CID) is None
+
+    async def test_baseline_is_mean(self, store):
+        await store.record_transaction(CID, 100.0)
+        await store.record_transaction(CID, 200.0)
+        await store.record_transaction(CID, 300.0)
+        baseline = await store.get_transaction_baseline(CID)
+        assert baseline == pytest.approx(200.0)
+
+    async def test_baseline_updates_incrementally(self, store):
+        for _ in range(3):
+            await store.record_transaction(CID, 100.0)
+        assert await store.get_transaction_baseline(CID) == pytest.approx(100.0)
+        await store.record_transaction(CID, 500.0)
+        # (300 + 500) / 4 = 200
+        assert await store.get_transaction_baseline(CID) == pytest.approx(200.0)
+
+    async def test_isolated_per_customer(self, store):
+        for _ in range(3):
+            await store.record_transaction(CID, 100.0)
+        for _ in range(3):
+            await store.record_transaction(CID_OTHER, 1000.0)
+        assert await store.get_transaction_baseline(CID) == pytest.approx(100.0)
+        assert await store.get_transaction_baseline(CID_OTHER) == pytest.approx(1000.0)

@@ -3,4 +3,4 @@
 # Usage: claude-dev [any claude args...]
 export CLAUDE_DEV_LAUNCHER=1
 touch "$(pwd)/.claude_dev_active"
-exec claude --enable-auto-mode "$@"
+exec claude --enable-auto-mode --permission-mode auto "$@"

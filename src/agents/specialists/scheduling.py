@@ -34,6 +34,7 @@ from src.agents.base.specialist import (
 
 if TYPE_CHECKING:
     from src.agents.executive_assistant import BusinessContext
+    from src.proactive.state import ProactiveStateStore
 
 logger = logging.getLogger(__name__)
 
@@ -195,9 +196,12 @@ class SchedulingSpecialist(SpecialistAgent):
         self,
         calendar: Optional[CalendarClient] = None,
         clock: Optional[Callable[[], datetime]] = None,
+        *,
+        proactive_state: Optional["ProactiveStateStore"] = None,
     ):
         self._calendar = calendar
         self._clock = clock or datetime.now
+        self._proactive = proactive_state
 
     @property
     def domain(self) -> str:
@@ -366,11 +370,20 @@ class SchedulingSpecialist(SpecialistAgent):
         duration = self._parse_duration(text) or timedelta(minutes=60)
         attendees = self._parse_attendees(corpus)
         title = self._derive_title(corpus, attendees)
+        end = when + duration
+
+        # Proactive side channel — check before creating so the conflict
+        # list doesn't include the event we're about to add. FYI only:
+        # the booking goes ahead regardless.
+        if self._proactive is not None:
+            await self._maybe_stage_conflict(
+                task.customer_id, title, when, end,
+            )
 
         evt = await self._calendar.create_event(
             title=title,
             start=when,
-            end=when + duration,
+            end=end,
             attendees=attendees,
         )
 
@@ -390,6 +403,32 @@ class SchedulingSpecialist(SpecialistAgent):
                 f"for {int(duration.total_seconds() // 60)}m."
             ),
         )
+
+    async def _maybe_stage_conflict(
+        self, customer_id: str, title: str, start: datetime, end: datetime,
+    ) -> None:
+        # Best-effort. A 503 from the calendar API or a dead Redis must
+        # not block the create — this is advisory, not authoritative.
+        try:
+            if await self._calendar.is_free(start, end):
+                return
+            overlaps = await self._calendar.list_events(start, end)
+            await self._proactive.add_domain_event(customer_id, {
+                "type": "schedule_conflict",
+                "new_event": {
+                    "title": title,
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                },
+                "conflicts_with": [
+                    {"title": e.title, "start": e.start.isoformat()}
+                    for e in overlaps
+                ],
+            })
+        except Exception:
+            logger.exception(
+                "Conflict check failed for customer=%s; skipping", customer_id,
+            )
 
     # --- Reschedule ---------------------------------------------------------
 

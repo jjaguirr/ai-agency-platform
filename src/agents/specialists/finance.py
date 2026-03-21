@@ -29,6 +29,7 @@ from src.agents.base.specialist import (
 
 if TYPE_CHECKING:
     from src.agents.executive_assistant import BusinessContext
+    from src.proactive.state import ProactiveStateStore
 
 logger = logging.getLogger(__name__)
 
@@ -165,8 +166,19 @@ _INCOME_PATTERNS = [
 
 class FinanceSpecialist(SpecialistAgent):
 
-    def __init__(self, stock_client: Optional[StockPriceClient] = None):
+    # An expense more than this multiple of the running baseline stages
+    # a finance_anomaly domain event. The heartbeat's DomainEventBehavior
+    # drains it on the next tick and routes it through the noise gate.
+    ANOMALY_MULTIPLIER = 2.0
+
+    def __init__(
+        self,
+        stock_client: Optional[StockPriceClient] = None,
+        *,
+        proactive_state: Optional["ProactiveStateStore"] = None,
+    ):
         self._stock_client = stock_client
+        self._proactive = proactive_state
 
     @property
     def domain(self) -> str:
@@ -237,7 +249,21 @@ class FinanceSpecialist(SpecialistAgent):
             return await self._handle_portfolio_valuation(task)
         if self._is_summary_query(text):
             return self._handle_summary(task)
-        return self._handle_expense_entry(task)
+
+        result = self._handle_expense_entry(task)
+        # Proactive side channel: feed the transaction baseline and flag
+        # anomalies. Only fires on a real completed expense — summary
+        # queries and clarification responses never reach this branch,
+        # and clarification results skip via the status guard.
+        if (
+            self._proactive is not None
+            and result.status == SpecialistStatus.COMPLETED
+            and (amount := result.payload.get("amount")) is not None
+        ):
+            await self._maybe_stage_anomaly(
+                task.customer_id, amount, result.payload.get("category", ""),
+            )
+        return result
 
     # --- Intent routing (internal) ------------------------------------------
 
@@ -319,6 +345,30 @@ class FinanceSpecialist(SpecialistAgent):
             confidence=0.85,
             summary_for_ea=summary,
         )
+
+    async def _maybe_stage_anomaly(
+        self, customer_id: str, amount: float, category: str,
+    ) -> None:
+        # Best-effort. A dead Redis or a slow pipe must not break expense
+        # tracking — that's the primary path, this is the side channel.
+        try:
+            # Check against the baseline *before* this transaction is folded
+            # in, otherwise a single huge expense drags its own baseline up
+            # and masks itself.
+            baseline = await self._proactive.get_transaction_baseline(customer_id)
+            await self._proactive.record_transaction(customer_id, amount)
+            if baseline is not None and amount > baseline * self.ANOMALY_MULTIPLIER:
+                await self._proactive.add_domain_event(customer_id, {
+                    "type": "finance_anomaly",
+                    "amount": amount,
+                    "baseline": baseline,
+                    "category": category,
+                })
+        except Exception:
+            logger.exception(
+                "Proactive anomaly hook failed for customer=%s; continuing",
+                customer_id,
+            )
 
     # --- Summary / cash flow ------------------------------------------------
 
