@@ -1,8 +1,18 @@
 """Heartbeat daemon — background asyncio task for proactive intelligence.
 
-Runs inside the FastAPI process. Iterates active customers on each tick,
-collects triggers from behaviors and specialists, passes them through the
-noise gate, and dispatches approved triggers via the outbound dispatcher.
+Runs inside the FastAPI process. On each tick (default 300s):
+
+1. Iterates active customers from the EA registry.
+2. Loads per-customer config via ``CustomerSettingsCache`` (priority
+   threshold, quiet hours derived from working hours, daily cap,
+   briefing schedule, personality). Falls back to defaults when no
+   cache or no stored settings.
+3. Runs built-in behaviors (morning briefing, follow-up tracker, idle
+   nudge, workflow health) and specialist ``proactive_check`` hooks.
+4. Filters resulting triggers through the ``NoiseGate`` using the
+   customer's ``NoiseConfig``.
+5. Dispatches approved triggers via ``OutboundDispatcher`` (WhatsApp +
+   persistent notification store with read/snooze/dismiss lifecycle).
 """
 from __future__ import annotations
 

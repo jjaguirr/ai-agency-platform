@@ -117,16 +117,16 @@ class TestTick:
         mock_dispatcher.dispatch.assert_not_called()
 
     async def test_approved_triggers_dispatched(self, registry, store, gate, mock_dispatcher):
+        clock = lambda: datetime(2026, 3, 19, 12, 0, tzinfo=timezone.utc)
         daemon = HeartbeatDaemon(
-            registry, store, gate, mock_dispatcher, tick_interval=0.05,
+            registry, store, gate, mock_dispatcher,
+            tick_interval=0.05, clock=clock,
         )
-        # Inject a behavior that returns a trigger
         trigger = _trigger()
         daemon._get_behaviors = lambda: []
         daemon._get_specialist_triggers = AsyncMock(return_value=[trigger])
-        # Gate allows by default (MEDIUM >= MEDIUM threshold)
         await daemon._tick()
-        mock_dispatcher.dispatch.assert_called()
+        mock_dispatcher.dispatch.assert_called_once_with("cust_1", trigger)
 
     async def test_suppressed_triggers_not_dispatched(self, registry, store, gate, mock_dispatcher):
         daemon = HeartbeatDaemon(
@@ -212,13 +212,17 @@ class TestConfig:
         assert daemon._customer_timeout == 30.0
 
 
+def _noon_utc():
+    return datetime(2026, 3, 19, 12, 0, tzinfo=timezone.utc)
+
+
 class TestSettingsCacheWiring:
+
     async def test_uses_customer_settings_for_noise_config(
         self, registry, store, gate, mock_dispatcher, fake_redis,
     ):
         """When settings_cache is provided, heartbeat uses per-customer config."""
         import json
-        # Seed settings with HIGH threshold
         await fake_redis.set("settings:cust_1", json.dumps({
             "working_hours": {"start": "09:00", "end": "18:00", "timezone": "UTC"},
             "proactive": {"priority_threshold": "HIGH", "daily_cap": 5, "idle_nudge_minutes": 120},
@@ -229,9 +233,8 @@ class TestSettingsCacheWiring:
         cache = CustomerSettingsCache(fake_redis, ttl_seconds=120)
         daemon = HeartbeatDaemon(
             registry, store, gate, mock_dispatcher,
-            tick_interval=0.05, settings_cache=cache,
+            tick_interval=0.05, settings_cache=cache, clock=_noon_utc,
         )
-        # Inject a MEDIUM trigger — should be suppressed by HIGH threshold
         trigger = _trigger(priority=Priority.MEDIUM)
         daemon._get_behaviors = lambda: []
         daemon._get_specialist_triggers = AsyncMock(return_value=[trigger])
@@ -253,27 +256,33 @@ class TestSettingsCacheWiring:
         cache = CustomerSettingsCache(fake_redis, ttl_seconds=120)
         daemon = HeartbeatDaemon(
             registry, store, gate, mock_dispatcher,
-            tick_interval=0.05, settings_cache=cache,
+            tick_interval=0.05, settings_cache=cache, clock=_noon_utc,
         )
         trigger = _trigger(priority=Priority.HIGH)
         daemon._get_behaviors = lambda: []
         daemon._get_specialist_triggers = AsyncMock(return_value=[trigger])
         await daemon._tick()
-        mock_dispatcher.dispatch.assert_called()
+        mock_dispatcher.dispatch.assert_called_once()
+        args = mock_dispatcher.dispatch.call_args[0]
+        assert args[0] == "cust_1"
+        assert args[1].priority == Priority.HIGH
 
     async def test_falls_back_to_defaults_without_cache(
         self, registry, store, gate, mock_dispatcher,
     ):
         """Without settings_cache, behavior is identical to before (MEDIUM threshold)."""
         daemon = HeartbeatDaemon(
-            registry, store, gate, mock_dispatcher, tick_interval=0.05,
+            registry, store, gate, mock_dispatcher,
+            tick_interval=0.05, clock=_noon_utc,
         )
-        # MEDIUM trigger should pass default MEDIUM threshold
         trigger = _trigger(priority=Priority.MEDIUM)
         daemon._get_behaviors = lambda: []
         daemon._get_specialist_triggers = AsyncMock(return_value=[trigger])
         await daemon._tick()
-        mock_dispatcher.dispatch.assert_called()
+        mock_dispatcher.dispatch.assert_called_once()
+        args = mock_dispatcher.dispatch.call_args[0]
+        assert args[0] == "cust_1"
+        assert args[1].priority == Priority.MEDIUM
 
 
 class TestEARegistryActiveCustomers:

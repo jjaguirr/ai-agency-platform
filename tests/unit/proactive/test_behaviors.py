@@ -116,8 +116,10 @@ class TestMorningBriefingPersonalization:
         personality = PersonalityConfig(tone="concise")
         result = await behavior.check(CID, cfg, personality=personality)
         assert result is not None
-        # Concise skips the long greeting
+        # Concise uses "Briefing:" prefix, no verbose greeting
+        assert result.suggested_message.startswith("Briefing")
         assert "Here's your briefing" not in result.suggested_message
+        assert "Good morning" not in result.suggested_message
 
     async def test_friendly_tone_informal(self, store):
         behavior = MorningBriefingBehavior(

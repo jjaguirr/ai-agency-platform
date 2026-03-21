@@ -1,6 +1,7 @@
 """Tests for GET /v1/notifications endpoint."""
 import os
 import pytest
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 os.environ.setdefault(
@@ -153,23 +154,25 @@ class TestNotificationLifecycleEndpoints:
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert len(data) >= 1
-        ids = [n["id"] for n in data]
-        assert notif_id in ids
+        assert len(data) == 1
+        assert data[0]["id"] == notif_id
+        assert data[0]["domain"] == "ea"
+        assert data[0]["title"] == "Test"
 
     async def test_get_persistent_not_consumed(self, async_client, token, store):
         """Persistent notifications survive multiple GETs."""
-        await self._add_notif(store)
+        notif_id = await self._add_notif(store)
         resp1 = await async_client.get(
             "/v1/notifications",
             headers={"Authorization": f"Bearer {token}"},
         )
+        assert len(resp1.json()) == 1
         resp2 = await async_client.get(
             "/v1/notifications",
             headers={"Authorization": f"Bearer {token}"},
         )
-        # Persistent notifications still there on second call
-        assert len(resp2.json()) >= 1
+        assert len(resp2.json()) == 1
+        assert resp2.json()[0]["id"] == notif_id
 
     async def test_mark_read(self, async_client, token, store):
         notif_id = await self._add_notif(store)
@@ -186,7 +189,7 @@ class TestNotificationLifecycleEndpoints:
         ids = [n["id"] for n in resp2.json()]
         assert notif_id not in ids
 
-    async def test_snooze(self, async_client, token, store):
+    async def test_snooze_hides_from_listing(self, async_client, token, store):
         notif_id = await self._add_notif(store)
         resp = await async_client.post(
             f"/v1/notifications/{notif_id}/snooze",
@@ -194,6 +197,13 @@ class TestNotificationLifecycleEndpoints:
             json={"duration_seconds": 3600},
         )
         assert resp.status_code == 200
+        # Snoozed notification should be hidden from GET
+        resp2 = await async_client.get(
+            "/v1/notifications",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        ids = [n["id"] for n in resp2.json()]
+        assert notif_id not in ids
 
     async def test_snooze_default_1hr(self, async_client, token, store):
         notif_id = await self._add_notif(store)
@@ -204,7 +214,30 @@ class TestNotificationLifecycleEndpoints:
         assert resp.status_code == 200
         stored = await store.get_notification("cust_test", notif_id)
         assert stored["status"] == "snoozed"
-        assert stored["snooze_until"] != ""
+        # Validate snooze_until is a parseable ISO timestamp ~1 hour in the future
+        from datetime import datetime as dt
+        snooze_ts = dt.fromisoformat(stored["snooze_until"])
+        assert snooze_ts > dt.now(timezone.utc)
+
+    async def test_snoozed_notification_reappears_after_expiry(self, async_client, token, store):
+        """Snooze with duration_seconds=1 → reappears on next GET after expiry."""
+        notif_id = await self._add_notif(store)
+        # Snooze for 1 second
+        resp = await async_client.post(
+            f"/v1/notifications/{notif_id}/snooze",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"duration_seconds": 60},
+        )
+        assert resp.status_code == 200
+        # Manually advance snooze_until to the past so it reappears
+        past = datetime(2026, 3, 19, 0, 0, tzinfo=timezone.utc)
+        await store.snooze_notification("cust_test", notif_id, past)
+        resp2 = await async_client.get(
+            "/v1/notifications",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        ids = [n["id"] for n in resp2.json()]
+        assert notif_id in ids
 
     async def test_dismiss(self, async_client, token, store):
         notif_id = await self._add_notif(store)

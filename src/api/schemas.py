@@ -93,18 +93,21 @@ class ReadinessResponse(BaseModel):
 
 
 class NotificationResponse(BaseModel):
-    id: str
-    domain: str
-    trigger_type: str
-    priority: str
-    title: str
-    message: str
-    created_at: str
-    status: str = "pending"
+    """A proactive notification returned by GET /v1/notifications."""
+    id: str = Field(description="Unique notification identifier (notif_…)")
+    domain: str = Field(description="Source domain: ea, finance, scheduling, workflows")
+    trigger_type: str = Field(description="Trigger kind, e.g. morning_briefing, finance_anomaly, scheduling_conflict, workflow_failure, follow_up_reminder, idle_nudge")
+    priority: str = Field(description="LOW, MEDIUM, HIGH, or URGENT")
+    title: str = Field(description="Short human-readable headline")
+    message: str = Field(description="Suggested message body for the customer")
+    created_at: str = Field(description="ISO-8601 creation timestamp")
+    status: str = Field(default="pending", description="Lifecycle state: pending, read, snoozed, or dismissed")
 
 
 class SnoozeRequest(BaseModel):
-    duration_seconds: int = Field(default=3600, ge=60, le=86400)
+    """Body for POST /v1/notifications/{id}/snooze. The notification is hidden
+    from GET listings until ``duration_seconds`` have elapsed, then reappears."""
+    duration_seconds: int = Field(default=3600, ge=60, le=86400, description="Seconds before the notification reappears (1 min – 24 h, default 1 h)")
 
 
 # --- Dashboard auth -------------------------------------------------------
@@ -141,11 +144,12 @@ class BriefingSettings(BaseModel):
 
 
 class ProactiveSettings(BaseModel):
-    priority_threshold: Priority = "MEDIUM"
-    daily_cap: int = Field(default=5, ge=0, le=50)
-    idle_nudge_minutes: int = Field(default=120, ge=0)
-    anomaly_threshold: float = Field(default=2.0, ge=1.0, le=10.0)
-    monthly_budget: Optional[float] = Field(default=None, ge=0)
+    """Knobs that control the noise gate and proactive behaviors."""
+    priority_threshold: Priority = Field(default="MEDIUM", description="Minimum trigger priority to deliver (LOW, MEDIUM, HIGH, URGENT)")
+    daily_cap: int = Field(default=5, ge=0, le=50, description="Max proactive messages per day (0 disables proactive)")
+    idle_nudge_minutes: int = Field(default=120, ge=0, description="Minutes of inactivity before an idle nudge (floored to 1 day internally)")
+    anomaly_threshold: float = Field(default=2.0, ge=1.0, le=10.0, description="Spending-to-average ratio that triggers a finance anomaly alert")
+    monthly_budget: Optional[float] = Field(default=None, ge=0, description="Optional monthly spending cap; exceeding it generates a budget alert")
 
 
 class PersonalitySettings(BaseModel):

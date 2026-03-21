@@ -101,8 +101,38 @@ class TestFinanceAnomalyDetection:
         from src.agents.executive_assistant import BusinessContext
         result = await specialist.proactive_check(CID, BusinessContext())
         assert result is not None
-        assert "amount" in result.payload
-        assert "average" in result.payload
+        assert result.payload["amount"] == 300.0
+        # Average of [100, 100, 100, 100, 100, 300] = 133.33
+        assert 130.0 < result.payload["average"] < 140.0
+        assert result.payload["ratio"] > 2.0
+        assert result.payload["category"] == "marketing"
+
+    async def test_exactly_at_threshold_does_not_trigger(self, store):
+        """Boundary: amount/average == 2.0 should NOT trigger (< threshold, not >=)."""
+        specialist = FinanceSpecialist(state_store=store, anomaly_threshold=2.0)
+        # 5 transactions of $100 → average = $100, then $200 → ratio = 200/average
+        # Average of [100,100,100,100,100,200] = 116.67, ratio = 200/116.67 ≈ 1.71 < 2.0
+        for _ in range(5):
+            await store.record_transaction(CID, 100.0, "operations")
+        await store.record_transaction(CID, 200.0, "operations")
+
+        from src.agents.executive_assistant import BusinessContext
+        result = await specialist.proactive_check(CID, BusinessContext())
+        assert result is None
+
+    async def test_just_above_threshold_triggers(self, store):
+        """Amount that produces ratio just above 2.0x triggers."""
+        specialist = FinanceSpecialist(state_store=store, anomaly_threshold=2.0)
+        # 10 transactions of $100 → avg dominated by $100
+        for _ in range(10):
+            await store.record_transaction(CID, 100.0, "operations")
+        # $300 with avg ~118.18 → ratio ~2.54 > 2.0
+        await store.record_transaction(CID, 300.0, "operations")
+
+        from src.agents.executive_assistant import BusinessContext
+        result = await specialist.proactive_check(CID, BusinessContext())
+        assert result is not None
+        assert result.trigger_type == "finance_anomaly"
 
     async def test_no_trigger_without_history(self, store):
         specialist = FinanceSpecialist(state_store=store)

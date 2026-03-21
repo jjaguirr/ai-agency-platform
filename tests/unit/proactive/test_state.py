@@ -214,13 +214,14 @@ class TestNotificationLifecycle:
         result = await store.list_notifications(CID_OTHER)
         assert len(result) == 0
 
-    async def test_notification_has_ttl(self, fake_redis, store):
+    async def test_notification_has_7_day_ttl(self, fake_redis, store):
         n = {"domain": "ea", "trigger_type": "test", "priority": "MEDIUM",
              "title": "T", "message": "M", "created_at": "2026-03-19T08:00:00+00:00"}
         notif_id = await store.add_notification(CID, n)
         key = f"proactive:{CID}:notif:{notif_id}"
         ttl = await fake_redis.ttl(key)
-        assert ttl > 0  # Has TTL set
+        # 7 days = 604800 seconds; allow small margin for execution time
+        assert 604700 < ttl <= 604800
 
 
 class TestKeyPrefixAndIsolation:

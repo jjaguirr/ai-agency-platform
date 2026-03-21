@@ -1,4 +1,12 @@
-"""Built-in proactive behaviors — morning briefing, follow-up tracker, idle nudge."""
+"""Built-in proactive behaviors — morning briefing, follow-up tracker, idle nudge.
+
+Each behavior implements ``check(customer_id, config, **kwargs)`` and returns
+``None`` or one-or-more ``ProactiveTrigger`` instances. The heartbeat daemon
+calls them once per tick per customer.
+
+Morning briefing supports personality-aware formatting via ``_format_briefing``
+(professional / friendly / concise tones) and can be disabled per customer.
+"""
 from __future__ import annotations
 
 import logging

@@ -251,6 +251,11 @@ class FinanceSpecialist(SpecialistAgent):
     async def proactive_check(
         self, customer_id: str, context: "BusinessContext",
     ) -> Optional["ProactiveTrigger"]:
+        """Detect spending anomalies by comparing the latest transaction to
+        the running average. Returns a HIGH-priority ``finance_anomaly``
+        trigger when ``latest_amount / average >= anomaly_threshold`` (default
+        2.0x). Requires at least 2 recorded transactions; returns None if no
+        state store is configured or history is too short."""
         if self._state_store is None:
             return None
 

@@ -255,6 +255,11 @@ class SchedulingSpecialist(SpecialistAgent):
     async def proactive_check(
         self, customer_id: str, context: "BusinessContext",
     ) -> Optional["ProactiveTrigger"]:
+        """Scan the next 24 hours for overlapping calendar events. Returns a
+        HIGH-priority ``scheduling_conflict`` trigger for the first pair where
+        ``event_a.end > event_b.start`` (sorted by start time). Cooldown key
+        is derived from the sorted pair of event IDs. Returns None when no
+        calendar is connected or fewer than 2 events exist."""
         if self._calendar is None:
             return None
 
