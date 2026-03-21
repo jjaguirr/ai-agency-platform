@@ -49,6 +49,7 @@ class EARegistry:
             raise ValueError("max_size must be >= 1")
         self._factory = factory
         self._max_size = max_size
+        self._post_create_hook: Optional[Callable[[_EALike], None]] = None
         # OrderedDict gives O(1) move_to_end + popitem — the two LRU
         # primitives. Iteration order = insertion/access order; rightmost
         # is MRU, leftmost is LRU (eviction victim).
@@ -106,11 +107,17 @@ class EARegistry:
             # slow build for customer A doesn't stall requests for B.
             loop = asyncio.get_running_loop()
             ea = await loop.run_in_executor(None, self._factory, customer_id)
+            if self._post_create_hook is not None:
+                self._post_create_hook(ea)
             # Evict-then-insert, both synchronous: no window for a
             # concurrent task to observe an over-cap dict.
             self._evict_if_full()
             self._instances[customer_id] = ea
             return ea
+
+    def set_post_create_hook(self, hook: Callable[[_EALike], None]) -> None:
+        """Register a callback invoked on every newly-built EA."""
+        self._post_create_hook = hook
 
     def clear(self, customer_id: str) -> None:
         """Evict a cached EA (e.g. on customer config change)."""
