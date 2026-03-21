@@ -130,7 +130,10 @@ class TestUpdateTagsFromDelegations:
         assert conn.execute.await_count == 1
         update_args = conn.execute.await_args[0]
         assert "UPDATE conversations" in update_args[0]
-        assert "tags" in update_args[0]
+        # Positional: $1=tags, $2=conversation_id, $3=customer_id
+        assert update_args[1] == ["finance", "scheduling"]
+        assert update_args[2] == "conv_1"
+        assert update_args[3] == "cust_a"
 
     async def test_sets_general_tag_when_no_delegations(self, mock_pool):
         pool, conn = mock_pool
@@ -144,8 +147,8 @@ class TestUpdateTagsFromDelegations:
         )
 
         update_args = conn.execute.await_args[0]
-        # The tags array should contain "general"
-        assert ["general"] in update_args or "general" in str(update_args)
+        # Positional: $1=tags — must be ["general"] when no delegations exist
+        assert update_args[1] == ["general"]
 
 
 class TestDeleteCustomerData:

@@ -316,6 +316,40 @@ class TestAnalyticsParams:
         assert "specialist_performance" in body
         assert "trends" in body
 
+        # Verify service called with correct customer_id from JWT
+        svc.get_analytics.assert_awaited_once()
+        call_kwargs = svc.get_analytics.await_args.kwargs
+        assert call_kwargs["customer_id"] == "cust_a"
+        # Default period is 7d — start should be ~7 days before end
+        from datetime import timedelta
+        delta = call_kwargs["end"] - call_kwargs["start"]
+        assert delta == timedelta(days=7)
+
+    def test_tenant_isolation_uses_jwt_customer_id(self):
+        """Service must receive the customer_id from the JWT, not a query param."""
+        svc = AsyncMock()
+        svc.get_analytics = AsyncMock(return_value={
+            "period": {"start": "x", "end": "x"},
+            "overview": {
+                "total_conversations": 0, "total_delegations": 0,
+                "avg_messages_per_conversation": 0.0,
+                "escalation_rate": 0.0, "unresolved_rate": 0.0,
+            },
+            "topics": {"breakdown": []},
+            "specialist_performance": [],
+            "trends": {"conversations_by_day": [], "delegations_by_day": []},
+        })
+        client = TestClient(_app(svc))
+        tok = create_token("cust_b")
+
+        client.get(
+            "/v1/analytics",
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+
+        call_kwargs = svc.get_analytics.await_args.kwargs
+        assert call_kwargs["customer_id"] == "cust_b"
+
     def test_invalid_period_returns_422(self):
         client = TestClient(_app())
         tok = create_token("cust_a")
