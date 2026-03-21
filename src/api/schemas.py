@@ -159,3 +159,10 @@ class Settings(BaseModel):
     proactive: ProactiveSettings = Field(default_factory=ProactiveSettings)
     personality: PersonalitySettings = Field(default_factory=PersonalitySettings)
     connected_services: ConnectedServices = Field(default_factory=ConnectedServices)
+
+
+class WorkflowResponse(BaseModel):
+    workflow_id: str
+    name: str
+    status: str
+    created_at: str
