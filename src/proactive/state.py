@@ -115,3 +115,60 @@ class ProactiveStateStore:
             json.loads(item.decode() if isinstance(item, bytes) else item)
             for item in raw_items
         ]
+
+    # -- Domain events (specialist → heartbeat staging) ----------------------
+    # Specialists detect anomalies/conflicts synchronously during task
+    # execution but notifications must route through the noise gate on
+    # the next heartbeat tick. This queue is the hand-off.
+
+    async def add_domain_event(
+        self, customer_id: str, event: Dict[str, Any],
+    ) -> None:
+        key = _key(customer_id, "domain_events")
+        await self._r.rpush(key, json.dumps(event))
+
+    async def drain_domain_events(
+        self, customer_id: str,
+    ) -> List[Dict[str, Any]]:
+        key = _key(customer_id, "domain_events")
+        pipe = self._r.pipeline()
+        pipe.lrange(key, 0, -1)
+        pipe.delete(key)
+        results = await pipe.execute()
+        raw_items = results[0]
+        return [
+            json.loads(item.decode() if isinstance(item, bytes) else item)
+            for item in raw_items
+        ]
+
+    # -- Transaction baseline (finance anomaly detection) --------------------
+    # Running count+sum in a hash. No decay — good enough for "is this
+    # 2× my normal spend." Float sum stored as string because HINCRBYFLOAT
+    # in fakeredis returns inconsistently typed results; plain get/set
+    # keeps behaviour predictable across real/fake Redis.
+
+    _TX_MIN_SAMPLES = 3
+
+    async def record_transaction(self, customer_id: str, amount: float) -> None:
+        key = _key(customer_id, "tx_stats")
+        pipe = self._r.pipeline()
+        pipe.hincrby(key, "count", 1)
+        pipe.hincrbyfloat(key, "sum", amount)
+        await pipe.execute()
+
+    async def get_transaction_baseline(self, customer_id: str) -> Optional[float]:
+        key = _key(customer_id, "tx_stats")
+        raw = await self._r.hgetall(key)
+        if not raw:
+            return None
+        # Normalise bytes→str across real/fake Redis
+        stats = {
+            (k.decode() if isinstance(k, bytes) else k):
+            (v.decode() if isinstance(v, bytes) else v)
+            for k, v in raw.items()
+        }
+        count = int(stats.get("count", 0))
+        if count < self._TX_MIN_SAMPLES:
+            return None
+        total = float(stats.get("sum", 0.0))
+        return total / count
