@@ -5,7 +5,7 @@ Channel values mirror ConversationChannel enum in executive_assistant.py.
 We declare them as a Literal here rather than importing the enum to keep
 the schema layer independent of agent internals.
 """
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -100,3 +100,55 @@ class NotificationResponse(BaseModel):
     title: str
     message: str
     created_at: str
+
+
+# --- Auth (bootstrap login for dashboard MVP) ---
+
+class LoginRequest(BaseModel):
+    customer_id: str = Field(
+        min_length=3,
+        max_length=48,
+        pattern=_CUSTOMER_ID_PATTERN,
+    )
+    secret: str = Field(min_length=1)
+
+
+class LoginResponse(BaseModel):
+    token: str
+    customer_id: str
+
+
+# --- Settings ---
+
+Tone = Literal["professional", "friendly", "concise", "detailed"]
+
+
+class CustomerSettings(BaseModel):
+    """
+    Customer-configurable settings stored in Redis at ``settings:{customer_id}``.
+
+    All fields are optional — an empty object is a valid (default) state.
+    Other systems (proactive intelligence, specialists) can read from the same
+    Redis key, but wiring those consumers is out of scope for this task.
+    """
+    # Working hours
+    working_hours_start: Optional[str] = None   # "09:00" (HH:MM)
+    working_hours_end: Optional[str] = None     # "17:00" (HH:MM)
+    timezone: Optional[str] = None              # IANA tz, e.g. "America/New_York"
+
+    # Briefing schedule
+    briefing_enabled: Optional[bool] = None
+    briefing_time: Optional[str] = None         # "08:00" (HH:MM)
+
+    # Proactive messaging
+    proactive_priority_threshold: Optional[str] = None  # "LOW", "MEDIUM", "HIGH"
+    proactive_daily_cap: Optional[int] = Field(default=None, ge=0, le=100)
+    proactive_idle_nudge_minutes: Optional[int] = Field(default=None, ge=0, le=1440)
+
+    # Personality
+    ea_name: Optional[str] = Field(default=None, max_length=64)
+    tone: Optional[Tone] = None
+    language: Optional[str] = Field(default=None, max_length=16)  # ISO 639-1, e.g. "en"
+
+    # Connected services (display-only for now — actual connection flows out of scope)
+    connected_services: Optional[dict[str, Any]] = None

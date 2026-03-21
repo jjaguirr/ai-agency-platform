@@ -120,7 +120,7 @@ class TestNotificationsEndpoint:
 
     def test_requires_authentication(self, client):
         resp = client.get("/v1/notifications")
-        assert resp.status_code in (401, 403)
+        assert resp.status_code == 401
 
     async def test_returns_only_own_notifications(self, async_client, token, store):
         await store.add_pending_notification("cust_other", {
@@ -133,3 +133,77 @@ class TestNotificationsEndpoint:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.json() == []
+
+
+class TestNotificationsPeek:
+    async def test_peek_returns_notifications(self, async_client, token, store):
+        await store.add_pending_notification("cust_test", {
+            "id": "n_1", "domain": "ea", "trigger_type": "briefing",
+            "priority": "MEDIUM", "title": "Morning Briefing",
+            "message": "Good morning!", "created_at": "2026-03-19T08:00:00+00:00",
+        })
+        resp = await async_client.get(
+            "/v1/notifications/peek",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert len(resp.json()) == 1
+        assert resp.json()[0]["id"] == "n_1"
+
+    async def test_peek_does_not_consume(self, async_client, token, store):
+        await store.add_pending_notification("cust_test", {
+            "id": "n_1", "domain": "ea", "trigger_type": "test",
+            "priority": "LOW", "title": "Test",
+            "message": "Hello", "created_at": "2026-03-19T08:00:00+00:00",
+        })
+        # Peek twice — both should return identical data
+        resp1 = await async_client.get(
+            "/v1/notifications/peek",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        resp2 = await async_client.get(
+            "/v1/notifications/peek",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp1.json() == resp2.json()
+        assert resp1.json()[0]["id"] == "n_1"
+        assert resp1.json()[0]["title"] == "Test"
+
+    async def test_peek_then_pop(self, async_client, token, store):
+        await store.add_pending_notification("cust_test", {
+            "id": "n_1", "domain": "ea", "trigger_type": "test",
+            "priority": "LOW", "title": "Test",
+            "message": "Hello", "created_at": "2026-03-19T08:00:00+00:00",
+        })
+        # Peek should show it
+        peek_resp = await async_client.get(
+            "/v1/notifications/peek",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert len(peek_resp.json()) == 1
+
+        # Pop should consume it
+        pop_resp = await async_client.get(
+            "/v1/notifications",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert len(pop_resp.json()) == 1
+
+        # Peek should now be empty
+        peek_after = await async_client.get(
+            "/v1/notifications/peek",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert peek_after.json() == []
+
+    async def test_peek_empty(self, async_client, token):
+        resp = await async_client.get(
+            "/v1/notifications/peek",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_peek_requires_auth(self, client):
+        resp = client.get("/v1/notifications/peek")
+        assert resp.status_code == 401

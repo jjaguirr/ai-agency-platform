@@ -22,6 +22,38 @@ router = APIRouter(prefix="/v1/notifications", tags=["notifications"])
 _PRIORITY_ORDER = {"URGENT": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 
 
+@router.get("/peek", response_model=list[NotificationResponse])
+async def peek_notifications(
+    request: Request,
+    customer_id: str = Depends(get_current_customer),
+):
+    """Non-destructive read of pending notifications.
+
+    The dashboard uses this for display; the destructive GET /v1/notifications
+    remains for consumers that need delivery (mark-as-read) semantics.
+    """
+    state_store = request.app.state.proactive_state_store
+    raw = await state_store.peek_pending_notifications(customer_id)
+
+    raw.sort(key=lambda n: (
+        _PRIORITY_ORDER.get(n.get("priority", "LOW"), 3),
+        n.get("created_at", ""),
+    ))
+
+    return [
+        NotificationResponse(
+            id=n.get("id", ""),
+            domain=n.get("domain", ""),
+            trigger_type=n.get("trigger_type", ""),
+            priority=n.get("priority", "LOW"),
+            title=n.get("title", ""),
+            message=n.get("message", ""),
+            created_at=n.get("created_at", ""),
+        )
+        for n in raw
+    ]
+
+
 @router.get("", response_model=list[NotificationResponse])
 async def get_notifications(
     request: Request,

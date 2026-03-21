@@ -3,6 +3,10 @@
 .claude_dev_active
 claude-dev
 
+# Dashboard
+dashboard/node_modules/
+dashboard/dist/
+
 # Environment Variables - NEVER COMMIT SECRETS
 .env
 .env.local

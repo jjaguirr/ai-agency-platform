@@ -102,6 +102,17 @@ class ProactiveStateStore:
         key = _key(customer_id, "notifications")
         await self._r.rpush(key, json.dumps(notification))
 
+    async def peek_pending_notifications(
+        self, customer_id: str,
+    ) -> List[Dict[str, Any]]:
+        """Read pending notifications without consuming them."""
+        key = _key(customer_id, "notifications")
+        raw_items = await self._r.lrange(key, 0, -1)
+        return [
+            json.loads(item.decode() if isinstance(item, bytes) else item)
+            for item in raw_items
+        ]
+
     async def pop_pending_notifications(
         self, customer_id: str,
     ) -> List[Dict[str, Any]]:

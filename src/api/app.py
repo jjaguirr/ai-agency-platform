@@ -21,7 +21,7 @@ from .errors import (
     handle_validation_error,
 )
 from .middleware import CorrelationMiddleware, install_correlation_logging
-from .routes import conversations, health, history, notifications, provisioning, webhooks
+from .routes import auth, conversations, health, history, notifications, provisioning, settings, webhooks
 
 logger = logging.getLogger(__name__)
 
@@ -84,11 +84,25 @@ def create_app(
 
     # Routers
     app.include_router(health.router)
+    app.include_router(auth.router)
     app.include_router(conversations.router)
     app.include_router(history.router)
     app.include_router(provisioning.router)
     app.include_router(webhooks.router)
     app.include_router(notifications.router)
+    app.include_router(settings.router)
+
+    # Static files — serve dashboard SPA from dashboard/dist/ if it exists.
+    # MUST go after all include_router() calls: FastAPI matches routers
+    # before mounts, so /v1/*, /healthz, /readyz, /webhook/* always win.
+    # html=True enables SPA fallback (index.html for unmatched paths).
+    # The is_dir() guard prevents crashes when running without a build.
+    from pathlib import Path
+    from fastapi.staticfiles import StaticFiles
+
+    dashboard_dir = Path(__file__).resolve().parent.parent.parent / "dashboard" / "dist"
+    if dashboard_dir.is_dir():
+        app.mount("/", StaticFiles(directory=str(dashboard_dir), html=True), name="dashboard")
 
     return app
 
