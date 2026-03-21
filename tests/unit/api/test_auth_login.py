@@ -49,6 +49,9 @@ async def aclient(app):
 
 @pytest.mark.asyncio
 async def test_login_success_returns_valid_jwt(aclient, fake_redis):
+    # fakeredis (like real redis.asyncio without decode_responses) returns
+    # bytes on get() regardless of whether set() received str or bytes —
+    # so this test already exercises the decode branch in the handler.
     await fake_redis.set("auth:cust_dash:secret", "s3cret-key-123")
 
     resp = await aclient.post(
@@ -93,15 +96,3 @@ def test_login_rejects_invalid_customer_id_format(client):
         json={"customer_id": "BAD_ID", "secret": "x"},
     )
     assert resp.status_code == 422
-
-
-@pytest.mark.asyncio
-async def test_login_handles_bytes_from_redis(aclient, fake_redis):
-    # fakeredis stores bytes by default; real redis.asyncio does too
-    # unless decode_responses=True. Verify we decode before compare.
-    await fake_redis.set("auth:cust_bytes:secret", b"byte-secret")
-    resp = await aclient.post(
-        "/v1/auth/login",
-        json={"customer_id": "cust_bytes", "secret": "byte-secret"},
-    )
-    assert resp.status_code == 200

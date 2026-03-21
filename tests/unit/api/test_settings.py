@@ -103,20 +103,31 @@ def test_put_validates_priority_enum(client, auth_headers):
 
 @pytest.mark.asyncio
 async def test_tenant_isolation(aclient):
-    """Customer A's settings don't leak to customer B."""
+    """Customer A's settings don't leak to customer B.
+
+    Ordering matters: prove A's write is live BEFORE checking B can't
+    see it. Without the A-reads-back step, this test passes against a
+    no-op PUT — "B sees default" is vacuously true when nothing writes.
+    """
     token_a = create_token("cust_aaa")
     token_b = create_token("cust_bbb")
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+    headers_b = {"Authorization": f"Bearer {token_b}"}
 
-    await aclient.put(
+    put = await aclient.put(
         "/v1/settings",
-        headers={"Authorization": f"Bearer {token_a}"},
+        headers=headers_a,
         json={"personality": {"tone": "friendly", "language": "en", "name": "Alice"}},
     )
+    assert put.status_code == 200
 
-    got_b = await aclient.get(
-        "/v1/settings", headers={"Authorization": f"Bearer {token_b}"},
-    )
-    assert got_b.json()["personality"]["name"] == "Assistant"  # default, not Alice
+    # A sees their own write.
+    got_a = await aclient.get("/v1/settings", headers=headers_a)
+    assert got_a.json()["personality"]["name"] == "Alice"
+
+    # B does NOT see A's write.
+    got_b = await aclient.get("/v1/settings", headers=headers_b)
+    assert got_b.json()["personality"]["name"] == "Assistant"
 
 
 @pytest.mark.asyncio
