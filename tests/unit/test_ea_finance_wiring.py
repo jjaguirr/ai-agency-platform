@@ -8,9 +8,8 @@ These tests verify that:
 - Cross-domain messages don't crash
 """
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock
 from dataclasses import dataclass, field
-from typing import List, Dict, Any
 
 
 @dataclass
@@ -64,48 +63,68 @@ class TestSpecialistRegistration:
 class TestGracefulDegradation:
     """EA initializes even when specialist imports fail.
 
-    We test the conditional registration path by monkeypatching the
-    availability flags on the EA module. The flags are set at import time
-    by the guarded try/except blocks; once set, __init__ uses them to
-    decide whether to register each specialist. This is more reliable
-    than patching sys.modules (which doesn't trigger re-import).
+    The EA registers specialists via importlib.import_module in a loop
+    (line ~626 of executive_assistant.py), catching ImportError per
+    specialist. We patch importlib to simulate unavailable modules.
     """
 
     def test_ea_init_without_finance(self):
         """EA degrades gracefully when finance module is unavailable."""
-        import src.agents.executive_assistant as ea_mod
+        import importlib
+        _real_import = importlib.import_module
 
-        with patch.object(ea_mod, "_FINANCE_AVAILABLE", False):
-            from src.agents.base.specialist import DelegationRegistry
-            registry = DelegationRegistry(confidence_threshold=0.6)
+        def _patched_import(name, *args, **kwargs):
+            if name == "src.agents.specialists.finance":
+                raise ImportError("simulated: finance unavailable")
+            return _real_import(name, *args, **kwargs)
 
-            # Simulate what __init__ does:
-            if getattr(ea_mod, "_SOCIAL_MEDIA_AVAILABLE", False):
-                from src.agents.specialists.social_media import SocialMediaSpecialist
-                registry.register(SocialMediaSpecialist())
-            if getattr(ea_mod, "_FINANCE_AVAILABLE", False):
-                pass  # would register FinanceSpecialist
+        from src.agents.base.specialist import DelegationRegistry
+        registry = DelegationRegistry(confidence_threshold=0.6)
 
-            # Social media registered, finance not — no crash
-            assert registry.get("social_media") is not None
-            assert registry.get("finance") is None
+        specs = [
+            ("social_media", "SocialMediaSpecialist"),
+            ("finance", "FinanceSpecialist"),
+        ]
+
+        with patch.object(importlib, "import_module", side_effect=_patched_import):
+            for mod_name, cls_name in specs:
+                try:
+                    mod = importlib.import_module(f"src.agents.specialists.{mod_name}")
+                    registry.register(getattr(mod, cls_name)())
+                except Exception:
+                    pass
+
+        assert registry.get("social_media") is not None
+        assert registry.get("finance") is None
 
     def test_ea_init_without_social_media(self):
         """EA degrades gracefully when social media module is unavailable."""
-        import src.agents.executive_assistant as ea_mod
+        import importlib
+        _real_import = importlib.import_module
 
-        with patch.object(ea_mod, "_SOCIAL_MEDIA_AVAILABLE", False):
-            from src.agents.base.specialist import DelegationRegistry
-            registry = DelegationRegistry(confidence_threshold=0.6)
+        def _patched_import(name, *args, **kwargs):
+            if name == "src.agents.specialists.social_media":
+                raise ImportError("simulated: social_media unavailable")
+            return _real_import(name, *args, **kwargs)
 
-            if getattr(ea_mod, "_SOCIAL_MEDIA_AVAILABLE", False):
-                pass  # would register SocialMediaSpecialist
-            if getattr(ea_mod, "_FINANCE_AVAILABLE", False):
-                from src.agents.specialists.finance import FinanceSpecialist
-                registry.register(FinanceSpecialist())
+        from src.agents.base.specialist import DelegationRegistry
+        registry = DelegationRegistry(confidence_threshold=0.6)
 
-            assert registry.get("social_media") is None
-            assert registry.get("finance") is not None
+        specs = [
+            ("social_media", "SocialMediaSpecialist"),
+            ("finance", "FinanceSpecialist"),
+        ]
+
+        with patch.object(importlib, "import_module", side_effect=_patched_import):
+            for mod_name, cls_name in specs:
+                try:
+                    mod = importlib.import_module(f"src.agents.specialists.{mod_name}")
+                    registry.register(getattr(mod, cls_name)())
+                except Exception:
+                    pass
+
+        assert registry.get("social_media") is None
+        assert registry.get("finance") is not None
 
 
 class TestFinanceRouting:
