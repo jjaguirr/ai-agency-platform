@@ -203,3 +203,62 @@ class TestListConversations:
         kwargs = repo.list_conversations.await_args.kwargs
         assert kwargs["limit"] == 10
         assert kwargs["offset"] == 20
+
+    def test_list_includes_intelligence_fields(self):
+        repo = AsyncMock()
+        repo.list_conversations = AsyncMock(return_value=[
+            {"id": "conv_a", "channel": "chat",
+             "created_at": "2026-03-19T09:00:00+00:00",
+             "updated_at": "2026-03-19T10:00:00+00:00",
+             "summary": "Discussed invoices.",
+             "tags": ["finance"],
+             "quality_signals": {"escalation": False}},
+        ])
+        client = TestClient(_app(repo))
+        tok = create_token("cust_list")
+
+        resp = client.get(
+            "/v1/conversations",
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+        assert resp.status_code == 200
+        conv = resp.json()["conversations"][0]
+        assert conv["summary"] == "Discussed invoices."
+        assert conv["tags"] == ["finance"]
+        assert conv["quality_signals"] == {"escalation": False}
+
+    def test_list_intelligence_fields_default_to_empty(self):
+        """Conversations without intelligence data still serialize cleanly."""
+        repo = AsyncMock()
+        repo.list_conversations = AsyncMock(return_value=[
+            {"id": "conv_a", "channel": "chat",
+             "created_at": "2026-03-19T09:00:00+00:00",
+             "updated_at": "2026-03-19T10:00:00+00:00",
+             "summary": None,
+             "tags": [],
+             "quality_signals": {}},
+        ])
+        client = TestClient(_app(repo))
+        tok = create_token("cust_list")
+
+        resp = client.get(
+            "/v1/conversations",
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+        conv = resp.json()["conversations"][0]
+        assert conv["summary"] is None
+        assert conv["tags"] == []
+
+    def test_tag_filter_passed_to_repo(self):
+        repo = AsyncMock()
+        repo.list_conversations = AsyncMock(return_value=[])
+        client = TestClient(_app(repo))
+        tok = create_token("cust_list")
+
+        client.get(
+            "/v1/conversations?tags=finance&tags=scheduling",
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+
+        kwargs = repo.list_conversations.await_args.kwargs
+        assert kwargs["tags"] == ["finance", "scheduling"]

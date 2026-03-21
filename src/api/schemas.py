@@ -77,6 +77,9 @@ class ConversationSummary(BaseModel):
     channel: str
     created_at: str
     updated_at: str
+    summary: Optional[str] = None
+    tags: list[str] = []
+    quality_signals: Optional[dict[str, Any]] = None
 
 
 class ConversationListResponse(BaseModel):
