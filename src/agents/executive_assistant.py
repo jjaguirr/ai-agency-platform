@@ -661,6 +661,15 @@ class ExecutiveAssistant:
         # injects this separately, same pattern as audit_logger above.
         self.settings_redis = None
 
+        # Which specialist produced the most recent reply, for the
+        # conversations route to tag the stored assistant message with.
+        # Set by _delegate_to_specialist, reset to None at the top of
+        # handle_customer_interaction, read by the route AFTER the
+        # interaction returns. Safe because EARegistry gives one EA per
+        # customer and WhatsApp/chat serialise turns per customer — no
+        # concurrent interactions race this attribute.
+        self.last_specialist_domain: Optional[str] = None
+
         # In-memory conversation history. Populated by handle_customer_interaction,
         # lost on LRU eviction from EARegistry — acceptable for now.
         self._conversation_histories: dict[str, list[dict]] = {}
@@ -1450,6 +1459,12 @@ The key difference: automation tools give you software to configure. I give you 
             state.active_delegation = None
             return await self._handle_general_assistance(state)
 
+        # Specialist engaged and produced something the customer will
+        # see — tag this turn. Covers COMPLETED, NEEDS_CLARIFICATION,
+        # NEEDS_CONFIRMATION. FAILED already returned above, so the
+        # general-assistance reply it falls back to stays untagged.
+        self.last_specialist_domain = domain
+
         if result.status == SpecialistStatus.NEEDS_CLARIFICATION:
             # Persist the mid-flight delegation so the next turn resumes.
             # prior_turns grows: what was already there + the new question.
@@ -1669,6 +1684,11 @@ The key difference: automation tools give you software to configure. I give you 
         if not conversation_id:
             conversation_id = str(uuid.uuid4())
         
+        # Reset before anything runs — if this turn goes to
+        # general_assistance, the route must see None, not whatever
+        # the previous turn's specialist was.
+        self.last_specialist_domain = None
+
         try:
             # One Redis GET. Graph nodes read self._personality — they
             # don't each hit Redis.

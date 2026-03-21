@@ -154,6 +154,60 @@ class ConversationRepository:
             for r in rows
         ]
 
+    async def list_conversations_enriched(
+        self,
+        *,
+        customer_id: str,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """
+        Same ordering and paging as list_conversations, plus two
+        per-conversation aggregates for the dashboard: message_count and
+        the distinct set of specialist domains that touched it.
+
+        One query, LATERAL subselect per conversation. For a 50-row
+        dashboard page that's 50 small aggregations over
+        idx_messages_conversation — fine. If a customer ever accrues
+        tens of thousands of messages per conversation and this shows up
+        in profiles, denormalise a counter onto the conversations row.
+
+        COALESCE on both aggregates because a conversation with zero
+        messages yields (NULL, NULL) from the lateral — the dashboard
+        wants (0, []). FILTER on the array_agg drops NULL domains
+        (user messages, general-assistance replies) so the dashboard
+        never sees [None] as a "specialist".
+        """
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT c.id, c.channel, c.created_at, c.updated_at, "
+                "       COALESCE(m.cnt, 0) AS message_count, "
+                "       COALESCE(m.domains, '{}') AS specialist_domains "
+                "FROM conversations c "
+                "LEFT JOIN LATERAL ("
+                "  SELECT COUNT(*) AS cnt, "
+                "         array_agg(DISTINCT specialist_domain) "
+                "           FILTER (WHERE specialist_domain IS NOT NULL) "
+                "           AS domains "
+                "  FROM messages WHERE conversation_id = c.id"
+                ") m ON true "
+                "WHERE c.customer_id = $1 "
+                "ORDER BY c.updated_at DESC, c.id LIMIT $2 OFFSET $3",
+                customer_id, limit, offset,
+            )
+        return [
+            {
+                "id": r["id"],
+                "channel": r["channel"],
+                "created_at": _iso(r["created_at"]),
+                "updated_at": _iso(r["updated_at"]),
+                "message_count": r["message_count"],
+                # asyncpg returns text[] as a Python list already.
+                "specialist_domains": list(r["specialist_domains"]),
+            }
+            for r in rows
+        ]
+
     # ─── messages ────────────────────────────────────────────────────────
 
     async def append_message(
@@ -163,6 +217,7 @@ class ConversationRepository:
         conversation_id: str,
         role: str,
         content: str,
+        specialist_domain: Optional[str] = None,
     ) -> None:
         """
         Append one message and bump the conversation's updated_at.
@@ -172,6 +227,11 @@ class ConversationRepository:
         to someone else, the NOT EXISTS subquery makes the INSERT a
         no-op and the FK constraint catches the case where it doesn't
         exist at all.
+
+        `specialist_domain` tags which specialist produced this reply
+        (finance, scheduling, ...). None for user messages and for
+        assistant turns the EA handled itself. Only the conversations
+        route sets it, from ea.last_specialist_domain post-interaction.
         """
         async with self._pool.acquire() as conn:
             async with conn.transaction():
@@ -179,13 +239,15 @@ class ConversationRepository:
                 # customer. A bare INSERT would let customer B append
                 # to customer A's conversation if B guessed the ID.
                 result = await conn.execute(
-                    "INSERT INTO messages (conversation_id, role, content) "
-                    "SELECT $1, $2, $3 "
+                    "INSERT INTO messages "
+                    "  (conversation_id, role, content, specialist_domain) "
+                    "SELECT $1, $2, $3, $4 "
                     "WHERE EXISTS ("
                     "  SELECT 1 FROM conversations "
-                    "  WHERE id = $1 AND customer_id = $4"
+                    "  WHERE id = $1 AND customer_id = $5"
                     ")",
-                    conversation_id, role, content, customer_id,
+                    conversation_id, role, content, specialist_domain,
+                    customer_id,
                 )
                 # "INSERT 0 1" on success, "INSERT 0 0" on tenant mismatch.
                 # The FK violation (conversation_id nonexistent) surfaces

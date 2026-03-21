@@ -133,6 +133,11 @@ async def post_message(
                 conversation_id=conversation_id,
                 role="assistant",
                 content=response_text,
+                # Which specialist produced this reply — set by
+                # _delegate_to_specialist, None if general assistance.
+                # getattr default keeps mock EAs without the attribute
+                # from blowing up here.
+                specialist_domain=getattr(ea, "last_specialist_domain", None),
             )
         except Exception:
             logger.warning(
