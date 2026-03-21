@@ -22,8 +22,8 @@ from .errors import (
 )
 from .middleware import CorrelationMiddleware, install_correlation_logging
 from .routes import (
-    audit, auth_login, conversations, health, history, notifications,
-    provisioning, settings, webhooks, workflows,
+    analytics, audit, auth_login, conversations, health, history,
+    notifications, provisioning, settings, webhooks, workflows,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,7 @@ def create_app(
     proactive_state_store: Any = None,
     safety_pipeline: Optional[Any] = None,
     safety_config: Optional[Any] = None,
+    analytics_service: Optional[Any] = None,
 ) -> FastAPI:
     """
     Build the API with all dependencies injected.
@@ -79,6 +80,7 @@ def create_app(
     # safety_config is separate: it gates the rate-limit middleware
     # below, which is an independent concern from input/output scanning.
     app.state.safety_pipeline = safety_pipeline
+    app.state.analytics_service = analytics_service
 
     # Structured error handling. All paths converge on {type, detail}.
     # Order: specific-first so the Exception catch-all doesn't shadow
@@ -118,6 +120,7 @@ def create_app(
     app.include_router(settings.router)
     app.include_router(workflows.router)
     app.include_router(audit.router)
+    app.include_router(analytics.router)
 
     # Dashboard static assets at / — mounted AFTER routers so /v1/*
     # resolves to API handlers before StaticFiles' catch-all kicks in.

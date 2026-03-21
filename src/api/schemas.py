@@ -186,3 +186,46 @@ class AuditEventResponse(BaseModel):
 
 class AuditListResponse(BaseModel):
     events: list[AuditEventResponse]
+
+
+# --- Analytics ----------------------------------------------------------------
+
+class TopicBreakdown(BaseModel):
+    domain: str
+    count: int
+    percentage: float
+
+
+class SpecialistPerformance(BaseModel):
+    domain: str
+    delegation_count: int
+    success_rate: float
+    avg_turns: float
+    confirmation_rate: float
+    avg_resolution_seconds: Optional[float] = None
+
+
+class DailyCount(BaseModel):
+    date: str
+    count: int
+
+
+class AnalyticsOverview(BaseModel):
+    total_conversations: int
+    total_delegations: int
+    avg_messages_per_conversation: float
+    escalation_rate: float
+    unresolved_rate: float
+
+
+class AnalyticsTrends(BaseModel):
+    conversations_by_day: list[DailyCount]
+    delegations_by_day: list[DailyCount]
+
+
+class AnalyticsResponse(BaseModel):
+    period: dict[str, str]
+    overview: AnalyticsOverview
+    topics: dict[str, list[TopicBreakdown]]
+    specialist_performance: list[SpecialistPerformance]
+    trends: AnalyticsTrends
