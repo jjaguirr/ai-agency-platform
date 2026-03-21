@@ -223,12 +223,15 @@ class TestWhatsAppSplitting:
         )
 
         assert resp.status_code == 200
-        assert provider.send_text.call_count > 1
+        # Input is deterministic: 120 sentences ≈ 2408 chars → exactly 2 chunks.
+        assert provider.send_text.call_count == 2
         for call in provider.send_text.call_args_list:
             assert len(call.kwargs["body"]) <= 1600
+            # Each chunk sent to the correct recipient
+            assert call.kwargs["to"] == "+15551234567"
 
     def test_short_response_single_send(self):
-        """Response under 1600 chars → exactly one send_text call."""
+        """Response under 1600 chars → exactly one send_text call with the exact body."""
         incoming = IncomingMessage(
             provider_message_id="SM_short",
             from_number="+15551234567",
@@ -247,6 +250,7 @@ class TestWhatsAppSplitting:
 
         assert resp.status_code == 200
         provider.send_text.assert_called_once()
+        assert provider.send_text.call_args.kwargs["body"] == "Short reply."
 
     def test_split_chunks_reconstruct_original(self):
         """Concatenated chunks (with space join) preserve all content."""
@@ -292,6 +296,7 @@ class TestWhatsAppSplitting:
         )
 
         provider.send_text.assert_called_once()
+        assert provider.send_text.call_args.kwargs["body"] == ""
 
 
 class TestHealthEndpoint:

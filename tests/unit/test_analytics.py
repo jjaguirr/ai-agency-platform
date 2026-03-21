@@ -96,7 +96,10 @@ class TestActivitySummary:
 
         assert resp.status_code == 200
         body = resp.json()
+        # All three counters must degrade gracefully to zero/empty
         assert body["messages_processed"] == 0
+        assert body["specialist_delegations"] == {}
+        assert body["proactive_triggers_sent"] == 0
 
 
 class TestSpecialistStatus:
@@ -125,6 +128,20 @@ class TestSpecialistStatus:
         for s in body["specialists"]:
             assert s["registered"] is True
             assert s["operational"] is True
+            # Non-workflow specialists must not have n8n_connected
+            if s["domain"] != "workflows":
+                assert s["n8n_connected"] is None
+
+    def test_ea_registry_failure_returns_empty(self):
+        """When the EA registry raises, specialists endpoint degrades to empty."""
+        app, _ = _make_app(ea_instance=None)
+        # Override ea_registry.get to raise
+        app.state.ea_registry.get = AsyncMock(side_effect=Exception("no EA"))
+        client = TestClient(app)
+
+        resp = client.get("/v1/analytics/specialists")
+        assert resp.status_code == 200
+        assert resp.json()["specialists"] == []
 
     def test_workflows_shows_n8n_health(self):
         from src.agents.base.specialist import DelegationRegistry

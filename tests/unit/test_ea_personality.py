@@ -64,8 +64,10 @@ class TestPersonalityFromRedis:
             conversation_id="conv_personality",
         )
 
-        # EA should identify as Alex, not Sarah
         assert ea.name == "Alex"
+        assert isinstance(response, str) and len(response) > 0
+        # The hard-coded "Sarah" must NOT leak into the response.
+        assert "Sarah" not in response
 
     @pytest.mark.asyncio
     async def test_ea_uses_custom_tone(self, ea):
@@ -74,13 +76,14 @@ class TestPersonalityFromRedis:
         ea.settings_redis = mock_redis
 
         from src.agents.executive_assistant import ConversationChannel
-        await ea.handle_customer_interaction(
+        response = await ea.handle_customer_interaction(
             message="hi",
             channel=ConversationChannel.CHAT,
             conversation_id="conv_tone",
         )
 
         assert ea.personality == "concise"
+        assert isinstance(response, str) and len(response) > 0
 
     @pytest.mark.asyncio
     async def test_ea_uses_custom_language(self, ea):
@@ -89,13 +92,14 @@ class TestPersonalityFromRedis:
         ea.settings_redis = mock_redis
 
         from src.agents.executive_assistant import ConversationChannel
-        await ea.handle_customer_interaction(
+        response = await ea.handle_customer_interaction(
             message="hola",
             channel=ConversationChannel.CHAT,
             conversation_id="conv_lang",
         )
 
         assert ea.language == "es"
+        assert isinstance(response, str) and len(response) > 0
 
 
 class TestPersonalityDefaults:
@@ -114,7 +118,7 @@ class TestPersonalityDefaults:
 
         assert ea.name == "Assistant"
         assert ea.personality == "professional"
-        assert response  # non-empty response
+        assert isinstance(response, str) and len(response) > 0
 
     @pytest.mark.asyncio
     async def test_empty_redis_value_uses_defaults(self, ea):
@@ -149,7 +153,7 @@ class TestPersonalityDefaults:
 
         assert ea.name == "Assistant"
         assert ea.personality == "professional"
-        assert response
+        assert isinstance(response, str) and len(response) > 0
 
     @pytest.mark.asyncio
     async def test_redis_called_once_per_interaction(self, ea):
@@ -168,6 +172,7 @@ class TestPersonalityDefaults:
         # Only one GET for the settings key
         settings_calls = [
             c for c in mock_redis.get.await_args_list
-            if "settings:" in str(c)
+            if c.args and isinstance(c.args[0], str) and c.args[0].startswith("settings:")
         ]
         assert len(settings_calls) == 1
+        assert settings_calls[0].args[0] == f"settings:{ea.customer_id}"

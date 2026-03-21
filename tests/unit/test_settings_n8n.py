@@ -87,10 +87,13 @@ class TestN8nHealthInSettings:
         resp = client.get("/v1/settings")
         assert resp.status_code == 200
         body = resp.json()
-        # All fields still present
-        assert "working_hours" in body
-        assert "personality" in body
+        # All fields present with correct default values
+        assert body["working_hours"]["start"] == "09:00"
+        assert body["working_hours"]["end"] == "18:00"
+        assert body["personality"]["tone"] == "professional"
+        assert body["personality"]["name"] == "Assistant"
         assert body["connected_services"]["n8n"] is False
+        assert body["connected_services"]["calendar"] is False
 
     def test_n8n_health_overlays_stored_settings(self):
         """Even if stored settings say n8n=False, live check can override."""

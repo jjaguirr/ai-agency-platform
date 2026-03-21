@@ -615,6 +615,10 @@ class TestConfirmationAudit:
         assert len(confirmed_calls) == 1
         event = confirmed_calls[0].args[1]
         assert event.details["domain"] == "scheduling"
+        # The pending_action payload should be included in audit details
+        assert event.details["pending_action"] == {
+            "event_id": "e", "title": "Acme review",
+        }
 
     @pytest.mark.asyncio
     async def test_confirmed_audit_includes_outcome(self, ea):
@@ -639,8 +643,8 @@ class TestConfirmationAudit:
             if c.args[1].event_type == AuditEventType.HIGH_RISK_ACTION_CONFIRMED
         ]
         event = confirmed_calls[0].args[1]
-        # Outcome should include the specialist result status
-        assert "outcome" in event.details
+        # Outcome must be the specialist result's status value, not just present.
+        assert event.details["outcome"] == "completed"
 
     @pytest.mark.asyncio
     async def test_no_audit_logger_works_fine(self, ea):
