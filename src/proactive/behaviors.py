@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Callable, List, Optional
+from typing import Awaitable, Callable, List, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 from .state import ProactiveStateStore
@@ -29,19 +29,39 @@ class BehaviorConfig:
     idle_days: int = 7
 
 
+# Extra briefing sources are async callables (customer_id → text | None).
+# Each source is wrapped in try/except — a dead specialist domain must
+# not kill the whole briefing.
+BriefingSource = Callable[[str], Awaitable[Optional[str]]]
+
+# Greeting by tone. Keys align with the PersonalitySettings.tone Literal
+# in src/api/schemas.py. Anything unmapped falls back to professional.
+_GREETING = {
+    "professional": "Good morning. Here is your briefing.",
+    "friendly": "Good morning! Here's what's on today:",
+    "concise": "Briefing:",
+    "detailed": "Good morning. Here is your full briefing for today.",
+}
+
+
 class MorningBriefingBehavior:
     def __init__(
         self,
         state_store: ProactiveStateStore,
         *,
         clock: Optional[Callable[[], datetime]] = None,
+        extra_sources: Sequence[BriefingSource] = (),
     ) -> None:
         self._state = state_store
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._extra_sources = extra_sources
 
     async def check(
         self, customer_id: str, config: BehaviorConfig,
     ) -> Optional[ProactiveTrigger]:
+        if not config.briefing_enabled:
+            return None
+
         now = self._clock()
         tz = ZoneInfo(config.timezone)
         local_now = now.astimezone(tz)
@@ -57,28 +77,45 @@ class MorningBriefingBehavior:
             if last_local.date() == local_now.date():
                 return None
 
-        # Gather data
-        follow_ups = await self._state.list_follow_ups(customer_id)
+        # Gather sections. Each source either contributes a text section
+        # or is skipped. No section → no briefing.
+        sections: list[str] = []
 
-        # Skip if nothing to report
-        if not follow_ups:
+        follow_ups = await self._state.list_follow_ups(customer_id)
+        if follow_ups:
+            lines = [f"You have {len(follow_ups)} pending follow-up(s)."]
+            lines.extend(f"  - {fu.get('commitment', 'unknown')}" for fu in follow_ups)
+            sections.append("\n".join(lines))
+
+        for source in self._extra_sources:
+            try:
+                section = await source(customer_id)
+            except Exception:
+                logger.exception(
+                    "Briefing source %s failed for customer=%s; skipping",
+                    getattr(source, "__name__", repr(source)), customer_id,
+                )
+                continue
+            if section:
+                sections.append(section)
+
+        if not sections:
             return None
 
-        # Build briefing
-        parts = []
-        if follow_ups:
-            parts.append(f"You have {len(follow_ups)} pending follow-up(s).")
-            for fu in follow_ups:
-                parts.append(f"  - {fu.get('commitment', 'unknown')}")
-
-        message = "Good morning! Here's your briefing for today.\n" + "\n".join(parts)
+        greeting = _GREETING.get(config.tone, _GREETING["professional"])
+        body = "\n".join(sections)
+        message = f"{greeting}\n{body}"
+        # Sign with the EA's configured name — but skip the placeholder,
+        # it reads as generic rather than personal.
+        if config.ea_name and config.ea_name != "Assistant":
+            message += f"\n— {config.ea_name}"
 
         return ProactiveTrigger(
             domain="ea",
             trigger_type="morning_briefing",
             priority=Priority.MEDIUM,
             title="Morning Briefing",
-            payload={"follow_ups": follow_ups},
+            payload={"follow_ups": follow_ups, "language": config.language},
             suggested_message=message,
             cooldown_key="ea:morning_briefing",
         )
@@ -153,6 +190,10 @@ class IdleNudgeBehavior:
     async def check(
         self, customer_id: str, config: BehaviorConfig,
     ) -> Optional[ProactiveTrigger]:
+        # Zero disables the nudge entirely (dashboard semantics).
+        if config.idle_nudge_minutes <= 0:
+            return None
+
         now = self._clock()
 
         last_interaction = await self._state.get_last_interaction_time(customer_id)
@@ -160,7 +201,8 @@ class IdleNudgeBehavior:
             return None
 
         idle_delta = now - last_interaction
-        if idle_delta < timedelta(days=config.idle_days):
+        threshold = timedelta(minutes=config.idle_nudge_minutes)
+        if idle_delta < threshold:
             return None
 
         # Check pending items exist
@@ -174,15 +216,22 @@ class IdleNudgeBehavior:
             return None
 
         # Record cooldown so we don't nudge again until new interaction
-        cooldown_window = config.idle_days * 86400
+        cooldown_window = config.idle_nudge_minutes * 60
         await self._state.record_cooldown(customer_id, cooldown_key, window_seconds=cooldown_window)
+
+        idle_minutes = int(idle_delta.total_seconds() // 60)
+        # Human-readable phrasing switches at the day boundary.
+        if idle_minutes >= 1440:
+            span = f"{idle_minutes // 1440} day(s)"
+        else:
+            span = f"{idle_minutes} minute(s)"
 
         return ProactiveTrigger(
             domain="ea",
             trigger_type="idle_nudge",
             priority=Priority.LOW,
             title="Idle check-in",
-            payload={"idle_days": idle_delta.days, "pending_count": len(follow_ups)},
-            suggested_message=f"Hi! It's been {idle_delta.days} days since we last spoke. You have {len(follow_ups)} pending item(s) — want to catch up?",
+            payload={"idle_minutes": idle_minutes, "pending_count": len(follow_ups)},
+            suggested_message=f"Hi! It's been {span} since we last spoke. You have {len(follow_ups)} pending item(s) — want to catch up?",
             cooldown_key=cooldown_key,
         )
