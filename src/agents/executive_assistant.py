@@ -1338,6 +1338,11 @@ The key difference: automation tools give you software to configure. I give you 
         """
         last_message = state.messages[-1].content if state.messages else ""
 
+        # Tracks whether this turn is a confirmed-yes resume. CONFIRMED
+        # fires only on COMPLETED *and* this flag — a fresh delegation
+        # that happens to COMPLETE is not a confirmation.
+        confirmed_pending: Optional[dict] = None
+
         if state.active_delegation:
             domain = state.active_delegation["domain"]
             original_task = state.active_delegation.get("original_task", last_message)
@@ -1361,6 +1366,7 @@ The key difference: automation tools give you software to configure. I give you 
                 # via prior_turns. The specialist reads the stashed IDs
                 # from there rather than re-resolving — the target may
                 # have moved in the meantime.
+                confirmed_pending = pending
                 prior_turns.append({
                     "role": "customer",
                     "content": last_message,
@@ -1453,6 +1459,11 @@ The key difference: automation tools give you software to configure. I give you 
         # COMPLETED: weave the specialist's structured result into the EA's
         # conversational voice. When an LLM is available we let it phrase;
         # otherwise we fall back to the specialist's summary_for_ea hint.
+        if confirmed_pending is not None:
+            await self._audit_confirmation(
+                AuditEventType.HIGH_RISK_ACTION_CONFIRMED, domain,
+                confirmed_pending, outcome=result.payload,
+            )
         state.active_delegation = None
         response = await self._synthesize_specialist_result(result, state.business_context)
         state.messages.append(AIMessage(content=response))
@@ -1460,6 +1471,7 @@ The key difference: automation tools give you software to configure. I give you 
 
     async def _audit_confirmation(
         self, event_type: AuditEventType, domain: str, pending: dict,
+        *, outcome: Optional[dict] = None,
     ) -> None:
         """Best-effort audit for confirmation lifecycle events.
 
@@ -1474,12 +1486,15 @@ The key difference: automation tools give you software to configure. I give you 
             cid = correlation_id.get() or "-"
         except Exception:
             cid = "-"
+        details = {"domain": domain, "pending_action": pending}
+        if outcome is not None:
+            details["outcome"] = outcome
         try:
             await self.audit_logger.log(self.customer_id, AuditEvent(
                 timestamp=datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ"),
                 event_type=event_type,
                 correlation_id=cid,
-                details={"domain": domain, "pending_action": pending},
+                details=details,
             ))
         except Exception as e:
             logger.warning(f"Confirmation audit failed (non-blocking): {e}")
