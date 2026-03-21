@@ -641,6 +641,11 @@ class ExecutiveAssistant:
         # audit; the flow itself is unchanged.
         self.audit_logger = None
 
+        # Optional delegation recorder — wired by create_default_app.
+        # When present, writes delegation lifecycle to Postgres for
+        # conversation intelligence (topic tagging, specialist metrics).
+        self.delegation_recorder = None
+
         # In-memory conversation history. Populated by handle_customer_interaction,
         # lost on LRU eviction from EARegistry — acceptable for now.
         self._conversation_histories: dict[str, list[dict]] = {}
@@ -1349,6 +1354,13 @@ The key difference: automation tools give you software to configure. I give you 
                 # else. No pending_action key means this is a clarification
                 # answer and falls through to the existing path unchanged.
                 if not _is_affirmative(last_message):
+                    await self._record_delegation_end(
+                        state.active_delegation.get("record_id"),
+                        status="cancelled",
+                        turns=len(prior_turns),
+                        confirmation_requested=True,
+                        confirmation_outcome="declined",
+                    )
                     state.active_delegation = None
                     await self._audit_confirmation(
                         AuditEventType.HIGH_RISK_ACTION_DECLINED, domain, pending,
@@ -1407,6 +1419,16 @@ The key difference: automation tools give you software to configure. I give you 
             prior_turns=prior_turns,
         )
 
+        # Record delegation start (fresh delegations only — follow-ups
+        # already have a record_id stashed in active_delegation).
+        record_id = None
+        if not state.active_delegation:
+            record_id = await self._record_delegation_start(
+                state.conversation_id, domain,
+            )
+        else:
+            record_id = state.active_delegation.get("record_id")
+
         result = await self.delegation_registry.execute(
             specialist, task, timeout=self.specialist_timeout
         )
@@ -1414,6 +1436,11 @@ The key difference: automation tools give you software to configure. I give you 
         if result.status == SpecialistStatus.FAILED:
             logger.info(
                 f"Specialist {domain} failed ({result.error}) — EA handling directly"
+            )
+            await self._record_delegation_end(
+                record_id, status="failed", turns=len(prior_turns) + 1,
+                confirmation_requested=False, confirmation_outcome=None,
+                error_message=result.error,
             )
             state.active_delegation = None
             return await self._handle_general_assistance(state)
@@ -1427,6 +1454,7 @@ The key difference: automation tools give you software to configure. I give you 
                 "prior_turns": prior_turns + [
                     {"role": "specialist", "content": result.clarification_question},
                 ],
+                "record_id": record_id,
             }
             state.messages.append(AIMessage(content=result.clarification_question))
             return state
@@ -1443,6 +1471,7 @@ The key difference: automation tools give you software to configure. I give you 
                     {"role": "specialist", "content": result.confirmation_prompt},
                 ],
                 "pending_action": result.payload,
+                "record_id": record_id,
             }
             await self._audit_confirmation(
                 AuditEventType.HIGH_RISK_ACTION_REQUESTED, domain, result.payload,
@@ -1453,10 +1482,59 @@ The key difference: automation tools give you software to configure. I give you 
         # COMPLETED: weave the specialist's structured result into the EA's
         # conversational voice. When an LLM is available we let it phrase;
         # otherwise we fall back to the specialist's summary_for_ea hint.
+        confirmation_requested = bool(
+            state.active_delegation and state.active_delegation.get("pending_action"),
+        )
+        await self._record_delegation_end(
+            record_id, status="completed", turns=len(prior_turns) + 1,
+            confirmation_requested=confirmation_requested,
+            confirmation_outcome="confirmed" if confirmation_requested else None,
+        )
         state.active_delegation = None
         response = await self._synthesize_specialist_result(result, state.business_context)
         state.messages.append(AIMessage(content=response))
         return state
+
+    async def _record_delegation_start(
+        self, conversation_id: str, domain: str,
+    ) -> str | None:
+        """Best-effort: record delegation start. Returns record_id or None."""
+        if self.delegation_recorder is None:
+            return None
+        try:
+            return await self.delegation_recorder.record_start(
+                conversation_id=conversation_id,
+                customer_id=self.customer_id,
+                specialist_domain=domain,
+            )
+        except Exception as e:
+            logger.warning(f"Delegation recording (start) failed (non-blocking): {e}")
+            return None
+
+    async def _record_delegation_end(
+        self,
+        record_id: str | None,
+        *,
+        status: str,
+        turns: int,
+        confirmation_requested: bool,
+        confirmation_outcome: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        """Best-effort: record delegation end."""
+        if self.delegation_recorder is None or record_id is None:
+            return
+        try:
+            await self.delegation_recorder.record_end(
+                record_id=record_id,
+                status=status,
+                turns=turns,
+                confirmation_requested=confirmation_requested,
+                confirmation_outcome=confirmation_outcome,
+                error_message=error_message,
+            )
+        except Exception as e:
+            logger.warning(f"Delegation recording (end) failed (non-blocking): {e}")
 
     async def _audit_confirmation(
         self, event_type: AuditEventType, domain: str, pending: dict,
