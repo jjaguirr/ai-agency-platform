@@ -16,7 +16,16 @@ logger = logging.getLogger(__name__)
 @dataclass
 class BehaviorConfig:
     briefing_hour: int = 8
+    briefing_enabled: bool = True
     timezone: str = "UTC"
+    idle_nudge_minutes: int = 120
+    # Personality — used by the briefing to shape tone and attribution
+    tone: str = "professional"
+    ea_name: str = "Assistant"
+    language: str = "en"
+    # Legacy field — IdleNudgeBehavior migrated to minutes in V2; kept
+    # so pre-V2 tests that construct BehaviorConfig(idle_days=...) still
+    # parse. Not read by any behavior.
     idle_days: int = 7
 
 
