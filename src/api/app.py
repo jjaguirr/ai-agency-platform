@@ -62,6 +62,10 @@ def create_app(
     Tests omit it; production supplies one that initialises the port
     allocator, verifies conversation tables exist, and closes Redis +
     Postgres on shutdown.
+
+    `analytics_service` is Optional for the same reason as
+    `conversation_repo`: pre-intelligence tests don't need one. The
+    analytics route returns 503 when it's None.
     """
     app = FastAPI(
         title="AI Agency Platform API",
