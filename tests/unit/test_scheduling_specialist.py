@@ -603,14 +603,31 @@ class TestExecuteReschedule:
 class TestExecuteCancel:
     @pytest.mark.asyncio
     async def test_cancels_by_attendee(self, busy_calendar, agency_ctx):
+        """Cancel is two-phase: first call resolves + asks, second deletes.
+
+        Full confirmation-flow coverage lives in test_action_confirmation.py;
+        this test just pins the specialist side of the handshake."""
         spec = SchedulingSpecialist(calendar=busy_calendar, clock=_clock)
-        result = await spec.execute_task(
+
+        # Turn 1: resolve → confirm prompt, no delete.
+        r1 = await spec.execute_task(
             _task("cancel the meeting with Acme", agency_ctx)
         )
-        assert result.status == SpecialistStatus.COMPLETED
-        assert result.payload["cancelled_id"] == "evt_1"
-        assert result.payload["title"] == "Acme review"
-        # Actually deleted
+        assert r1.status == SpecialistStatus.NEEDS_CONFIRMATION
+        assert r1.payload["event_id"] == "evt_1"
+        assert r1.payload["title"] == "Acme review"
+        assert [c for c in busy_calendar.calls if c[0] == "delete_event"] == []
+
+        # Turn 2: EA feeds the stashed payload back via prior_turns.
+        r2 = await spec.execute_task(
+            _task("yes", agency_ctx, prior_turns=[
+                {"role": "specialist", "content": r1.confirmation_prompt},
+                {"role": "customer", "content": "yes", "confirmed": True,
+                 "pending_action": r1.payload},
+            ])
+        )
+        assert r2.status == SpecialistStatus.COMPLETED
+        assert r2.payload["cancelled_id"] == "evt_1"
         delete_calls = [c for c in busy_calendar.calls if c[0] == "delete_event"]
         assert delete_calls == [("delete_event", ("evt_1",))]
 

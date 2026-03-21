@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional, Protocol, TYPE_CHECKING
 
 from src.agents.base.specialist import (
+    ActionRisk,
     SpecialistAgent,
     SpecialistResult,
     SpecialistStatus,
@@ -262,6 +263,17 @@ class SchedulingSpecialist(SpecialistAgent):
                 ),
             )
 
+        # Confirmed follow-up: the EA already parsed "yes" and handed us
+        # back the payload we stashed on turn 1. Intent classification on
+        # "yes" is meaningless — skip it and go straight to execution.
+        pending = next(
+            (t["pending_action"] for t in reversed(task.prior_turns)
+             if t.get("confirmed") and t.get("pending_action")),
+            None,
+        )
+        if pending is not None:
+            return await self._execute_confirmed(pending)
+
         corpus = self._customer_corpus(task)
         text = corpus.lower()
 
@@ -429,26 +441,54 @@ class SchedulingSpecialist(SpecialistAgent):
     async def _handle_cancel(
         self, task: SpecialistTask, corpus: str, text: str
     ) -> SpecialistResult:
+        """Resolve the target event, then ask before deleting.
+
+        Deletion is the reference HIGH-risk action. We return
+        NEEDS_CONFIRMATION with the resolved event_id stashed in payload;
+        the EA parks that in active_delegation, asks the customer, and on
+        an affirmative reply hands the payload back via prior_turns for
+        execute_task's confirmed-follow-up branch to act on. We never
+        re-resolve on turn 2 — the calendar may have changed and
+        re-matching "the Acme meeting" could hit a different event.
+        """
         candidates = await self._find_candidates(corpus, text)
         if len(candidates) != 1:
             return self._clarify_ambiguity(candidates, verb="cancel")
 
         target = candidates[0]
-        await self._calendar.delete_event(target.id)
-
+        when = target.start.strftime("%Y-%m-%d %H:%M")
         return SpecialistResult(
-            status=SpecialistStatus.COMPLETED,
+            status=SpecialistStatus.NEEDS_CONFIRMATION,
             domain=self.domain,
             payload={
-                "cancelled_id": target.id,
+                "event_id": target.id,
                 "title": target.title,
                 "was_at": target.start.isoformat(),
             },
             confidence=0.85,
-            summary_for_ea=(
-                f"Cancelled '{target.title}' "
-                f"({target.start.strftime('%Y-%m-%d %H:%M')})."
+            confirmation_prompt=(
+                f"I'm about to cancel '{target.title}' ({when}). "
+                f"This can't be undone. Confirm?"
             ),
+            action_risk=ActionRisk.HIGH,
+        )
+
+    async def _execute_confirmed(self, pending: Dict[str, Any]) -> SpecialistResult:
+        """Turn-2 execution for a confirmed HIGH-risk action.
+
+        Currently cancel is the only action that confirms. When reschedule
+        or bulk-delete gain confirmation, dispatch on a tag in pending.
+        """
+        event_id = pending["event_id"]
+        title = pending.get("title", event_id)
+        await self._calendar.delete_event(event_id)
+        return SpecialistResult(
+            status=SpecialistStatus.COMPLETED,
+            domain=self.domain,
+            payload={"cancelled_id": event_id, "title": title},
+            confidence=0.85,
+            summary_for_ea=f"Cancelled '{title}'.",
+            action_risk=ActionRisk.HIGH,
         )
 
     # --- Availability -------------------------------------------------------
