@@ -143,3 +143,140 @@ async def test_get_handles_partial_stored_json(aclient, auth_headers, fake_redis
     assert body["personality"]["tone"] == "detailed"
     # Missing sections filled from defaults — forward-compatible.
     assert body["working_hours"]["start"] == "09:00"
+
+
+# --- Live n8n health on GET --------------------------------------------------
+# connected_services.n8n is stored as a dumb bool the customer PUTs — it
+# means nothing. When an N8nClient is wired on app.state, GET probes it
+# via list_workflows() and overrides the stored value with reality.
+# No client → stored value passes through (legacy + test_put_then_get_roundtrips
+# above relies on exact-payload echo).
+
+class TestN8nHealthOnGet:
+    def _app(self, fake_redis, *, n8n_client):
+        return create_app(
+            ea_registry=EARegistry(factory=MagicMock(), max_size=10),
+            orchestrator=AsyncMock(),
+            whatsapp_manager=MagicMock(),
+            redis_client=fake_redis,
+            n8n_client=n8n_client,
+        )
+
+    @pytest.fixture
+    def auth_headers(self):
+        token = create_token("cust_n8n")
+        return {"Authorization": f"Bearer {token}"}
+
+    @pytest.mark.asyncio
+    async def test_healthy_n8n_overrides_stored_false(self, fake_redis, auth_headers):
+        """Stored n8n=False but probe succeeds → response shows True."""
+        await fake_redis.set("settings:cust_n8n", json.dumps({
+            "connected_services": {"calendar": False, "n8n": False},
+        }))
+        n8n = MagicMock()
+        n8n.list_workflows = AsyncMock(return_value=[{"id": "wf_1"}])
+        app = self._app(fake_redis, n8n_client=n8n)
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            resp = await c.get("/v1/settings", headers=auth_headers)
+
+        assert resp.status_code == 200
+        assert resp.json()["connected_services"]["n8n"] is True
+        n8n.list_workflows.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_unhealthy_n8n_overrides_stored_true(self, fake_redis, auth_headers):
+        """Stored n8n=True but probe raises → response shows False.
+        N8nError is the documented failure surface of N8nClient."""
+        from src.workflows.client import N8nError
+
+        await fake_redis.set("settings:cust_n8n", json.dumps({
+            "connected_services": {"calendar": False, "n8n": True},
+        }))
+        n8n = MagicMock()
+        n8n.list_workflows = AsyncMock(side_effect=N8nError("502 bad gateway"))
+        app = self._app(fake_redis, n8n_client=n8n)
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            resp = await c.get("/v1/settings", headers=auth_headers)
+
+        assert resp.status_code == 200
+        assert resp.json()["connected_services"]["n8n"] is False
+
+    @pytest.mark.asyncio
+    async def test_n8n_timeout_reports_false(self, fake_redis, auth_headers):
+        """Slow n8n (>2s) → False, and the GET doesn't hang waiting."""
+        import asyncio
+
+        async def slow_list():
+            await asyncio.sleep(10)  # would hang the test if not bounded
+            return []
+
+        n8n = MagicMock()
+        n8n.list_workflows = slow_list
+        app = self._app(fake_redis, n8n_client=n8n)
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            # If the route doesn't bound the probe, this await blocks for
+            # 10s and pytest-asyncio will flag the slow test. 3s gives the
+            # 2s cap room to fire.
+            resp = await asyncio.wait_for(
+                c.get("/v1/settings", headers=auth_headers), timeout=3.0,
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["connected_services"]["n8n"] is False
+
+    @pytest.mark.asyncio
+    async def test_no_client_passes_stored_value_through(self, fake_redis, auth_headers):
+        """n8n_client=None → no probe, stored value echoed. This is what
+        keeps test_put_then_get_roundtrips above passing unchanged."""
+        await fake_redis.set("settings:cust_n8n", json.dumps({
+            "connected_services": {"calendar": True, "n8n": True},
+        }))
+        app = self._app(fake_redis, n8n_client=None)
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            resp = await c.get("/v1/settings", headers=auth_headers)
+
+        assert resp.status_code == 200
+        assert resp.json()["connected_services"]["n8n"] is True
+
+    @pytest.mark.asyncio
+    async def test_probe_exception_does_not_500(self, fake_redis, auth_headers):
+        """Weird exception type from probe → still 200, n8n=False.
+        Settings GET is the dashboard's landing page; it must not fail
+        because n8n's having a bad day."""
+        n8n = MagicMock()
+        n8n.list_workflows = AsyncMock(side_effect=RuntimeError("unexpected"))
+        app = self._app(fake_redis, n8n_client=n8n)
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            resp = await c.get("/v1/settings", headers=auth_headers)
+
+        assert resp.status_code == 200
+        assert resp.json()["connected_services"]["n8n"] is False
+
+    @pytest.mark.asyncio
+    async def test_calendar_unchanged_by_n8n_probe(self, fake_redis, auth_headers):
+        """n8n probe only touches n8n — calendar stays whatever was stored.
+        (No calendar integration exists yet; the stored bool is all we have.)"""
+        await fake_redis.set("settings:cust_n8n", json.dumps({
+            "connected_services": {"calendar": True, "n8n": False},
+        }))
+        n8n = MagicMock()
+        n8n.list_workflows = AsyncMock(return_value=[])
+        app = self._app(fake_redis, n8n_client=n8n)
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            resp = await c.get("/v1/settings", headers=auth_headers)
+
+        body = resp.json()
+        assert body["connected_services"]["calendar"] is True  # stored, untouched
+        assert body["connected_services"]["n8n"] is True       # probed, live
