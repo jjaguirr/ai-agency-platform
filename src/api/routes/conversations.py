@@ -147,6 +147,8 @@ async def post_message(
             )
 
     # --- Analytics counter (fire-and-forget) ----------------------------
+    # Key format must match _MSG_KEY in api/routes/analytics.py, which
+    # reads these counters for the activity summary endpoint.
     try:
         from datetime import date
         redis = request.app.state.redis_client

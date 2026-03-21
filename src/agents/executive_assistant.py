@@ -673,8 +673,8 @@ class ExecutiveAssistant:
         # that don't care about personality — defaults apply.
         self.settings_redis = None
 
-        # Set after each completed delegation so the route can tag the
-        # persisted message with the specialist domain. Reset per interaction.
+        # Set after each completed delegation; read by api/routes/conversations.py
+        # to tag the persisted message with the specialist domain. Reset per interaction.
         self.last_delegation_domain: str | None = None
         
         logger.info(f"Enhanced Executive Assistant initialized for customer {customer_id}")

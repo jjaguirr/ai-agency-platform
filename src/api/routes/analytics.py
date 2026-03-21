@@ -78,6 +78,8 @@ async def specialist_status(
 
     try:
         ea = await ea_registry.get(customer_id)
+        # No public accessor on DelegationRegistry — _specialists is the
+        # internal dict mapping domain → SpecialistAgent.
         registered = dict(ea.delegation_registry._specialists)
     except Exception:
         registered = {}
