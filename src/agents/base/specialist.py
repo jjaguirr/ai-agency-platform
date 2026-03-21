@@ -26,8 +26,21 @@ logger = logging.getLogger(__name__)
 # --- Data types -------------------------------------------------------------
 
 class SpecialistStatus(Enum):
+    """Terminal states a specialist can return after ``execute_task``.
+
+    COMPLETED: work done, payload contains the result.
+    NEEDS_CLARIFICATION: specialist needs more info from the customer —
+        ``clarification_question`` must be set. The EA re-asks and routes
+        the follow-up back to the same specialist.
+    NEEDS_CONFIRMATION: action classified as HIGH risk by ``action_risk``.
+        ``action_risk`` and ``pending_action`` must be set. The EA presents
+        the action to the customer and waits for explicit confirm/decline.
+    FAILED: unrecoverable error — ``error`` should describe what went wrong.
+        The EA falls back to its own general handling.
+    """
     COMPLETED = "completed"
     NEEDS_CLARIFICATION = "needs_clarification"
+    NEEDS_CONFIRMATION = "needs_confirmation"
     FAILED = "failed"
 
 
@@ -78,6 +91,8 @@ class SpecialistResult:
     summary_for_ea: Optional[str] = None
     clarification_question: Optional[str] = None
     error: Optional[str] = None
+    action_risk: Optional[str] = None  # One of ActionRisk values ("low"/"medium"/"high"), set when status is NEEDS_CONFIRMATION
+    pending_action: Optional[Dict[str, Any]] = None  # Freeform dict describing the action to execute after confirmation
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -88,6 +103,8 @@ class SpecialistResult:
             "summary_for_ea": self.summary_for_ea,
             "clarification_question": self.clarification_question,
             "error": self.error,
+            "action_risk": self.action_risk,
+            "pending_action": self.pending_action,
         }
 
     @classmethod
@@ -100,6 +117,8 @@ class SpecialistResult:
             summary_for_ea=d.get("summary_for_ea"),
             clarification_question=d.get("clarification_question"),
             error=d.get("error"),
+            action_risk=d.get("action_risk"),
+            pending_action=d.get("pending_action"),
         )
 
 

@@ -21,7 +21,7 @@ from .errors import (
     handle_validation_error,
 )
 from .middleware import CorrelationMiddleware, install_correlation_logging
-from .routes import conversations, health, history, notifications, provisioning, webhooks
+from .routes import audit, conversations, health, history, notifications, provisioning, webhooks
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,7 @@ def create_app(
     conversation_repo: Optional[Any] = None,
     lifespan: Optional[Lifespan] = None,
     proactive_state_store: Any = None,
+    safety_config: Optional[Any] = None,
 ) -> FastAPI:
     """
     Build the API with all dependencies injected.
@@ -56,6 +57,14 @@ def create_app(
     allocator, verifies conversation tables exist, and closes Redis +
     Postgres on shutdown.
     """
+    from src.safety.audit import AuditLogger
+    from src.safety.config import SafetyConfig
+    from src.safety.input_pipeline import InputPipeline
+    from src.safety.middleware import SafetyMiddleware
+    from src.safety.output_pipeline import OutputPipeline
+    from src.safety.prompt_guard import PromptGuard
+    from src.safety.rate_limiter import RateLimitMiddleware
+
     app = FastAPI(
         title="AI Agency Platform API",
         version="1.0.0",
@@ -70,6 +79,17 @@ def create_app(
     app.state.conversation_repo = conversation_repo
     app.state.proactive_state_store = proactive_state_store
 
+    # Safety layer
+    cfg = safety_config if isinstance(safety_config, SafetyConfig) else SafetyConfig.from_env()
+    audit_logger = AuditLogger(redis_client, ttl=cfg.audit_ttl_seconds)
+    prompt_guard = PromptGuard()
+    input_pipeline = InputPipeline(config=cfg, prompt_guard=prompt_guard)
+    output_pipeline = OutputPipeline()
+
+    app.state.safety_config = cfg
+    app.state.audit_logger = audit_logger
+    app.state.output_pipeline = output_pipeline
+
     # Structured error handling. All paths converge on {type, detail}.
     # Order: specific-first so the Exception catch-all doesn't shadow
     # more precise matches (Starlette walks the MRO; Exception wins
@@ -78,7 +98,10 @@ def create_app(
     app.add_exception_handler(APIError, handle_api_error)
     app.add_exception_handler(Exception, handle_unexpected)
 
-    # Request correlation — ASGI middleware + log-record factory
+    # Middleware — Starlette wraps in LIFO order (last added = outermost).
+    # Request flow: Correlation → RateLimit → Safety → route handlers.
+    app.add_middleware(SafetyMiddleware, input_pipeline=input_pipeline, audit_logger=audit_logger)
+    app.add_middleware(RateLimitMiddleware, redis_client=redis_client, config=cfg)
     app.add_middleware(CorrelationMiddleware)
     install_correlation_logging()
 
@@ -89,6 +112,7 @@ def create_app(
     app.include_router(provisioning.router)
     app.include_router(webhooks.router)
     app.include_router(notifications.router)
+    app.include_router(audit.router)
 
     return app
 

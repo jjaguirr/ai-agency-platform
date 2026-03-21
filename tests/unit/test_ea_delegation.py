@@ -401,3 +401,298 @@ class TestRoutingGate:
         match = ea.delegation_registry.route(state.messages[-1].content, state.business_context)
         assert match is not None
         assert match.specialist.domain == "social_media"
+
+
+# --- Delegation node: NEEDS_CONFIRMATION → confirmation flow ----------------
+
+class TestDelegateNodeConfirmation:
+    @pytest.mark.asyncio
+    async def test_needs_confirmation_sets_pending_confirmation(self, ea, state):
+        """Specialist returns NEEDS_CONFIRMATION with action_risk=HIGH →
+        EA stores pending_confirmation in active_delegation and presents a
+        confirmation prompt to the customer."""
+        spec = _make_specialist(result=SpecialistResult(
+            status=SpecialistStatus.NEEDS_CONFIRMATION,
+            domain="social_media", payload={"amount": 500}, confidence=0.9,
+            summary_for_ea="Transfer $500 to vendor account.",
+            action_risk="high",
+            pending_action={"type": "transfer", "amount": 500, "to": "vendor_123"},
+        ))
+        ea.delegation_registry = DelegationRegistry()
+        ea.delegation_registry.register(spec)
+        state.delegation_target = "social_media"
+
+        out = await ea._delegate_to_specialist(state)
+
+        # Delegation state preserved with pending_confirmation
+        assert out.active_delegation is not None
+        assert "pending_confirmation" in out.active_delegation
+        pc = out.active_delegation["pending_confirmation"]
+        assert pc["risk"] == "high"
+        assert pc["action"]["type"] == "transfer"
+        assert out.active_delegation["domain"] == "social_media"
+
+        # EA asked the customer to confirm
+        from langchain_core.messages import AIMessage
+        assert isinstance(out.messages[-1], AIMessage)
+        response = out.messages[-1].content.lower()
+        assert "confirm" in response or "proceed" in response or "approve" in response
+
+    @pytest.mark.asyncio
+    async def test_customer_confirms_executes_action(self, ea):
+        """Customer says 'yes' to a pending confirmation → specialist executes."""
+        from src.agents.executive_assistant import ConversationState, BusinessContext, ConversationIntent
+        from langchain_core.messages import HumanMessage
+
+        executed = []
+
+        async def _capture(task):
+            executed.append(task)
+            return SpecialistResult(
+                status=SpecialistStatus.COMPLETED, domain="social_media",
+                payload={"transfer_id": "tx_123"}, confidence=0.9,
+                summary_for_ea="Transfer completed successfully.",
+            )
+
+        spec = _make_specialist()
+        spec.execute_task = _capture
+        ea.delegation_registry = DelegationRegistry()
+        ea.delegation_registry.register(spec)
+
+        state = ConversationState(
+            messages=[HumanMessage(content="Yes, go ahead")],
+            customer_id="test_cust", conversation_id="conv_1",
+            business_context=BusinessContext(business_name="X"),
+            current_intent=ConversationIntent.TASK_DELEGATION,
+            active_delegation={
+                "domain": "social_media",
+                "original_task": "transfer $500 to vendor",
+                "pending_confirmation": {
+                    "action": {"type": "transfer", "amount": 500},
+                    "risk": "high",
+                    "specialist_result": {
+                        "status": "needs_confirmation",
+                        "domain": "social_media",
+                        "payload": {"amount": 500},
+                        "confidence": 0.9,
+                        "summary_for_ea": "Transfer $500.",
+                        "action_risk": "high",
+                        "pending_action": {"type": "transfer", "amount": 500},
+                    },
+                },
+            },
+        )
+
+        out = await ea._delegate_to_specialist(state)
+
+        # Specialist was re-invoked to execute
+        assert len(executed) == 1
+        # The task description should indicate this is a confirmed action
+        assert "CONFIRMED" in executed[0].description
+        # Pending confirmation cleared
+        assert out.active_delegation is None
+        # Customer gets a completion response with actual content
+        from langchain_core.messages import AIMessage
+        assert isinstance(out.messages[-1], AIMessage)
+        response = out.messages[-1].content
+        assert len(response) > 0
+        # Should reflect the specialist's result, not a cancellation
+        assert "cancel" not in response.lower()
+
+    @pytest.mark.asyncio
+    async def test_customer_declines_cancels_action(self, ea):
+        """Customer says 'no' to a pending confirmation → action cancelled."""
+        from src.agents.executive_assistant import ConversationState, BusinessContext, ConversationIntent
+        from langchain_core.messages import HumanMessage, AIMessage
+
+        executed = []
+
+        async def _capture(task):
+            executed.append(task)
+            return SpecialistResult(
+                status=SpecialistStatus.COMPLETED, domain="social_media",
+                payload={}, confidence=0.9, summary_for_ea="Done.",
+            )
+
+        spec = _make_specialist()
+        spec.execute_task = _capture
+        ea.delegation_registry = DelegationRegistry()
+        ea.delegation_registry.register(spec)
+
+        state = ConversationState(
+            messages=[HumanMessage(content="No, cancel that")],
+            customer_id="test_cust", conversation_id="conv_1",
+            business_context=BusinessContext(business_name="X"),
+            current_intent=ConversationIntent.TASK_DELEGATION,
+            active_delegation={
+                "domain": "social_media",
+                "original_task": "transfer $500 to vendor",
+                "pending_confirmation": {
+                    "action": {"type": "transfer", "amount": 500},
+                    "risk": "high",
+                    "specialist_result": {
+                        "status": "needs_confirmation",
+                        "domain": "social_media",
+                        "payload": {"amount": 500},
+                        "confidence": 0.9,
+                    },
+                },
+            },
+        )
+
+        out = await ea._delegate_to_specialist(state)
+
+        # Specialist was NOT re-invoked
+        assert len(executed) == 0
+        # Pending confirmation cleared
+        assert out.active_delegation is None
+        # Customer gets a cancellation message
+        assert isinstance(out.messages[-1], AIMessage)
+        response = out.messages[-1].content
+        assert len(response) > 0
+        assert "cancel" in response.lower()
+
+    @pytest.mark.asyncio
+    async def test_confirmation_persisted_to_redis(self, ea, state):
+        """NEEDS_CONFIRMATION delegation state must be saved to Redis so the
+        next turn can handle confirm/decline."""
+        spec = _make_specialist(result=SpecialistResult(
+            status=SpecialistStatus.NEEDS_CONFIRMATION,
+            domain="social_media", payload={"amount": 500}, confidence=0.9,
+            summary_for_ea="Transfer $500.",
+            action_risk="high",
+            pending_action={"type": "transfer", "amount": 500},
+        ))
+        ea.delegation_registry = DelegationRegistry()
+        ea.delegation_registry.register(spec)
+
+        from src.agents.executive_assistant import ConversationChannel
+        await ea.handle_customer_interaction(
+            message="transfer $500 to vendor",
+            channel=ConversationChannel.CHAT,
+            conversation_id="conv_confirm",
+        )
+
+        ea.memory.store_conversation_context.assert_awaited()
+        _, saved = ea.memory.store_conversation_context.await_args.args
+        assert "active_delegation" in saved
+        assert saved["active_delegation"] is not None
+        assert "pending_confirmation" in saved["active_delegation"]
+
+    @pytest.mark.asyncio
+    async def test_medium_risk_not_confirmed(self, ea, state):
+        """NEEDS_CONFIRMATION with action_risk=medium → treat as COMPLETED
+        (only HIGH requires confirmation)."""
+        spec = _make_specialist(result=SpecialistResult(
+            status=SpecialistStatus.NEEDS_CONFIRMATION,
+            domain="social_media", payload={"post_id": "p_1"}, confidence=0.8,
+            summary_for_ea="Post scheduled.",
+            action_risk="medium",
+            pending_action={"type": "schedule_post"},
+        ))
+        ea.delegation_registry = DelegationRegistry()
+        ea.delegation_registry.register(spec)
+        state.delegation_target = "social_media"
+
+        out = await ea._delegate_to_specialist(state)
+
+        # Medium risk: auto-approved, no pending confirmation
+        assert out.active_delegation is None
+        from langchain_core.messages import AIMessage
+        assert isinstance(out.messages[-1], AIMessage)
+        response = out.messages[-1].content
+        assert len(response) > 0
+        # Should be a completion response, not a confirmation prompt
+        assert "confirm" not in response.lower()
+        assert "cancel" not in response.lower()
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_message_defaults_to_decline(self, ea):
+        """Ambiguous message (neither clearly yes nor no) → safe default: decline."""
+        from src.agents.executive_assistant import ConversationState, BusinessContext, ConversationIntent
+        from langchain_core.messages import HumanMessage, AIMessage
+
+        executed = []
+
+        async def _capture(task):
+            executed.append(task)
+            return SpecialistResult(
+                status=SpecialistStatus.COMPLETED, domain="social_media",
+                payload={}, confidence=0.9, summary_for_ea="Done.",
+            )
+
+        spec = _make_specialist()
+        spec.execute_task = _capture
+        ea.delegation_registry = DelegationRegistry()
+        ea.delegation_registry.register(spec)
+
+        state = ConversationState(
+            messages=[HumanMessage(content="Hmm, I'm not sure about that")],
+            customer_id="test_cust", conversation_id="conv_1",
+            business_context=BusinessContext(business_name="X"),
+            current_intent=ConversationIntent.TASK_DELEGATION,
+            active_delegation={
+                "domain": "social_media",
+                "original_task": "transfer $500",
+                "pending_confirmation": {
+                    "action": {"type": "transfer", "amount": 500},
+                    "risk": "high",
+                    "specialist_result": {
+                        "status": "needs_confirmation",
+                        "domain": "social_media",
+                        "payload": {"amount": 500},
+                        "confidence": 0.9,
+                    },
+                },
+            },
+        )
+
+        out = await ea._delegate_to_specialist(state)
+
+        # Ambiguous → decline (safe default). Specialist NOT invoked.
+        assert len(executed) == 0
+        assert out.active_delegation is None
+        assert isinstance(out.messages[-1], AIMessage)
+        assert "cancel" in out.messages[-1].content.lower()
+
+    @pytest.mark.asyncio
+    async def test_confirm_but_specialist_fails_falls_back(self, ea):
+        """Customer confirms but specialist fails on execution → fallback."""
+        from src.agents.executive_assistant import ConversationState, BusinessContext, ConversationIntent
+        from langchain_core.messages import HumanMessage, AIMessage
+
+        spec = _make_specialist(result=SpecialistResult(
+            status=SpecialistStatus.FAILED, domain="social_media",
+            payload={}, confidence=0.0, error="Service unavailable",
+        ))
+        ea.delegation_registry = DelegationRegistry()
+        ea.delegation_registry.register(spec)
+
+        state = ConversationState(
+            messages=[HumanMessage(content="Yes, proceed")],
+            customer_id="test_cust", conversation_id="conv_1",
+            business_context=BusinessContext(business_name="X"),
+            current_intent=ConversationIntent.TASK_DELEGATION,
+            active_delegation={
+                "domain": "social_media",
+                "original_task": "transfer $500",
+                "pending_confirmation": {
+                    "action": {"type": "transfer", "amount": 500},
+                    "risk": "high",
+                    "specialist_result": {
+                        "status": "needs_confirmation",
+                        "domain": "social_media",
+                        "payload": {"amount": 500},
+                        "confidence": 0.9,
+                    },
+                },
+            },
+        )
+
+        out = await ea._delegate_to_specialist(state)
+
+        # Failed after confirmation → fallback, delegation cleared
+        assert out.active_delegation is None
+        assert isinstance(out.messages[-1], AIMessage)
+        # Customer should still get *some* response (fallback)
+        assert len(out.messages[-1].content) > 0

@@ -1307,6 +1307,10 @@ The key difference: automation tools give you software to configure. I give you 
         """
         last_message = state.messages[-1].content if state.messages else ""
 
+        # --- Pending confirmation flow (HIGH-risk action confirm/decline) ---
+        if state.active_delegation and "pending_confirmation" in state.active_delegation:
+            return await self._handle_pending_confirmation(state, last_message)
+
         if state.active_delegation:
             domain = state.active_delegation["domain"]
             original_task = state.active_delegation.get("original_task", last_message)
@@ -1373,10 +1377,124 @@ The key difference: automation tools give you software to configure. I give you 
             state.messages.append(AIMessage(content=result.clarification_question))
             return state
 
+        if result.status == SpecialistStatus.NEEDS_CONFIRMATION:
+            # Only HIGH risk requires customer confirmation. Medium/low
+            # are auto-approved and treated as COMPLETED.
+            if result.action_risk == "high":
+                state.active_delegation = {
+                    "domain": domain,
+                    "original_task": original_task,
+                    "pending_confirmation": {
+                        "action": result.pending_action or {},
+                        "risk": "high",
+                        "specialist_result": result.to_dict(),
+                    },
+                }
+                # Present the action to the customer for confirmation
+                summary = result.summary_for_ea or "perform this action"
+                prompt = (
+                    f"I'd like to confirm before proceeding: {summary} "
+                    f"Would you like me to go ahead? Please confirm or decline."
+                )
+                state.messages.append(AIMessage(content=prompt))
+                return state
+            # Medium/low risk: auto-approve, fall through to COMPLETED path
+
         # COMPLETED: weave the specialist's structured result into the EA's
         # conversational voice. When an LLM is available we let it phrase;
         # otherwise we fall back to the specialist's summary_for_ea hint.
         state.active_delegation = None
+        response = await self._synthesize_specialist_result(result, state.business_context)
+        state.messages.append(AIMessage(content=response))
+        return state
+
+    # Positive/negative signal words for confirmation detection.
+    # Decline is checked first; if both match, we decline (safe default).
+    _CONFIRM_PATTERNS = re.compile(
+        r"\b(?:yes|yeah|yep|confirm|go\s+ahead|proceed|approve|do\s+it|ok(?:ay)?)\b",
+        re.IGNORECASE,
+    )
+    # "sure" is only a confirm if not preceded by "not" — handled via a
+    # negative-lookbehind pattern checked separately.
+    _SURE_CONFIRM = re.compile(r"(?<!\bnot\s)(?<!\bnot\s\s)\bsure\b", re.IGNORECASE)
+    _DECLINE_PATTERNS = re.compile(
+        r"\b(?:no|not\b|nope|cancel|decline|stop|don'?t|never\s+mind|abort|not\s+sure)\b",
+        re.IGNORECASE,
+    )
+
+    async def _handle_pending_confirmation(
+        self, state: ConversationState, last_message: str
+    ) -> ConversationState:
+        """Handle a follow-up turn where the customer confirms or declines
+        a HIGH-risk action that was previously presented for confirmation.
+
+        Reads ``state.active_delegation["pending_confirmation"]`` which has::
+
+            {
+                "action": dict,              # from SpecialistResult.pending_action
+                "risk": "high",
+                "specialist_result": dict,   # full SpecialistResult.to_dict()
+            }
+
+        Confirmation detection: ``_DECLINE_PATTERNS`` is checked first. If
+        both confirm and decline signals are present (e.g. "yes but no"),
+        or neither is present (ambiguous), we default to **decline** — the
+        safe side for destructive operations.
+        """
+        pc = state.active_delegation["pending_confirmation"]
+        domain = state.active_delegation["domain"]
+        original_task = state.active_delegation.get("original_task", "")
+
+        is_confirm = bool(
+            self._CONFIRM_PATTERNS.search(last_message)
+            or self._SURE_CONFIRM.search(last_message)
+        )
+        is_decline = bool(self._DECLINE_PATTERNS.search(last_message))
+
+        # Ambiguous: if both or neither match, default to decline (safe side)
+        if is_decline or not is_confirm:
+            state.active_delegation = None
+            state.messages.append(AIMessage(
+                content="Understood — I've cancelled that action. Let me know if there's anything else I can help with."
+            ))
+            return state
+
+        # Customer confirmed — re-invoke the specialist to execute
+        specialist = self.delegation_registry.get(domain)
+        if specialist is None:
+            state.active_delegation = None
+            state.messages.append(AIMessage(
+                content="I'm sorry, I couldn't complete that action. The service is temporarily unavailable."
+            ))
+            return state
+
+        try:
+            domain_memories = await self.memory.search_business_knowledge(
+                f"{domain} {original_task}", limit=5
+            )
+        except Exception:
+            domain_memories = []
+
+        task = SpecialistTask(
+            description=f"CONFIRMED: {original_task}",
+            customer_id=self.customer_id,
+            business_context=state.business_context,
+            domain_memories=domain_memories,
+            prior_turns=[
+                {"role": "specialist", "content": f"Awaiting confirmation for: {pc['action']}"},
+                {"role": "customer", "content": last_message},
+            ],
+        )
+
+        result = await self.delegation_registry.execute(
+            specialist, task, timeout=self.specialist_timeout
+        )
+
+        state.active_delegation = None
+
+        if result.status == SpecialistStatus.FAILED:
+            return await self._handle_general_assistance(state)
+
         response = await self._synthesize_specialist_result(result, state.business_context)
         state.messages.append(AIMessage(content=response))
         return state

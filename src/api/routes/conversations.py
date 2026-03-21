@@ -83,6 +83,24 @@ async def post_message(
             detail="Assistant temporarily unavailable.",
         )
 
+    # --- Output sanitization ------------------------------------------
+    output_pipeline = getattr(request.app.state, "output_pipeline", None)
+    if output_pipeline is not None:
+        sanitize_result = output_pipeline.sanitize(response_text, customer_id=customer_id)
+        response_text = sanitize_result.text
+        if sanitize_result.redactions:
+            audit_logger = getattr(request.app.state, "audit_logger", None)
+            if audit_logger is not None:
+                from src.safety.audit import AuditEvent, AuditEventType
+                try:
+                    await audit_logger.log(AuditEvent(
+                        event_type=AuditEventType.PII_REDACTION,
+                        customer_id=customer_id,
+                        details={"redaction_count": len(sanitize_result.redactions)},
+                    ))
+                except Exception:
+                    logger.debug("Failed to log PII redaction audit event")
+
     # --- Persistence side effect -------------------------------------
     # Write-after: only persist once we have a reply to persist. A
     # failed EA call doesn't leave a half-recorded exchange in the DB.

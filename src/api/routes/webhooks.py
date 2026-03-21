@@ -54,10 +54,12 @@ async def whatsapp_webhook(
     # Build an EA handler bound to this customer's EA instance.
     # Timeout prevents a hung EA from blocking Twilio's retry window —
     # non-2xx causes duplicate message storms.
+    output_pipeline = getattr(request.app.state, "output_pipeline", None)
+
     async def ea_handler(*, message: str, conversation_id: str) -> str:
         ea = await ea_registry.get(customer_id)
         try:
-            return await asyncio.wait_for(
+            reply = await asyncio.wait_for(
                 ea.handle_customer_interaction(
                     message=message,
                     channel=ConversationChannel.WHATSAPP,
@@ -71,6 +73,24 @@ async def whatsapp_webhook(
                 customer_id, conversation_id, EA_CALL_TIMEOUT,
             )
             return ""
+
+        # Output sanitization for WhatsApp
+        if output_pipeline and reply:
+            sanitize_result = output_pipeline.sanitize(reply, customer_id=customer_id)
+            reply = sanitize_result.text
+            if sanitize_result.redactions:
+                audit_logger = getattr(request.app.state, "audit_logger", None)
+                if audit_logger is not None:
+                    from src.safety.audit import AuditEvent, AuditEventType
+                    try:
+                        await audit_logger.log(AuditEvent(
+                            event_type=AuditEventType.PII_REDACTION,
+                            customer_id=customer_id,
+                            details={"redaction_count": len(sanitize_result.redactions)},
+                        ))
+                    except Exception:
+                        logger.debug("Failed to log PII redaction audit event")
+        return reply
 
     for event in events:
         if isinstance(event, IncomingMessage):
