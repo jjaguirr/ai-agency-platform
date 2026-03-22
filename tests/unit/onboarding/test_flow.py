@@ -145,6 +145,12 @@ class TestQuickWin:
         assert "briefing" in reply.lower() or "morning" in reply.lower()
 
     async def test_accepting_quick_win_enables_briefing(self, flow, fake_redis):
+        """BriefingSettings.enabled defaults to True — pre-seed it False
+        so the test actually proves the flow *flipped* it, not that the
+        default survived untouched."""
+        await fake_redis.set("settings:cust_a", json.dumps({
+            "briefing": {"enabled": False},
+        }))
         await self._run_to_quick_win(flow, "consulting")
 
         await flow.handle("cust_a", "yes please")

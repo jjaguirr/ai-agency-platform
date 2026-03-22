@@ -26,10 +26,11 @@ class TestSettingsSeeding:
 
         raw = await fake_redis.get("settings:demo_acme")
         settings = json.loads(raw)
+        # Prove the seeder wrote *non-default* values. briefing.enabled
+        # defaults to True so asserting it proves nothing; these don't:
         assert settings["working_hours"]["start"] != "09:00" or \
-               settings["working_hours"]["timezone"] != "UTC"  # non-default
-        assert settings["briefing"]["enabled"] is True
-        assert settings["personality"]["tone"] == "friendly"
+               settings["working_hours"]["timezone"] != "UTC"
+        assert settings["personality"]["tone"] == "friendly"  # default: professional
 
     async def test_onboarding_marked_complete(self, fake_redis):
         await seed_demo_account(fake_redis, "demo_acme")

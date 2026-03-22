@@ -25,12 +25,17 @@ class TestInitialState:
         assert state.status == "not_started"
         assert state.step == OnboardingStep.INTRO
 
-    async def test_initialize_sets_not_started(self, fake_redis):
+    async def test_initialize_writes_key(self, fake_redis):
+        """Unseen customers *default* to not_started via get(), so the
+        only way to prove initialize() did work is to check the key
+        actually landed in Redis."""
         store = OnboardingStateStore(fake_redis)
 
+        assert await fake_redis.get("onboarding:cust_fresh") is None
         await store.initialize("cust_fresh")
-        state = await store.get("cust_fresh")
+        assert await fake_redis.get("onboarding:cust_fresh") is not None
 
+        state = await store.get("cust_fresh")
         assert state.status == "not_started"
         assert state.step == OnboardingStep.INTRO
         assert state.collected == {}
@@ -134,12 +139,26 @@ class TestTenantIsolation:
         assert parsed["step"] == OnboardingStep.BUSINESS_CONTEXT.value
 
 
-class TestCompletionNeverRepeats:
+class TestInitializeIdempotence:
     async def test_completed_stays_completed_after_initialize(self, fake_redis):
         """Re-provisioning a completed customer must not reset onboarding."""
         store = OnboardingStateStore(fake_redis)
         await store.complete("cust_done")
 
-        await store.initialize("cust_done")  # idempotent no-op
+        await store.initialize("cust_done")
 
         assert await store.is_complete("cust_done")
+
+    async def test_in_progress_not_reset_by_initialize(self, fake_redis):
+        """Customer mid-flow, ops re-runs provisioning — must not lose
+        their progress."""
+        store = OnboardingStateStore(fake_redis)
+        await store.advance("cust_mid", OnboardingStep.PREFERENCES,
+                            collected={"business_context": "retail"})
+
+        await store.initialize("cust_mid")
+
+        state = await store.get("cust_mid")
+        assert state.status == "in_progress"
+        assert state.step == OnboardingStep.PREFERENCES
+        assert state.collected == {"business_context": "retail"}

@@ -144,8 +144,10 @@ class TestDemoMode:
 
         raw = await _read(fake_server, "settings:demo_acme")
         settings = json.loads(raw)
+        # tone defaults to "professional" — this proves demo seeding
+        # wrote non-default values. (briefing.enabled defaults to True,
+        # so asserting on it would be happy-green.)
         assert settings["personality"]["tone"] == "friendly"
-        assert settings["briefing"]["enabled"] is True
 
     async def test_demo_false_uses_normal_seeding(
         self, mock_orchestrator, fake_server
