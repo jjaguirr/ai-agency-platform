@@ -1649,13 +1649,16 @@ The key difference: automation tools give you software to configure. I give you 
 
         The specialist provides summary_for_ea as a hint but the EA owns
         phrasing. With an LLM we prompt it to speak as the configured
-        persona; without, the hint IS the response (it's already prose).
+        persona; without, tone-aware formatting is applied directly.
         """
+        tone = self._personality.get("tone", "professional")
+        tone_guidance = _TONE_GUIDANCE.get(tone, _TONE_GUIDANCE["professional"])
+
         if self.llm and result.summary_for_ea:
             synthesis_prompt = (
                 f"You are {self._personality['name']}, the Executive Assistant for {context.business_name or 'the customer'}. "
                 f"A specialist on your team just checked something for the customer. "
-                f"Relay this naturally in your own voice — warm, concise, no jargon:\n\n"
+                f"Relay this naturally in your own voice. {tone_guidance}\n\n"
                 f"{result.summary_for_ea}\n\n"
                 f"Supporting data: {json.dumps(result.payload)}"
             )
@@ -1665,7 +1668,46 @@ The key difference: automation tools give you software to configure. I give you 
             except Exception as e:
                 logger.warning(f"Synthesis LLM call failed, using specialist summary: {e}")
 
-        return result.summary_for_ea or f"I checked on that — here's what I found: {json.dumps(result.payload)}"
+        return self._apply_tone(result, tone)
+
+    @staticmethod
+    def _apply_tone(result: SpecialistResult, tone: str) -> str:
+        """Tone-aware formatting for the no-LLM path.
+
+        Professional: summary as-is (current behaviour).
+        Concise: strip filler, just the data.
+        Friendly: casual framing.
+        Detailed: append structured payload info.
+        """
+        summary = result.summary_for_ea
+        payload_json = json.dumps(result.payload)
+
+        if not summary:
+            return f"I checked on that — here's what I found: {payload_json}"
+
+        if tone == "concise":
+            # Strip common preamble patterns
+            import re as _re
+            stripped = _re.sub(
+                r"^(I can see|Here'?s what I found:?|I found that|Let me share)\s*",
+                "", summary, flags=_re.IGNORECASE,
+            ).strip()
+            return stripped or summary
+
+        if tone == "friendly":
+            return f"All done! {summary}"
+
+        if tone == "detailed":
+            details = ", ".join(
+                f"{k}: {v}" for k, v in result.payload.items()
+                if k != "memories_consulted"
+            )
+            if details:
+                return f"{summary}\n\nDetails: {details}"
+            return summary
+
+        # professional (default) or unknown
+        return summary
 
     async def _handle_general_assistance(self, state: ConversationState) -> ConversationState:
         """Handle general business assistance requests"""
