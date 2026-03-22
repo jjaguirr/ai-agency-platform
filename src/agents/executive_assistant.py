@@ -1648,24 +1648,35 @@ The key difference: automation tools give you software to configure. I give you 
         """Turn a specialist's structured payload into an EA-voiced response.
 
         The specialist provides summary_for_ea as a hint but the EA owns
-        phrasing. With an LLM we prompt it to speak as the configured
-        persona; without, the hint IS the response (it's already prose).
+        phrasing. Tone comes from customer personality settings and is
+        applied here, not in specialist code — the specialist does the
+        same work regardless of how the result is phrased.
         """
+        from src.agents import tone as tone_mod
+
+        # Personality is cosmetic (see _load_personality) — a caller
+        # that bypassed __init__ or a failed Redis load leaves it unset.
+        # Degrade to defaults rather than crash.
+        personality = getattr(self, "_personality", None) or _DEFAULT_PERSONALITY
+        current_tone = personality.get("tone", "professional")
+
         if self.llm and result.summary_for_ea:
             synthesis_prompt = (
-                f"You are {self._personality['name']}, the Executive Assistant for {context.business_name or 'the customer'}. "
-                f"A specialist on your team just checked something for the customer. "
-                f"Relay this naturally in your own voice — warm, concise, no jargon:\n\n"
-                f"{result.summary_for_ea}\n\n"
+                f"You are {personality['name']}, the Executive Assistant "
+                f"for {context.business_name or 'the customer'}. A specialist "
+                f"on your team just checked something. Relay it in your own "
+                f"voice.\n\n"
+                f"Tone: {tone_mod.guidance(current_tone)}\n\n"
+                f"Result: {result.summary_for_ea}\n"
                 f"Supporting data: {json.dumps(result.payload)}"
             )
             try:
                 llm_response = await self.llm.ainvoke([HumanMessage(content=synthesis_prompt)])
                 return llm_response.content
             except Exception as e:
-                logger.warning(f"Synthesis LLM call failed, using specialist summary: {e}")
+                logger.warning(f"Synthesis LLM call failed, using tone renderer: {e}")
 
-        return result.summary_for_ea or f"I checked on that — here's what I found: {json.dumps(result.payload)}"
+        return tone_mod.render(result, current_tone)
 
     async def _handle_general_assistance(self, state: ConversationState) -> ConversationState:
         """Handle general business assistance requests"""

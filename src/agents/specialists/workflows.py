@@ -2,15 +2,21 @@
 Workflow specialist — automations through n8n.
 
 Fourth specialist. The framework contract holds unchanged: assess_task
-is cheap keyword scoring, execute_task is intent-dispatch. The new
-routing tension is with scheduling: both domains hear "schedule," but
+is cheap keyword scoring, execute_task is intent-dispatch. The routing
+tension is with scheduling: both domains hear "schedule," but
 recurrence markers ("every week," "automatically," "recurring") are
 ours, calendar nouns ("meeting," "appointment") are theirs.
 
-Seams: WorkflowStore, WorkflowCatalog, and an N8nClient factory. All
-optional — the no-arg constructor works so the EA's importlib loop can
-instantiate it, but execute degrades to "not configured" until a store
-is wired in.
+Contextual suggestions (optional, via ``proactive_state`` +
+``interaction_context``): when the delegation history shows repeated
+queries on a topic (three invoice mentions, say) and no matching
+workflow exists, the list response offers to set one up. Cooldowns
+prevent repeat suggestions; existing workflows suppress them.
+
+Seams: WorkflowStore, WorkflowCatalog, N8nClient factory,
+ProactiveStateStore. All optional — the no-arg constructor works so
+the EA's importlib loop can instantiate it, but execute degrades to
+"not configured" until a store is wired in.
 """
 from __future__ import annotations
 
@@ -29,6 +35,7 @@ from src.workflows.customizer import WorkflowCustomizer, IncompleteCustomization
 
 if TYPE_CHECKING:
     from src.agents.executive_assistant import BusinessContext
+    from src.proactive.state import ProactiveStateStore
     from src.workflows.store import WorkflowStore
     from src.workflows.catalog import WorkflowCatalog
     from src.workflows.client import N8nClient
@@ -91,15 +98,31 @@ _TIME_RE = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", re.IGNORECASE)
 
 class WorkflowSpecialist(SpecialistAgent):
 
+    # Usage-pattern suggestions — keyword → human-readable workflow
+    # label. A topic must appear at least SUGGEST_THRESHOLD times in
+    # recent delegation history before we mention it, and once we do
+    # we cool down for SUGGEST_COOLDOWN_SEC so the customer isn't
+    # nagged every turn.
+    SUGGEST_THRESHOLD = 3
+    SUGGEST_COOLDOWN_SEC = 21600  # 6h
+    _SUGGESTION_TOPICS = {
+        "invoice": "invoice tracker",
+        "report": "scheduled report",
+        "reminder": "payment reminders",
+    }
+
     def __init__(
         self,
         store: Optional["WorkflowStore"] = None,
         catalog: Optional["WorkflowCatalog"] = None,
         n8n_client_factory: Optional[Callable[..., "N8nClient"]] = None,
+        *,
+        proactive_state: Optional["ProactiveStateStore"] = None,
     ):
         self._store = store
         self._catalog = catalog
         self._client_factory = n8n_client_factory
+        self._proactive = proactive_state
 
     @property
     def domain(self) -> str:
@@ -186,26 +209,72 @@ class WorkflowSpecialist(SpecialistAgent):
 
     async def _handle_list(self, task: SpecialistTask, text: str) -> SpecialistResult:
         wfs = await self._store.list_workflows(task.customer_id)
+        suggestion = await self._maybe_suggest(task, wfs)
+
         if not wfs:
-            return SpecialistResult(
-                status=SpecialistStatus.COMPLETED,
-                domain=self.domain,
-                payload={"workflows": []},
-                confidence=0.9,
-                summary_for_ea="You have no automations running right now.",
+            summary = "You have no automations running right now."
+        else:
+            active = [w for w in wfs if w["status"] == "active"]
+            names = ", ".join(w["name"] for w in wfs)
+            summary = (
+                f"You have {len(wfs)} automation"
+                f"{'s' if len(wfs) != 1 else ''} "
+                f"({len(active)} active): {names}."
             )
-        active = [w for w in wfs if w["status"] == "active"]
-        names = ", ".join(w["name"] for w in wfs)
+        if suggestion:
+            summary = f"{summary} {suggestion}"
+
         return SpecialistResult(
             status=SpecialistStatus.COMPLETED,
             domain=self.domain,
             payload={"workflows": wfs},
             confidence=0.9,
-            summary_for_ea=(
-                f"You have {len(wfs)} automation{'s' if len(wfs) != 1 else ''} "
-                f"({len(active)} active): {names}."
-            ),
+            summary_for_ea=summary,
         )
+
+    async def _maybe_suggest(
+        self, task: SpecialistTask, existing: List[Dict],
+    ) -> Optional[str]:
+        """Usage-based suggestion from recent delegation history.
+
+        Fires only when: (a) a topic keyword appears ≥ SUGGEST_THRESHOLD
+        times in recent delegations, (b) no existing workflow covers it,
+        (c) we haven't suggested it recently. Best-effort throughout —
+        a failure here never blocks the listing.
+        """
+        ictx = task.interaction_context
+        if ictx is None or self._proactive is None:
+            return None
+
+        history = " ".join(
+            d.get("task", "") for d in ictx.delegation_history
+        ).lower()
+        existing_names = " ".join(w.get("name", "") for w in existing).lower()
+
+        for kw, label in self._SUGGESTION_TOPICS.items():
+            if history.count(kw) < self.SUGGEST_THRESHOLD:
+                continue
+            if kw in existing_names:
+                continue
+            try:
+                if await self._proactive.suggestion_cooling_down(
+                    task.customer_id, kw,
+                ):
+                    continue
+                await self._proactive.record_suggestion(
+                    task.customer_id, kw, self.SUGGEST_COOLDOWN_SEC,
+                )
+            except Exception:
+                logger.exception(
+                    "Suggestion cooldown check failed for customer=%s",
+                    task.customer_id,
+                )
+                return None
+            return (
+                f"You ask about {kw}s a lot — want me to set up "
+                f"an automated {label}?"
+            )
+        return None
 
     # --- Pause / resume / delete --------------------------------------------
 

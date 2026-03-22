@@ -1,11 +1,15 @@
 """
 Finance specialist agent.
 
-Second specialist in the delegation framework, proving the contract
-holds without framework changes. Handles expense tracking, cash flow
-summaries, and spending queries — all from conversation data passed
-in through SpecialistTask. No external accounting integrations, no
-direct memory-client access.
+Handles expense tracking, cash-flow summaries, and spending queries —
+all from conversation data passed in through SpecialistTask. No
+external accounting integrations, no direct memory-client access.
+
+Pattern awareness (optional, via ``proactive_state``): per-category
+running averages so "$800 for Adobe" against a $200 software baseline
+gets an anomaly mention in the response; per-category budgets surfaced
+in summaries; month-over-month period comparisons. All best-effort —
+a missing store or Redis hiccup leaves the base response untouched.
 
 Routing overlap with social_media is the interesting bit: "$500 on
 Facebook ads" is a finance action (track it) even though Facebook is
@@ -17,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import date
 from typing import Any, Dict, List, Optional, Protocol, TYPE_CHECKING
 
 from src.agents.base.specialist import (
@@ -248,7 +253,8 @@ class FinanceSpecialist(SpecialistAgent):
         if self._is_portfolio_query(text):
             return await self._handle_portfolio_valuation(task)
         if self._is_summary_query(text):
-            return self._handle_summary(task)
+            result = self._handle_summary(task)
+            return await self._enrich_summary(task, result)
 
         result = self._handle_expense_entry(task)
         # Proactive side channel: feed the transaction baseline and flag
@@ -260,9 +266,13 @@ class FinanceSpecialist(SpecialistAgent):
             and result.status == SpecialistStatus.COMPLETED
             and (amount := result.payload.get("amount")) is not None
         ):
-            await self._maybe_stage_anomaly(
-                task.customer_id, amount, result.payload.get("category", ""),
+            category = result.payload.get("category", "")
+            note = await self._record_and_describe_pattern(
+                task.customer_id, amount, category,
             )
+            if note:
+                result.summary_for_ea = f"{result.summary_for_ea} {note}"
+            await self._maybe_stage_anomaly(task.customer_id, amount, category)
         return result
 
     # --- Intent routing (internal) ------------------------------------------
@@ -345,6 +355,92 @@ class FinanceSpecialist(SpecialistAgent):
             confidence=0.85,
             summary_for_ea=summary,
         )
+
+    async def _record_and_describe_pattern(
+        self, customer_id: str, amount: float, category: str,
+    ) -> Optional[str]:
+        """Feed per-category stats and return a pattern note for the
+        response if this expense deviates from the category baseline.
+
+        Separate from _maybe_stage_anomaly: that one feeds the proactive
+        channel (heartbeat → notification); this one enriches the
+        immediate reply ("higher than your usual software spend").
+        """
+        try:
+            baseline = await self._proactive.get_category_baseline(
+                customer_id, category,
+            )
+            await self._proactive.record_category_transaction(
+                customer_id, category, amount,
+            )
+            if baseline is not None and amount > baseline * self.ANOMALY_MULTIPLIER:
+                return (
+                    f"That's higher than your usual {category} spend "
+                    f"(~${baseline:,.0f})."
+                )
+        except Exception:
+            logger.exception(
+                "Category pattern hook failed for customer=%s; continuing",
+                customer_id,
+            )
+        return None
+
+    async def _enrich_summary(
+        self, task: SpecialistTask, result: SpecialistResult,
+    ) -> SpecialistResult:
+        """Add budget + period-comparison context to a summary result.
+
+        Best-effort — a missing store or a Redis hiccup leaves the
+        original summary untouched.
+        """
+        if self._proactive is None or result.status != SpecialistStatus.COMPLETED:
+            return result
+        category = result.payload.get("category")
+        if not category:
+            return result
+
+        extras: List[str] = []
+        try:
+            budget = await self._proactive.get_budget(
+                task.customer_id, category,
+            )
+            if budget is not None:
+                spent = result.payload.get("total", 0.0)
+                extras.append(
+                    f"That's ${spent:,.0f} of your ${budget:,.0f} "
+                    f"{category} budget."
+                )
+
+            this_period = date.today().strftime("%Y-%m")
+            prev = date.today().replace(day=1)
+            prev_period = (prev.replace(month=prev.month - 1)
+                           if prev.month > 1
+                           else prev.replace(year=prev.year - 1, month=12)
+                           ).strftime("%Y-%m")
+            cur = await self._proactive.get_period_spend(
+                task.customer_id, category, this_period,
+            )
+            prev_spend = await self._proactive.get_period_spend(
+                task.customer_id, category, prev_period,
+            )
+            if cur is not None and prev_spend:
+                delta = (cur - prev_spend) / prev_spend * 100
+                direction = "up" if delta > 0 else "down"
+                extras.append(
+                    f"{direction.capitalize()} {abs(delta):.0f}% "
+                    f"from last month."
+                )
+        except Exception:
+            logger.exception(
+                "Summary enrichment failed for customer=%s; continuing",
+                task.customer_id,
+            )
+
+        if extras:
+            result.summary_for_ea = (
+                f"{result.summary_for_ea} {' '.join(extras)}"
+            )
+        return result
 
     async def _maybe_stage_anomaly(
         self, customer_id: str, amount: float, category: str,

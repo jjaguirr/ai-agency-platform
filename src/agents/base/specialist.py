@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.agents.executive_assistant import BusinessContext
+    from src.agents.context import InteractionContext
     from src.proactive.triggers import ProactiveTrigger
 
 # ActionRisk lives in safety.models (single source of truth for the
@@ -66,6 +67,10 @@ class SpecialistTask:
     business_context: "BusinessContext"
     domain_memories: List[Dict[str, Any]]
     prior_turns: List[Dict[str, str]] = field(default_factory=list)
+    # Cross-domain snapshot assembled by the EA. Optional so older
+    # construction paths (offline scripts, direct unit tests) keep
+    # working; specialists degrade gracefully when it's absent.
+    interaction_context: Optional["InteractionContext"] = None
 
 
 @dataclass

@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from collections import Counter
 from datetime import datetime, timezone, date
 from typing import Any, Dict, List, Optional
 
@@ -241,3 +242,123 @@ class ProactiveStateStore:
     ) -> None:
         key = _key(customer_id, "wf_last_exec", workflow_id)
         await self._r.set(key, execution_id)
+
+    # -- Per-category transaction stats (finance pattern awareness) ----------
+    # Same running-average shape as the global tx_stats, keyed by category.
+    # Lets the finance specialist say "higher than your usual software
+    # spend" without a $50 subscription looking anomalous against $2k ads.
+
+    async def record_category_transaction(
+        self, customer_id: str, category: str, amount: float,
+    ) -> None:
+        key = _key(customer_id, "tx_cat", category)
+        pipe = self._r.pipeline()
+        pipe.hincrby(key, "count", 1)
+        pipe.hincrbyfloat(key, "sum", amount)
+        await pipe.execute()
+
+    async def get_category_baseline(
+        self, customer_id: str, category: str,
+    ) -> Optional[float]:
+        key = _key(customer_id, "tx_cat", category)
+        raw = await self._r.hgetall(key)
+        if not raw:
+            return None
+        stats = {
+            (k.decode() if isinstance(k, bytes) else k):
+            (v.decode() if isinstance(v, bytes) else v)
+            for k, v in raw.items()
+        }
+        count = int(stats.get("count", 0))
+        if count < self._TX_MIN_SAMPLES:
+            return None
+        return float(stats.get("sum", 0.0)) / count
+
+    # -- Budgets -------------------------------------------------------------
+
+    async def set_budget(
+        self, customer_id: str, category: str, limit: float,
+    ) -> None:
+        key = _key(customer_id, "budget")
+        await self._r.hset(key, category, str(limit))
+
+    async def get_budget(
+        self, customer_id: str, category: str,
+    ) -> Optional[float]:
+        key = _key(customer_id, "budget")
+        val = await self._r.hget(key, category)
+        if val is None:
+            return None
+        return float(val.decode() if isinstance(val, bytes) else val)
+
+    # -- Period spend (month-over-month comparison) --------------------------
+    # Keyed by YYYY-MM. Accumulates so the finance specialist can say
+    # "up 15% from last month" without re-parsing memories every time.
+
+    async def record_period_spend(
+        self, customer_id: str, category: str, period: str, amount: float,
+    ) -> None:
+        key = _key(customer_id, "period", period)
+        await self._r.hincrbyfloat(key, category, amount)
+
+    async def get_period_spend(
+        self, customer_id: str, category: str, period: str,
+    ) -> Optional[float]:
+        key = _key(customer_id, "period", period)
+        val = await self._r.hget(key, category)
+        if val is None:
+            return None
+        return float(val.decode() if isinstance(val, bytes) else val)
+
+    # -- Scheduling preferences (learned from past bookings) -----------------
+    # Stored as a bounded list of (duration_min, hour) samples. The
+    # specialist derives modal duration and preferred hour on read —
+    # cheap enough at tens of samples, and keeps the write path simple.
+
+    _SCHED_MAX_SAMPLES = 30
+
+    async def record_meeting_booked(
+        self, customer_id: str, *, duration_min: int, hour: int,
+    ) -> None:
+        key = _key(customer_id, "sched_prefs")
+        pipe = self._r.pipeline()
+        pipe.rpush(key, json.dumps({"d": duration_min, "h": hour}))
+        pipe.ltrim(key, -self._SCHED_MAX_SAMPLES, -1)
+        await pipe.execute()
+
+    async def get_scheduling_prefs(
+        self, customer_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        key = _key(customer_id, "sched_prefs")
+        raw = await self._r.lrange(key, 0, -1)
+        if not raw:
+            return None
+        samples = [
+            json.loads(s.decode() if isinstance(s, bytes) else s)
+            for s in raw
+        ]
+        durations = [s["d"] for s in samples]
+        hours = [s["h"] for s in samples]
+        return {
+            "durations": durations,
+            "preferred_duration": Counter(durations).most_common(1)[0][0],
+            "preferred_hour": Counter(hours).most_common(1)[0][0],
+            "sample_count": len(samples),
+        }
+
+    # -- Suggestion cooldowns (workflow specialist) --------------------------
+    # Thin wrappers over the generic cooldown mechanism — kept separate
+    # so the namespace is explicit and the default window is shorter
+    # (suggestions cool down for hours, not days).
+
+    async def record_suggestion(
+        self, customer_id: str, topic: str, window_seconds: int = 21600,
+    ) -> None:
+        await self.record_cooldown(
+            customer_id, f"suggest:{topic}", window_seconds,
+        )
+
+    async def suggestion_cooling_down(
+        self, customer_id: str, topic: str,
+    ) -> bool:
+        return await self.is_cooling_down(customer_id, f"suggest:{topic}")
