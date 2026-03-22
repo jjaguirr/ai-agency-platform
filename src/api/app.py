@@ -252,6 +252,10 @@ def create_default_app() -> FastAPI:  # pragma: no cover
     # can close what the startup branch opened.
     pg_pool_box: list[asyncpg.Pool] = []
 
+    # --- Onboarding ---
+    from src.onboarding.state import OnboardingStateStore
+    onboarding_store = OnboardingStateStore(redis_client)
+
     # --- Proactive intelligence ---
     from src.proactive.state import ProactiveStateStore
     from src.proactive.gate import NoiseGate
@@ -357,5 +361,6 @@ def create_default_app() -> FastAPI:  # pragma: no cover
         safety_pipeline=safety_pipeline,
         safety_config=safety_cfg,
         n8n_client=n8n_client,
+        onboarding_state_store=onboarding_store,
         lifespan=lifespan,
     )
