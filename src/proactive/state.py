@@ -324,3 +324,23 @@ class ProactiveStateStore:
         if val is None:
             return 0
         return int(val.decode() if isinstance(val, bytes) else val)
+
+    # -- Topic counting (workflow suggestion triggers) -------------------------
+
+    async def increment_topic_count(
+        self, customer_id: str, topic: str,
+    ) -> int:
+        key = _key(customer_id, "wf_topic_counts")
+        result = await self._r.hincrby(key, topic, 1)
+        return int(result)
+
+    async def get_topic_counts(
+        self, customer_id: str,
+    ) -> Dict[str, int]:
+        key = _key(customer_id, "wf_topic_counts")
+        raw = await self._r.hgetall(key)
+        return {
+            (k.decode() if isinstance(k, bytes) else k):
+            int(v.decode() if isinstance(v, bytes) else v)
+            for k, v in raw.items()
+        }
