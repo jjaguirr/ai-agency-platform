@@ -71,6 +71,57 @@ async def post_message(
     else:
         message_to_ea = req.message
 
+    # --- Onboarding intercept -----------------------------------------
+    # If the customer hasn't completed onboarding, route to the guided
+    # flow instead of the EA. Real requests during onboarding fall
+    # through to the EA (detect_real_request heuristic).
+    onboarding_store = getattr(request.app.state, "onboarding_state_store", None)
+    if onboarding_store is not None:
+        onboarding_status = await onboarding_store.get_status(customer_id)
+        if onboarding_status in ("not_started", "in_progress"):
+            from src.onboarding.flow import generate_step_response, detect_real_request
+
+            if not detect_real_request(message_to_ea):
+                onb_state = await onboarding_store.get(customer_id)
+                personality = await _load_personality_from_redis(
+                    request.app.state.redis_client, customer_id,
+                )
+                result = generate_step_response(
+                    step=onb_state.current_step,
+                    customer_message=message_to_ea,
+                    personality=personality,
+                    collected_so_far=onb_state.collected,
+                )
+                if result.settings_update:
+                    await _merge_settings(
+                        request.app.state.redis_client, customer_id,
+                        result.settings_update,
+                    )
+                if result.advance:
+                    new_state = await onboarding_store.advance(
+                        customer_id, result.collected,
+                    )
+                    # The completion step needs no customer input — if we
+                    # just advanced into it, auto-fire it so onboarding
+                    # finishes in the same turn as the quick win.
+                    from src.onboarding.flow import STEP_COMPLETION
+                    if (new_state.status != "completed"
+                            and new_state.current_step == STEP_COMPLETION):
+                        await onboarding_store.advance(customer_id)
+
+                response_text = result.response
+                if pipeline is not None:
+                    response_text = await pipeline.scan_output(
+                        response_text, customer_id,
+                    )
+                return MessageResponse(
+                    response=response_text,
+                    conversation_id=conversation_id,
+                )
+            else:
+                # Real request — let EA handle it, mark interrupted
+                await onboarding_store.mark_interrupted(customer_id)
+
     try:
         ea = await ea_registry.get(customer_id)
         response_text = await asyncio.wait_for(
@@ -172,3 +223,55 @@ async def post_message(
             logger.debug("Proactive inbound hook failed for customer=%s", customer_id)
 
     return MessageResponse(response=response_text, conversation_id=conversation_id)
+
+
+# ── Onboarding helpers ────────────────────────────────────────────────────
+
+import json as _json
+
+_DEFAULT_PERSONALITY = {"tone": "professional", "language": "en", "name": "Assistant"}
+
+
+async def _load_personality_from_redis(redis_client, customer_id: str) -> dict:
+    """Read personality from settings:{customer_id}. Defaults on failure."""
+    try:
+        raw = await redis_client.get(f"settings:{customer_id}")
+        if raw is None:
+            return dict(_DEFAULT_PERSONALITY)
+        decoded = raw.decode() if isinstance(raw, bytes) else raw
+        data = _json.loads(decoded)
+        p = data.get("personality", {})
+        return {
+            "tone": p.get("tone", _DEFAULT_PERSONALITY["tone"]),
+            "language": p.get("language", _DEFAULT_PERSONALITY["language"]),
+            "name": p.get("name", _DEFAULT_PERSONALITY["name"]),
+        }
+    except Exception:
+        logger.debug("Failed to load personality for onboarding, using defaults")
+        return dict(_DEFAULT_PERSONALITY)
+
+
+async def _merge_settings(redis_client, customer_id: str, partial: dict) -> None:
+    """Read-modify-write settings:{customer_id}, merging the partial dict."""
+    try:
+        key = f"settings:{customer_id}"
+        raw = await redis_client.get(key)
+        if raw is None:
+            from ..schemas import Settings
+            current = Settings().model_dump()
+        else:
+            decoded = raw.decode() if isinstance(raw, bytes) else raw
+            current = _json.loads(decoded)
+
+        for section, values in partial.items():
+            if section in current and isinstance(current[section], dict):
+                current[section].update(values)
+            else:
+                current[section] = values
+
+        await redis_client.set(key, _json.dumps(current))
+    except Exception:
+        logger.warning(
+            "Failed to merge settings for customer=%s during onboarding",
+            customer_id, exc_info=True,
+        )
