@@ -51,12 +51,19 @@ class ProvisionRequest(BaseModel):
                     "Omit to auto-generate.",
     )
     tier: Tier = "professional"
+    # Demo mode: skip onboarding, pre-populate sample conversations,
+    # notifications, and configured settings so the dashboard has
+    # content in every section. For prospect evaluation.
+    demo: bool = False
 
 
 class ProvisionResponse(BaseModel):
     customer_id: str
     token: str
     tier: Tier
+    # Pre-shared key for POST /v1/auth/login. None if seeding failed
+    # (Redis unavailable) — the customer can still use the JWT token.
+    dashboard_secret: Optional[str] = None
 
 
 class HistoryMessage(BaseModel):
