@@ -1,8 +1,9 @@
 """
 Conversation history endpoints.
 
-GET /v1/conversations
-  → {conversations: [{id, channel, created_at, updated_at}]}
+GET /v1/conversations?tags=finance&tags=scheduling
+  → {conversations: [{id, channel, created_at, updated_at,
+                       summary, tags, quality_signals}]}
 
 GET /v1/conversations/{conversation_id}/messages
   → {conversation_id, customer_id, messages: [{role, content, timestamp}]}
@@ -34,6 +35,7 @@ async def list_conversations(
     customer_id: str = Depends(get_current_customer),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    tags: list[str] | None = Query(None),
 ):
     repo = request.app.state.conversation_repo
     if repo is None:
@@ -45,7 +47,9 @@ async def list_conversations(
     # via a LATERAL aggregation. Same ordering/paging contract as the
     # plain list_conversations — this is a strict superset.
     convs = await repo.list_conversations_enriched(
-        customer_id=customer_id, limit=limit, offset=offset)
+        customer_id=customer_id, limit=limit, offset=offset,
+        tags=tags,
+    )
     return ConversationListResponse(conversations=convs)
 
 

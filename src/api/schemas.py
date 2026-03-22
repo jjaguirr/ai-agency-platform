@@ -82,6 +82,9 @@ class ConversationSummary(BaseModel):
     # mocks predating this feature) validating cleanly.
     message_count: int = 0
     specialist_domains: list[str] = Field(default_factory=list)
+    summary: Optional[str] = None
+    tags: list[str] = []
+    quality_signals: Optional[dict[str, Any]] = None
 
 
 class ConversationListResponse(BaseModel):
@@ -196,7 +199,7 @@ class AuditListResponse(BaseModel):
     events: list[AuditEventResponse]
 
 
-# --- Analytics ---------------------------------------------------------------
+# --- Analytics (activity + specialist status) --------------------------------
 
 class ActivitySummary(BaseModel):
     date: str
@@ -209,10 +212,51 @@ class SpecialistStatus(BaseModel):
     domain: str
     registered: bool
     operational: bool
-    # Why not operational — n8n error text, "not configured", etc.
-    # None when operational=True.
     detail: Optional[str] = None
 
 
 class SpecialistStatusResponse(BaseModel):
     specialists: list[SpecialistStatus]
+
+
+# --- Analytics (conversation intelligence) -----------------------------------
+
+class TopicBreakdown(BaseModel):
+    domain: str
+    count: int
+    percentage: float
+
+
+class SpecialistPerformance(BaseModel):
+    domain: str
+    delegation_count: int
+    success_rate: float
+    avg_turns: float
+    confirmation_rate: float
+    avg_resolution_seconds: Optional[float] = None
+
+
+class DailyCount(BaseModel):
+    date: str
+    count: int
+
+
+class AnalyticsOverview(BaseModel):
+    total_conversations: int
+    total_delegations: int
+    avg_messages_per_conversation: float
+    escalation_rate: float
+    unresolved_rate: float
+
+
+class AnalyticsTrends(BaseModel):
+    conversations_by_day: list[DailyCount]
+    delegations_by_day: list[DailyCount]
+
+
+class AnalyticsResponse(BaseModel):
+    period: dict[str, str]
+    overview: AnalyticsOverview
+    topics: dict[str, list[TopicBreakdown]]
+    specialist_performance: list[SpecialistPerformance]
+    trends: AnalyticsTrends

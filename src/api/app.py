@@ -43,6 +43,7 @@ def create_app(
     safety_pipeline: Optional[Any] = None,
     safety_config: Optional[Any] = None,
     n8n_client: Optional[Any] = None,
+    analytics_service: Optional[Any] = None,
 ) -> FastAPI:
     """
     Build the API with all dependencies injected.
@@ -61,6 +62,10 @@ def create_app(
     Tests omit it; production supplies one that initialises the port
     allocator, verifies conversation tables exist, and closes Redis +
     Postgres on shutdown.
+
+    `analytics_service` is Optional for the same reason as
+    `conversation_repo`: pre-intelligence tests don't need one. The
+    analytics route returns 503 when it's None.
     """
     app = FastAPI(
         title="AI Agency Platform API",
@@ -84,6 +89,7 @@ def create_app(
     # to report live connected_services.n8n instead of the stored bool.
     # The analytics specialist-status endpoint reuses this same client.
     app.state.n8n_client = n8n_client
+    app.state.analytics_service = analytics_service
 
     # Structured error handling. All paths converge on {type, detail}.
     # Order: specific-first so the Exception catch-all doesn't shadow
@@ -254,10 +260,11 @@ def create_default_app() -> FastAPI:  # pragma: no cover
     noise_gate = NoiseGate(proactive_store)
     dispatcher = DefaultOutboundDispatcher(wa_manager, proactive_store)
     settings_loader = CustomerSettingsLoader(redis_client)
-    heartbeat = HeartbeatDaemon(
-        ea_registry, proactive_store, noise_gate, dispatcher,
-        settings_loader=settings_loader,
-    )
+
+    # --- Conversation intelligence ---
+    from src.intelligence.config import IntelligenceConfig
+
+    intel_cfg = IntelligenceConfig.from_env()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -275,6 +282,48 @@ def create_default_app() -> FastAPI:  # pragma: no cover
                 f"Conversation storage not ready: {e}"
             ) from e
         _app.state.conversation_repo = repo
+
+        # Wire conversation intelligence components (need pool)
+        from src.intelligence.delegation_recorder import DelegationRecorder
+        from src.intelligence.summarizer import ConversationSummarizer
+        from src.intelligence.quality import QualityAnalyzer
+        from src.intelligence.analytics import AnalyticsService
+        from src.intelligence.sweep import IntelligenceSweep
+
+        recorder = DelegationRecorder(pool)
+        _app.state.delegation_recorder = recorder
+        _app.state.analytics_service = AnalyticsService(pool)
+
+        # Wire recorder into EA factory
+        ea_registry.set_post_create_hook(
+            lambda ea: setattr(ea, "delegation_recorder", recorder)
+        )
+
+        # Build intelligence sweep (needs LLM)
+        intelligence_sweep = None
+        try:
+            if _os.getenv("OPENAI_API_KEY"):
+                from langchain_openai import ChatOpenAI
+                llm = ChatOpenAI(model="gpt-4o", temperature=0, max_tokens=300)
+                summarizer = ConversationSummarizer(llm=llm, max_messages=intel_cfg.summary_max_messages)
+                quality_analyzer = QualityAnalyzer(intel_cfg)
+                intelligence_sweep = IntelligenceSweep(
+                    conversation_repo=repo,
+                    delegation_recorder=recorder,
+                    summarizer=summarizer,
+                    quality_analyzer=quality_analyzer,
+                    config=intel_cfg,
+                )
+            else:
+                logger.warning("No OpenAI API key — intelligence sweep disabled")
+        except Exception:
+            logger.exception("Failed to initialize intelligence sweep")
+
+        heartbeat = HeartbeatDaemon(
+            ea_registry, proactive_store, noise_gate, dispatcher,
+            settings_loader=settings_loader,
+            intelligence_sweep=intelligence_sweep,
+        )
 
         try:
             await allocator.initialize()

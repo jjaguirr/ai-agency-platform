@@ -43,6 +43,7 @@ class HeartbeatDaemon:
         customer_timeout: float = 30.0,
         clock: Optional[Callable[[], datetime]] = None,
         settings_loader: Optional[CustomerSettingsLoader] = None,
+        intelligence_sweep=None,
     ) -> None:
         self._registry = ea_registry
         self._state = state_store
@@ -52,6 +53,7 @@ class HeartbeatDaemon:
         self._customer_timeout = customer_timeout
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._settings = settings_loader
+        self._intelligence_sweep = intelligence_sweep
         self._task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
 
@@ -150,6 +152,15 @@ class HeartbeatDaemon:
                         "Trigger suppressed for customer=%s: %s (%s)",
                         cid, trigger.title, decision.reason,
                     )
+
+        # Intelligence sweep — summarize idle conversations, compute
+        # quality signals, derive topic tags. Runs after customer checks
+        # so it doesn't starve proactive behaviours.
+        if self._intelligence_sweep is not None:
+            try:
+                await self._intelligence_sweep.run()
+            except Exception:
+                logger.exception("Intelligence sweep failed")
 
     async def _load_configs(
         self, customer_id: str,

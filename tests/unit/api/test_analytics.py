@@ -1,17 +1,7 @@
 """
 GET /v1/analytics/activity    — today's message/delegation/proactive counts
 GET /v1/analytics/specialists — which specialist modules exist + are operational
-
-Both dashboard backend endpoints. Neither writes anything. Both require auth.
-
-Activity reads three Redis sources: our own activity:* counters (messages,
-delegations-by-domain), and ProactiveStateStore.get_daily_count for the
-proactive number. All zero when no traffic yet.
-
-Specialist status iterates the fixed four-domain list. "Registered" means
-the module imports cleanly; "operational" additionally checks external
-deps (only workflows → n8n for now; the others have no external service
-to probe so operational == registered).
+GET /v1/analytics             — conversation intelligence analytics
 """
 import json
 import os
@@ -43,14 +33,15 @@ def auth_headers():
     return {"Authorization": f"Bearer {token}"}
 
 
-def _app(*, redis, proactive_store=None, n8n_client=None):
+def _app(*, redis=None, proactive_store=None, n8n_client=None, analytics_service=None):
     return create_app(
         ea_registry=EARegistry(factory=MagicMock(), max_size=10),
         orchestrator=AsyncMock(),
         whatsapp_manager=MagicMock(),
-        redis_client=redis,
+        redis_client=redis or AsyncMock(),
         proactive_state_store=proactive_store,
         n8n_client=n8n_client,
+        analytics_service=analytics_service,
     )
 
 
@@ -74,19 +65,10 @@ class TestActivityEndpoint:
         assert body["messages_processed"] == 0
         assert body["delegations_by_domain"] == {}
         assert body["proactive_triggers_sent"] == 0
-        # date in the body so the dashboard can label the card.
         assert "date" in body
 
     @pytest.mark.asyncio
     async def test_reflects_seeded_counters(self, fake_redis, auth_headers):
-        """Pre-seed via the counter helpers → endpoint reads them back.
-
-        Uses ASGITransport, not TestClient — TestClient runs the app in
-        a worker-thread event loop, and fakeredis's internal queue is
-        bound to whichever loop created it (this one). Crossing loops
-        gets "Queue bound to a different event loop" swallowed silently
-        by the endpoint's failure-→-zeros fallback.
-        """
         from src.api.activity_counters import incr_messages, incr_delegation
         from src.proactive.state import ProactiveStateStore
 
@@ -112,7 +94,6 @@ class TestActivityEndpoint:
 
     @pytest.mark.asyncio
     async def test_tenant_isolation(self, fake_redis):
-        """Customer B's traffic doesn't show in A's activity."""
         from src.api.activity_counters import incr_messages
         from src.proactive.state import ProactiveStateStore
 
@@ -129,8 +110,6 @@ class TestActivityEndpoint:
         assert resp.json()["messages_processed"] == 0
 
     def test_no_proactive_store_reports_zero(self, fake_redis, auth_headers):
-        """proactive_state_store=None (test configs, early startup) →
-        proactive count is 0, endpoint still works."""
         client = TestClient(_app(redis=fake_redis, proactive_store=None))
         resp = client.get("/v1/analytics/activity", headers=auth_headers)
         assert resp.status_code == 200
@@ -145,9 +124,6 @@ class TestSpecialistStatusEndpoint:
         assert client.get("/v1/analytics/specialists").status_code == 401
 
     def test_lists_all_four_domains(self, fake_redis, auth_headers):
-        """finance, scheduling, social_media, workflows — the full set,
-        regardless of which ones are healthy. Dashboard needs to render
-        four tiles."""
         client = TestClient(_app(redis=fake_redis))
         resp = client.get("/v1/analytics/specialists", headers=auth_headers)
 
@@ -156,9 +132,6 @@ class TestSpecialistStatusEndpoint:
         assert domains == {"finance", "scheduling", "social_media", "workflows"}
 
     def test_specialists_registered_when_modules_import(self, fake_redis, auth_headers):
-        """The four specialist modules exist in this repo → all
-        registered=True. If one ever grows a broken import (optional
-        dep missing, say) this flips and the dashboard shows it red."""
         client = TestClient(_app(redis=fake_redis))
         resp = client.get("/v1/analytics/specialists", headers=auth_headers)
 
@@ -177,8 +150,6 @@ class TestSpecialistStatusEndpoint:
         assert wf["detail"] is None
 
     def test_workflows_not_operational_when_n8n_raises(self, fake_redis, auth_headers):
-        """N8nError → operational=False with the error message in detail
-        so the dashboard can show WHY, not just a red dot."""
         from src.workflows.client import N8nError
         n8n = MagicMock()
         n8n.list_workflows = AsyncMock(side_effect=N8nError("502 bad gateway"))
@@ -191,8 +162,6 @@ class TestSpecialistStatusEndpoint:
         assert "502" in wf["detail"]
 
     def test_workflows_not_operational_without_n8n_client(self, fake_redis, auth_headers):
-        """n8n_client=None → registered but not operational. Module
-        imports fine; there's just nothing to talk to."""
         client = TestClient(_app(redis=fake_redis, n8n_client=None))
         resp = client.get("/v1/analytics/specialists", headers=auth_headers)
 
@@ -203,8 +172,6 @@ class TestSpecialistStatusEndpoint:
 
     def test_non_workflow_specialists_operational_equals_registered(
             self, fake_redis, auth_headers):
-        """finance/scheduling/social_media have no external service to
-        probe yet. operational mirrors registered until they do."""
         client = TestClient(_app(redis=fake_redis))
         resp = client.get("/v1/analytics/specialists", headers=auth_headers)
 
@@ -213,8 +180,6 @@ class TestSpecialistStatusEndpoint:
                 assert s["operational"] == s["registered"]
 
     def test_n8n_probe_failure_does_not_500(self, fake_redis, auth_headers):
-        """Same contract as the settings probe — this is a status page,
-        it reports the failure, it doesn't become the failure."""
         n8n = MagicMock()
         n8n.list_workflows = AsyncMock(side_effect=RuntimeError("weird"))
         client = TestClient(_app(redis=fake_redis, n8n_client=n8n))
@@ -224,10 +189,6 @@ class TestSpecialistStatusEndpoint:
 
 
 # --- Counter bumps from the conversations route -----------------------------
-# The /v1/conversations/message POST should bump the message counter
-# after a successful EA interaction, and the delegation counter if
-# ea.last_specialist_domain is set. Fire-and-forget — a counter failure
-# doesn't 500 the reply.
 
 class TestConversationsRouteBumpsCounters:
     @pytest.mark.asyncio
@@ -245,8 +206,6 @@ class TestConversationsRouteBumpsCounters:
             whatsapp_manager=MagicMock(),
             redis_client=fake_redis,
         )
-        # ASGITransport so the route and the assertion below share one
-        # event loop — fakeredis's connection queue is loop-bound.
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
             resp = await c.post("/v1/conversations/message",
@@ -285,8 +244,6 @@ class TestConversationsRouteBumpsCounters:
     @pytest.mark.asyncio
     async def test_counter_failure_does_not_break_response(
             self, auth_headers):
-        """Counter increment raises → still 200 with the EA reply.
-        The customer sees their answer; ops loses one data point."""
         ea = AsyncMock()
         ea.handle_customer_interaction = AsyncMock(return_value="important reply")
         ea.last_specialist_domain = None
@@ -308,3 +265,124 @@ class TestConversationsRouteBumpsCounters:
 
         assert resp.status_code == 200
         assert resp.json()["response"] == "important reply"
+
+
+# --- GET /v1/analytics (conversation intelligence) --------------------------
+
+class TestAnalyticsAuth:
+    def test_401_without_token(self):
+        client = TestClient(_app())
+        resp = client.get("/v1/analytics")
+        assert resp.status_code == 401
+
+    def test_401_with_expired_token(self):
+        client = TestClient(_app())
+        tok = create_token("cust_a", expires_in=-1)
+        resp = client.get(
+            "/v1/analytics",
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+        assert resp.status_code == 401
+
+
+class TestAnalyticsParams:
+    def test_default_period_is_7d(self):
+        svc = AsyncMock()
+        svc.get_analytics = AsyncMock(return_value={
+            "period": {"start": "2026-03-14T00:00:00Z", "end": "2026-03-21T00:00:00Z"},
+            "overview": {
+                "total_conversations": 0,
+                "total_delegations": 0,
+                "avg_messages_per_conversation": 0.0,
+                "escalation_rate": 0.0,
+                "unresolved_rate": 0.0,
+            },
+            "topics": {"breakdown": []},
+            "specialist_performance": [],
+            "trends": {"conversations_by_day": [], "delegations_by_day": []},
+        })
+        client = TestClient(_app(analytics_service=svc))
+        tok = create_token("cust_a")
+
+        resp = client.get(
+            "/v1/analytics",
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "overview" in body
+        assert "topics" in body
+        assert "specialist_performance" in body
+        assert "trends" in body
+
+        # Verify service called with correct customer_id from JWT
+        svc.get_analytics.assert_awaited_once()
+        call_kwargs = svc.get_analytics.await_args.kwargs
+        assert call_kwargs["customer_id"] == "cust_a"
+        # Default period is 7d — start should be ~7 days before end
+        from datetime import timedelta
+        delta = call_kwargs["end"] - call_kwargs["start"]
+        assert delta == timedelta(days=7)
+
+    def test_tenant_isolation_uses_jwt_customer_id(self):
+        """Service must receive the customer_id from the JWT, not a query param."""
+        svc = AsyncMock()
+        svc.get_analytics = AsyncMock(return_value={
+            "period": {"start": "x", "end": "x"},
+            "overview": {
+                "total_conversations": 0, "total_delegations": 0,
+                "avg_messages_per_conversation": 0.0,
+                "escalation_rate": 0.0, "unresolved_rate": 0.0,
+            },
+            "topics": {"breakdown": []},
+            "specialist_performance": [],
+            "trends": {"conversations_by_day": [], "delegations_by_day": []},
+        })
+        client = TestClient(_app(svc))
+        tok = create_token("cust_b")
+
+        client.get(
+            "/v1/analytics",
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+
+        call_kwargs = svc.get_analytics.await_args.kwargs
+        assert call_kwargs["customer_id"] == "cust_b"
+
+    def test_invalid_period_returns_422(self):
+        client = TestClient(_app())
+        tok = create_token("cust_a")
+
+        resp = client.get(
+            "/v1/analytics?period=invalid",
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+
+        assert resp.status_code == 422
+
+    def test_custom_period_requires_dates(self):
+        svc = AsyncMock()
+        svc.get_analytics = AsyncMock(side_effect=ValueError("start and end required"))
+        client = TestClient(_app(analytics_service=svc))
+        tok = create_token("cust_a")
+
+        resp = client.get(
+            "/v1/analytics?period=custom",
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+
+        assert resp.status_code == 400
+
+
+class TestAnalyticsNoService:
+    def test_returns_503_when_service_unavailable(self):
+        client = TestClient(_app(analytics_service=None))
+        tok = create_token("cust_a")
+
+        resp = client.get(
+            "/v1/analytics",
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+
+        assert resp.status_code == 503
