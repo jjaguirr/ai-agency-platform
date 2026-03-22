@@ -241,3 +241,39 @@ class ProactiveStateStore:
     ) -> None:
         key = _key(customer_id, "wf_last_exec", workflow_id)
         await self._r.set(key, execution_id)
+
+    # -- Budget tracking (finance pattern awareness) -------------------------
+
+    async def set_budget(
+        self, customer_id: str, category: str, limit: float,
+    ) -> None:
+        key = _key(customer_id, "budget", category)
+        await self._r.set(key, str(limit))
+
+    async def get_budget(
+        self, customer_id: str, category: str,
+    ) -> Optional[float]:
+        key = _key(customer_id, "budget", category)
+        val = await self._r.get(key)
+        if val is None:
+            return None
+        raw = val.decode() if isinstance(val, bytes) else val
+        return float(raw)
+
+    async def get_all_budgets(self, customer_id: str) -> Dict[str, float]:
+        # Scan for budget keys. Pattern: proactive:{cid}:budget:*
+        prefix = _key(customer_id, "budget", "")
+        budgets: Dict[str, float] = {}
+        cursor = 0
+        while True:
+            cursor, keys = await self._r.scan(cursor, match=f"{prefix}*", count=50)
+            for k in keys:
+                raw_key = k.decode() if isinstance(k, bytes) else k
+                category = raw_key.split(":")[-1]
+                val = await self._r.get(k)
+                if val is not None:
+                    raw_val = val.decode() if isinstance(val, bytes) else val
+                    budgets[category] = float(raw_val)
+            if cursor == 0:
+                break
+        return budgets

@@ -338,6 +338,9 @@ class FinanceSpecialist(SpecialistAgent):
             + ")."
         )
 
+        # Pattern awareness: deviation notes and budget tracking
+        summary += self._enrichment_notes(task, amount, category)
+
         return SpecialistResult(
             status=SpecialistStatus.COMPLETED,
             domain=self.domain,
@@ -390,7 +393,7 @@ class FinanceSpecialist(SpecialistAgent):
 
         # Cash flow query → income/expense split
         if "cash flow" in text:
-            return self._build_cashflow_result(entries, len(memories))
+            return self._build_cashflow_result(entries, len(memories), task=task)
 
         # Category-specific spend query → filter + total
         requested_cat = self._requested_category(text)
@@ -419,9 +422,11 @@ class FinanceSpecialist(SpecialistAgent):
             )
 
         # Generic spending summary → all-category breakdown
-        return self._build_cashflow_result(entries, len(memories))
+        return self._build_cashflow_result(entries, len(memories), task=task)
 
-    def _build_cashflow_result(self, entries: List[Dict], mem_count: int) -> SpecialistResult:
+    def _build_cashflow_result(
+        self, entries: List[Dict], mem_count: int, task: Optional[SpecialistTask] = None,
+    ) -> SpecialistResult:
         income = sum(e["amount"] for e in entries if e["is_income"])
         expenses = sum(e["amount"] for e in entries if not e["is_income"])
         net = income - expenses
@@ -453,6 +458,14 @@ class FinanceSpecialist(SpecialistAgent):
                 top = max(category_totals.items(), key=lambda kv: kv[1])
                 summary += f" Biggest outlay: {top[0]} at ${top[1]:,.2f}."
 
+            # Baseline comparison when context available
+            if task and task.interaction_context and task.interaction_context.finance_snapshot:
+                baseline = task.interaction_context.finance_snapshot.transaction_baseline
+                if baseline is not None and baseline > 0 and len(entries) > 0:
+                    avg_expense = expenses / max(1, sum(1 for e in entries if not e["is_income"]))
+                    if avg_expense > 0:
+                        summary += f" Average transaction: ${avg_expense:,.0f} (baseline ~${baseline:,.0f})."
+
         return SpecialistResult(
             status=SpecialistStatus.COMPLETED,
             domain=self.domain,
@@ -460,6 +473,44 @@ class FinanceSpecialist(SpecialistAgent):
             confidence=0.7,
             summary_for_ea=summary,
         )
+
+    # --- Pattern awareness (enrichment) ------------------------------------
+
+    @staticmethod
+    def _enrichment_notes(task: SpecialistTask, amount: float, category: str) -> str:
+        """Append deviation and budget notes when context is available."""
+        ic = task.interaction_context
+        if ic is None or ic.finance_snapshot is None:
+            return ""
+
+        parts: list[str] = []
+        snap = ic.finance_snapshot
+
+        # Deviation from baseline
+        if snap.transaction_baseline is not None and snap.transaction_baseline > 0:
+            ratio = amount / snap.transaction_baseline
+            if ratio > 2.0:
+                parts.append(
+                    f" That's higher than your usual ~${snap.transaction_baseline:,.0f}."
+                )
+
+        # Budget tracking
+        budget_info = snap.budget_status.get(category)
+        if budget_info and "limit" in budget_info:
+            limit = budget_info["limit"]
+            spent = budget_info.get("spent", 0) + amount
+            remaining = limit - spent
+            if remaining > 0:
+                parts.append(
+                    f" Budget: ${spent:,.0f} of ${limit:,.0f} {category} budget used"
+                    f" (${remaining:,.0f} remaining)."
+                )
+            else:
+                parts.append(
+                    f" Heads up: that puts you over your ${limit:,.0f} {category} budget."
+                )
+
+        return "".join(parts)
 
     # --- Portfolio valuation ------------------------------------------------
 
