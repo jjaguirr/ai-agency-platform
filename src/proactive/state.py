@@ -277,3 +277,50 @@ class ProactiveStateStore:
             if cursor == 0:
                 break
         return budgets
+
+    # -- Scheduling preference learning ----------------------------------------
+    # Durations stored as a capped list (most recent 50). Hours stored in a
+    # sorted set keyed by score (frequency). Buffer is a plain string.
+
+    _SCHED_MAX_SAMPLES = 50
+
+    async def record_scheduling_preference(
+        self, customer_id: str, duration_minutes: int, hour: int,
+    ) -> None:
+        dur_key = _key(customer_id, "sched", "durations")
+        hour_key = _key(customer_id, "sched", "preferred_hours")
+        pipe = self._r.pipeline()
+        pipe.rpush(dur_key, str(duration_minutes))
+        pipe.ltrim(dur_key, -self._SCHED_MAX_SAMPLES, -1)
+        pipe.zincrby(hour_key, 1, str(hour))
+        await pipe.execute()
+
+    async def get_preferred_duration(self, customer_id: str) -> Optional[int]:
+        key = _key(customer_id, "sched", "durations")
+        raw = await self._r.lrange(key, 0, -1)
+        if not raw:
+            return None
+        durations = [
+            int(v.decode() if isinstance(v, bytes) else v) for v in raw
+        ]
+        # Return mode (most common duration)
+        from collections import Counter
+        counts = Counter(durations)
+        return counts.most_common(1)[0][0]
+
+    async def get_preferred_hours(self, customer_id: str) -> List[int]:
+        key = _key(customer_id, "sched", "preferred_hours")
+        # ZREVRANGE returns highest-score first
+        raw = await self._r.zrevrange(key, 0, -1)
+        return [int(v.decode() if isinstance(v, bytes) else v) for v in raw]
+
+    async def set_buffer_minutes(self, customer_id: str, minutes: int) -> None:
+        key = _key(customer_id, "sched", "buffer_minutes")
+        await self._r.set(key, str(minutes))
+
+    async def get_buffer_minutes(self, customer_id: str) -> int:
+        key = _key(customer_id, "sched", "buffer_minutes")
+        val = await self._r.get(key)
+        if val is None:
+            return 0
+        return int(val.decode() if isinstance(val, bytes) else val)

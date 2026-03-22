@@ -55,6 +55,9 @@ class CustomerPreferences:
     working_hours: Optional[Dict[str, str]] = None
     business_type: str = ""
     language: str = "en"
+    preferred_meeting_duration: Optional[int] = None  # minutes
+    preferred_hours: List[int] = field(default_factory=list)
+    buffer_minutes: int = 0
 
 
 @dataclass
