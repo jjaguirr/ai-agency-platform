@@ -93,7 +93,9 @@ class TestCategoryAverages:
 
         assert result.status == SpecialistStatus.COMPLETED
         text = result.summary_for_ea.lower()
-        assert "higher than" in text or "usual" in text or "typical" in text
+        # Anomaly phrasing + the category it's anomalous *for*.
+        assert "higher than" in text
+        assert "software" in text
 
     @pytest.mark.asyncio
     async def test_normal_expense_no_anomaly_mention(
@@ -183,7 +185,12 @@ class TestPeriodComparison:
         ))
 
         text = result.summary_for_ea.lower()
-        assert any(m in text for m in ("up", "down", "from last", "vs last"))
+        # "up" alone matches "set up", "breakdown" contains "down" —
+        # require the full comparison phrase and the delta marker.
+        assert "from last month" in text
+        assert "%" in text
+        # 2300 vs 2000 is a 15% increase.
+        assert "15%" in text
 
 
 # --- Tenant isolation -------------------------------------------------------

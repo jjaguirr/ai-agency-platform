@@ -103,8 +103,10 @@ class TestUsageBasedSuggestions:
 
         assert result.status == SpecialistStatus.COMPLETED
         text = result.summary_for_ea.lower()
+        # Must name the pattern AND offer to act on it. "suggest" alone
+        # is too common a substring to be a reliable signal.
         assert "invoice" in text
-        assert any(w in text for w in ("want me to", "suggest", "could set up"))
+        assert "want me to set up" in text
 
     @pytest.mark.asyncio
     async def test_suggestion_has_cooldown(self, store, ctx):

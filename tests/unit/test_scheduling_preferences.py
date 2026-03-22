@@ -204,7 +204,10 @@ class TestConflictSurfacing:
 
         assert result.status == SpecialistStatus.COMPLETED
         text = result.summary_for_ea.lower()
-        assert "conflict" in text or "overlap" in text or "design review" in text.lower()
+        # The conflicting event's title must be named — a generic
+        # "there's a conflict" isn't actionable.
+        assert "design review" in text
+        assert "overlap" in text
 
     @pytest.mark.asyncio
     async def test_no_conflict_no_mention(self, store, ctx):
@@ -217,6 +220,7 @@ class TestConflictSurfacing:
         ))
         text = result.summary_for_ea.lower()
         assert "conflict" not in text
+        assert "overlap" not in text
 
 
 # --- Tenant isolation -------------------------------------------------------

@@ -116,9 +116,17 @@ class TestToneDifferentiation:
         """Detailed tone surfaces extra data the other tones omit —
         e.g. the end time, which implies duration."""
         ea._personality = {"tone": "detailed", "language": "en", "name": "Aria"}
-        out = await ea._synthesize_specialist_result(scheduling_result, ctx)
-        # Detailed mentions either end time or the event title.
-        assert "15:30" in out or "Strategy sync" in out
+        detailed = await ea._synthesize_specialist_result(scheduling_result, ctx)
+
+        ea._personality = {"tone": "professional", "language": "en", "name": "Aria"}
+        prof = await ea._synthesize_specialist_result(scheduling_result, ctx)
+
+        # The end time (15:30) is only in payload, not summary_for_ea —
+        # detailed must surface it, professional must not. Previous
+        # assertion also accepted "Strategy sync", which is already in
+        # the base summary and so passed for every tone.
+        assert "15:30" in detailed
+        assert "15:30" not in prof
 
 
 # --- Fallback behaviour -----------------------------------------------------
@@ -167,6 +175,8 @@ class TestLLMPromptIncludesTone:
         await ea._synthesize_specialist_result(scheduling_result, ctx)
 
         prompt = fake_llm.ainvoke.call_args[0][0][0].content
-        # _TONE_GUIDANCE["concise"] mentions "brief" — the LLM should
-        # get that instruction, not just the tone label.
-        assert "brief" in prompt.lower() or "concise" in prompt.lower()
+        # Assert on the guidance *text*, not the tone label — a prompt
+        # that said only "Tone: concise" with no instruction would
+        # otherwise pass.
+        from src.agents.tone import guidance
+        assert guidance("concise") in prompt

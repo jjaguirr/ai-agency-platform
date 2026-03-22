@@ -46,16 +46,25 @@ class TestReadOnly:
         with pytest.raises(FrozenInstanceError):
             snap.summary = "mutated"  # type: ignore[misc]
 
-    def test_recent_turns_is_tuple_not_list(self):
-        """Lists are mutable — caller must not be able to append."""
-        ctx = InteractionContext(
+    @pytest.mark.asyncio
+    async def test_builder_coerces_lists_to_tuples(self):
+        """Lists are mutable — even when the caller passes lists, the
+        built context must expose tuples so specialists can't append.
+
+        Previously this test passed a tuple literal directly to the
+        constructor, making isinstance(..., tuple) trivially true.
+        """
+        builder = ContextBuilder(sources={})
+        ctx = await builder.build(
             customer_id="c1",
-            recent_turns=({"role": "user", "content": "hi"},),
+            primary_domain=None,
+            recent_turns=[{"role": "user", "content": "hi"}],  # list in
             personality={},
-            domains={},
-            delegation_history=(),
+            delegation_history=[{"domain": "finance"}],  # list in
         )
         assert isinstance(ctx.recent_turns, tuple)
+        assert isinstance(ctx.delegation_history, tuple)
+        assert not hasattr(ctx.recent_turns, "append")
 
 
 # --- Builder: lazy loading --------------------------------------------------
