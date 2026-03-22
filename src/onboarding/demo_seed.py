@@ -6,7 +6,7 @@ Populates everything the dashboard reads so every card has content:
   - onboarding state (completed — demo users skip the wizard)
   - notifications (morning briefing, finance alert, workflow status)
   - activity counters (messages + delegations for today's card)
-  - conversations (3-5 exchanges across specialist domains, if a
+  - conversations (sample exchanges across specialist domains, if a
     Postgres repo is provided)
 
 All keys are customer-scoped. Called by the provisioning endpoint when

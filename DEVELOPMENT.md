@@ -36,11 +36,18 @@ uv run pytest
 
 Svelte + Vite in `dashboard/`; FastAPI serves the built assets at `/` with the API at `/v1/`. Requires Node 22+.
 
-**Seed a login (once per customer):**
+**Provision a customer (creates the dashboard login):**
 ```bash
-uv run scripts/seed_dashboard_auth.py demo_jewelry
-# → prints the generated secret; use customer_id + secret at the login form
+curl -X POST :8000/v1/customers/provision -d '{"customer_id":"demo_jewelry"}'
+# → {customer_id, token, dashboard_secret} — use customer_id + secret at the login form
 ```
+
+Add `"demo": true` to the body to skip the onboarding wizard and
+pre-populate settings, notifications, activity counters, and sample
+conversations — useful for prospect eval or screenshot prep.
+
+`scripts/seed_dashboard_auth.py <customer_id>` still works for
+re-keying an existing customer without re-provisioning.
 
 **Full stack (built assets, one process):**
 ```bash

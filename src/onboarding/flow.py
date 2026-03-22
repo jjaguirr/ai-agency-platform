@@ -1,5 +1,6 @@
 """
-Onboarding flow — the 5-step guided conversation.
+Onboarding flow — 4-step guided conversation (intro → business context
+→ preferences → quick win).
 
 Each ``handle()`` call consumes one customer message and returns one EA
 reply (or None once onboarding is complete — signals the caller to route

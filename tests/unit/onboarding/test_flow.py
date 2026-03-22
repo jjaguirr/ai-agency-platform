@@ -1,5 +1,5 @@
 """
-Onboarding flow — the 5-step guided conversation.
+Onboarding flow — 4-step guided conversation.
 
 The flow is stateful across turns via OnboardingStateStore. Each call
 to ``handle()`` consumes one customer message and returns one EA reply.
