@@ -136,7 +136,14 @@ class HeartbeatDaemon:
                             await self._state.record_cooldown(
                                 cid, trigger.cooldown_key, config.cooldown_window,
                             )
-                        await self._state.increment_daily_count(cid)
+                        # Same customer-local date the gate just used, so
+                        # read and increment hit the same Redis bucket.
+                        local_date = self._clock().astimezone(
+                            NoiseGate._tz(config)
+                        ).date()
+                        await self._state.increment_daily_count(
+                            cid, on_date=local_date,
+                        )
                         # Record briefing time so it doesn't fire twice same day
                         if trigger.trigger_type == "morning_briefing":
                             await self._state.set_last_briefing_time(

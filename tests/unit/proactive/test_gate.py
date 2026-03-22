@@ -177,6 +177,10 @@ class TestQuietHours:
 
 
 class TestDailyCap:
+    # Seed counts on the same date the gate will read — NOW.date() under
+    # the default UTC config. Without this the seed and check could land
+    # in different buckets if the wall clock rolls past midnight mid-test.
+
     async def test_allowed_under_cap(self, gate, config):
         decision = await gate.evaluate(
             CID, _trigger(cooldown_key=None), config, now=NOW,
@@ -185,7 +189,7 @@ class TestDailyCap:
 
     async def test_suppressed_at_cap(self, gate, store, config):
         for _ in range(config.daily_cap):
-            await store.increment_daily_count(CID)
+            await store.increment_daily_count(CID, on_date=NOW.date())
         decision = await gate.evaluate(
             CID, _trigger(cooldown_key=None), config, now=NOW,
         )
@@ -194,7 +198,7 @@ class TestDailyCap:
 
     async def test_urgent_exempt_from_cap(self, gate, store, config):
         for _ in range(config.daily_cap):
-            await store.increment_daily_count(CID)
+            await store.increment_daily_count(CID, on_date=NOW.date())
         decision = await gate.evaluate(
             CID, _trigger(priority=Priority.URGENT, cooldown_key=None),
             config, now=NOW,
@@ -203,12 +207,36 @@ class TestDailyCap:
 
     async def test_custom_cap(self, gate, store):
         cfg = NoiseConfig(daily_cap=2)
-        await store.increment_daily_count(CID)
-        await store.increment_daily_count(CID)
+        await store.increment_daily_count(CID, on_date=NOW.date())
+        await store.increment_daily_count(CID, on_date=NOW.date())
         decision = await gate.evaluate(
             CID, _trigger(cooldown_key=None), cfg, now=NOW,
         )
         assert not decision.allowed
+
+    async def test_cap_keyed_by_customer_local_date(self, gate, store):
+        """2026-03-19 23:00 UTC is already 2026-03-20 in Auckland (UTC+13).
+        The cap bucket must follow the customer's local calendar."""
+        cfg = NoiseConfig(daily_cap=1, timezone="Pacific/Auckland")
+        utc_23 = datetime(2026, 3, 19, 23, 0, tzinfo=timezone.utc)
+        from datetime import date
+        await store.increment_daily_count(CID, on_date=date(2026, 3, 20))
+        decision = await gate.evaluate(
+            CID,
+            _trigger(priority=Priority.URGENT, cooldown_key=None),  # bypass quiet hours
+            cfg, now=utc_23,
+        )
+        # URGENT bypasses cap — but we want to verify the read path, so
+        # drop to HIGH and confirm it hits the Auckland-dated bucket.
+        decision = await gate.evaluate(
+            CID,
+            _trigger(priority=Priority.HIGH, cooldown_key=None),
+            NoiseConfig(daily_cap=1, timezone="Pacific/Auckland",
+                        quiet_start=0, quiet_end=0),  # no quiet hours
+            now=utc_23,
+        )
+        assert not decision.allowed
+        assert "daily_cap" in decision.reason
 
 
 class TestCombined:
@@ -257,9 +285,11 @@ class TestCombined:
         cfg = NoiseConfig(quiet_start=22, quiet_end=7, timezone="UTC")
         # Cooldown active
         await store.record_cooldown(CID, "test:trigger", window_seconds=3600)
-        # Cap exceeded
+        # Cap exceeded — seed on UTC date of the pinned now (23:00 UTC → 2026-03-19)
         for _ in range(cfg.daily_cap):
-            await store.increment_daily_count(CID)
+            await store.increment_daily_count(
+                CID, on_date=datetime(2026, 3, 19, tzinfo=timezone.utc).date(),
+            )
         # During quiet hours, with URGENT — cooldown still blocks
         decision = await gate.evaluate(
             CID,

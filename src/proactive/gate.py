@@ -61,22 +61,27 @@ class NoiseGate:
             if self._in_quiet_hours(now, config):
                 return GateDecision(allowed=False, reason="quiet_hours")
 
-        # 4. Daily cap — URGENT exempt
+        # 4. Daily cap — URGENT exempt. Key on the customer's local date
+        #    so the cap resets at their midnight, not UTC midnight.
         if trigger.priority < Priority.URGENT:
-            count = await self._state.get_daily_count(customer_id)
+            local_date = now.astimezone(self._tz(config)).date()
+            count = await self._state.get_daily_count(customer_id, on_date=local_date)
             if count >= config.daily_cap:
                 return GateDecision(allowed=False, reason="daily_cap")
 
         return GateDecision(allowed=True, reason="delivered")
 
     @staticmethod
-    def _in_quiet_hours(now: datetime, config: NoiseConfig) -> bool:
+    def _tz(config: NoiseConfig) -> ZoneInfo:
         try:
-            tz = ZoneInfo(config.timezone)
+            return ZoneInfo(config.timezone)
         except (KeyError, Exception):
             logger.warning("Invalid timezone %r, falling back to UTC", config.timezone)
-            tz = ZoneInfo("UTC")
-        local_hour = now.astimezone(tz).hour
+            return ZoneInfo("UTC")
+
+    @classmethod
+    def _in_quiet_hours(cls, now: datetime, config: NoiseConfig) -> bool:
+        local_hour = now.astimezone(cls._tz(config)).hour
         start, end = config.quiet_start, config.quiet_end
         if start > end:
             # Wraps midnight: e.g. 22:00 – 07:00

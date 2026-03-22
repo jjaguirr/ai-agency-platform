@@ -82,14 +82,23 @@ class ProactiveStateStore:
                 break
 
     # -- Daily message count -------------------------------------------------
+    # Callers pass on_date so the bucket key follows the same clock as the
+    # rest of the gate (customer-local date, injectable for tests). Default
+    # to process-local today only for callers that don't have a clock.
 
-    async def get_daily_count(self, customer_id: str) -> int:
-        key = _key(customer_id, "daily_count", date.today().isoformat())
+    async def get_daily_count(
+        self, customer_id: str, *, on_date: Optional[date] = None,
+    ) -> int:
+        d = on_date or date.today()
+        key = _key(customer_id, "daily_count", d.isoformat())
         val = await self._r.get(key)
         return int(val) if val else 0
 
-    async def increment_daily_count(self, customer_id: str) -> int:
-        key = _key(customer_id, "daily_count", date.today().isoformat())
+    async def increment_daily_count(
+        self, customer_id: str, *, on_date: Optional[date] = None,
+    ) -> int:
+        d = on_date or date.today()
+        key = _key(customer_id, "daily_count", d.isoformat())
         count = await self._r.incr(key)
         # Expire at end of day — generous 48h TTL covers timezone variance
         await self._r.expire(key, 172800)
