@@ -9,6 +9,12 @@ from src.proactive.state import ProactiveStateStore
 from src.proactive.gate import NoiseGate, NoiseConfig, GateDecision
 from src.proactive.triggers import Priority, ProactiveTrigger
 from src.api.ea_registry import EARegistry
+from tests.unit.proactive.conftest import REFERENCE_TIME
+
+
+# Fixed clock at 10:00 UTC — outside default quiet hours. Without this,
+# any daemon tick test flakes when run between 22:00–07:00 UTC.
+CLOCK = lambda: REFERENCE_TIME  # noqa: E731
 
 
 @pytest.fixture
@@ -97,15 +103,21 @@ class TestLifecycle:
 class TestTick:
     async def test_iterates_active_customers(self, registry, store, gate, mock_dispatcher):
         daemon = HeartbeatDaemon(
-            registry, store, gate, mock_dispatcher, tick_interval=0.05,
+            registry, store, gate, mock_dispatcher,
+            tick_interval=0.05, clock=CLOCK,
         )
-        # Add follow-up so behaviors produce a trigger
-        await store.add_follow_up("cust_1", {
-            "id": "fu_1", "commitment": "call John",
-            "deadline": "2026-03-19T12:00:00+00:00",
-        })
+        # Spy on _check_customer to prove every active customer is visited.
+        checked: list[str] = []
+        original = daemon._check_customer
+
+        async def spy(cid, cfg=None):
+            checked.append(cid)
+            return await original(cid, cfg)
+
+        daemon._check_customer = spy
         await daemon._tick()
-        # Daemon ran — no crash
+
+        assert checked == ["cust_1"]
 
     async def test_empty_registry_is_noop(self, store, gate, mock_dispatcher):
         empty_reg = EARegistry(factory=MagicMock(), max_size=10)
@@ -117,7 +129,8 @@ class TestTick:
 
     async def test_approved_triggers_dispatched(self, registry, store, gate, mock_dispatcher):
         daemon = HeartbeatDaemon(
-            registry, store, gate, mock_dispatcher, tick_interval=0.05,
+            registry, store, gate, mock_dispatcher,
+            tick_interval=0.05, clock=CLOCK,
         )
         # Inject a behavior that returns a trigger
         trigger = _trigger()
@@ -129,7 +142,8 @@ class TestTick:
 
     async def test_suppressed_triggers_not_dispatched(self, registry, store, gate, mock_dispatcher):
         daemon = HeartbeatDaemon(
-            registry, store, gate, mock_dispatcher, tick_interval=0.05,
+            registry, store, gate, mock_dispatcher,
+            tick_interval=0.05, clock=CLOCK,
         )
         # LOW priority trigger will be suppressed by default MEDIUM threshold
         trigger = _trigger(priority=Priority.LOW)
@@ -264,7 +278,7 @@ class TestPerCustomerConfig:
         })
         daemon = HeartbeatDaemon(
             registry, store, gate, mock_dispatcher,
-            settings_loader=loader,
+            settings_loader=loader, clock=CLOCK,
         )
         # MEDIUM trigger — would pass the old hardcoded MEDIUM threshold,
         # but should be suppressed by this customer's HIGH threshold.
@@ -282,7 +296,7 @@ class TestPerCustomerConfig:
         })
         daemon = HeartbeatDaemon(
             registry, store, gate, mock_dispatcher,
-            settings_loader=loader,
+            settings_loader=loader, clock=CLOCK,
         )
         low = _trigger(priority=Priority.LOW)
         daemon._get_behaviors = lambda: []
@@ -296,7 +310,7 @@ class TestPerCustomerConfig:
         # No settings seeded — loader returns Settings() defaults.
         daemon = HeartbeatDaemon(
             registry, store, gate, mock_dispatcher,
-            settings_loader=loader,
+            settings_loader=loader, clock=CLOCK,
         )
         # MEDIUM passes default MEDIUM threshold
         medium = _trigger(priority=Priority.MEDIUM)
@@ -310,7 +324,7 @@ class TestPerCustomerConfig:
     ):
         """Backward compat — daemon without a loader still works."""
         daemon = HeartbeatDaemon(
-            registry, store, gate, mock_dispatcher,
+            registry, store, gate, mock_dispatcher, clock=CLOCK,
         )
         medium = _trigger(priority=Priority.MEDIUM)
         daemon._get_behaviors = lambda: []
@@ -335,7 +349,7 @@ class TestPerCustomerConfig:
 
         daemon = HeartbeatDaemon(
             reg, store, gate, mock_dispatcher,
-            settings_loader=loader,
+            settings_loader=loader, clock=CLOCK,
         )
         # Both customers produce a LOW trigger
         low = _trigger(priority=Priority.LOW)
@@ -358,7 +372,7 @@ class TestPerCustomerConfig:
         })
         daemon = HeartbeatDaemon(
             registry, store, gate, mock_dispatcher,
-            settings_loader=loader,
+            settings_loader=loader, clock=CLOCK,
         )
         # Two triggers — cap of 1 means only first gets through
         t1 = _trigger(priority=Priority.MEDIUM)
@@ -378,7 +392,7 @@ class TestPerCustomerConfig:
         })
         daemon = HeartbeatDaemon(
             registry, store, gate, mock_dispatcher,
-            settings_loader=loader,
+            settings_loader=loader, clock=CLOCK,
         )
 
         captured = []

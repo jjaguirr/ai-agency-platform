@@ -52,31 +52,44 @@ from src.agents.executive_assistant import ExecutiveAssistant, ConversationChann
 
 @pytest.fixture
 def test_redis():
-    """Real Redis client with test database."""
+    """Real Redis client with test database. Skips if unreachable."""
     client = redis.Redis(
         host='localhost',
         port=6379,
         db=15,  # Use database 15 for testing
-        decode_responses=True
+        decode_responses=True,
+        socket_connect_timeout=2,
     )
+    try:
+        client.ping()
+    except (redis.ConnectionError, redis.TimeoutError) as e:
+        pytest.skip(f"Redis unavailable at localhost:6379 — {e}")
     yield client
     # Cleanup after test
-    client.flushdb()
+    try:
+        client.flushdb()
+    except redis.RedisError:
+        pass
 
 
 @pytest.fixture
 def test_postgres():
-    """Real PostgreSQL connection with test database."""
-    import psycopg2
-    from psycopg2.extras import RealDictCursor
-    
-    # Use test database
-    conn = psycopg2.connect(
-        host="localhost",
-        database="mcphub_test",  # Test database
-        user="mcphub",
-        password="mcphub_password"
-    )
+    """Real PostgreSQL connection with test database. Skips if unreachable."""
+    try:
+        import psycopg2
+    except ImportError:
+        pytest.skip("psycopg2 not installed")
+
+    try:
+        conn = psycopg2.connect(
+            host="localhost",
+            database="mcphub_test",  # Test database
+            user="mcphub",
+            password="mcphub_password",
+            connect_timeout=2,
+        )
+    except psycopg2.OperationalError as e:
+        pytest.skip(f"Postgres unavailable at localhost:5432 — {e}")
     
     # Create test tables if they don't exist
     with conn.cursor() as cursor:
