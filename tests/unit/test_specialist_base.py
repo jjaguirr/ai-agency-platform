@@ -100,6 +100,34 @@ class TestSpecialistTask:
         )
         assert len(task.prior_turns) == 2
 
+    def test_interaction_context_defaults_to_none(self, ctx):
+        """Existing construction without interaction_context still works."""
+        task = SpecialistTask(
+            description="check engagement",
+            customer_id="cust_abc",
+            business_context=ctx,
+            domain_memories=[],
+        )
+        assert task.interaction_context is None
+
+    def test_interaction_context_round_trips(self, ctx):
+        """New field carries the assembled context through to the specialist."""
+        from src.agents.context import InteractionContext, CustomerPreferences
+        ic = InteractionContext(
+            recent_conversation_summary="Talked about budgets.",
+            customer_preferences=CustomerPreferences(tone="friendly"),
+        )
+        task = SpecialistTask(
+            description="track $500 expense",
+            customer_id="cust_abc",
+            business_context=ctx,
+            domain_memories=[],
+            interaction_context=ic,
+        )
+        assert task.interaction_context is not None
+        assert task.interaction_context.customer_preferences.tone == "friendly"
+        assert task.interaction_context.recent_conversation_summary == "Talked about budgets."
+
 
 # --- SpecialistResult -------------------------------------------------------
 

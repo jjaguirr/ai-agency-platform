@@ -17,6 +17,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from src.agents.context import InteractionContext
     from src.agents.executive_assistant import BusinessContext
     from src.proactive.triggers import ProactiveTrigger
 
@@ -66,6 +67,7 @@ class SpecialistTask:
     business_context: "BusinessContext"
     domain_memories: List[Dict[str, Any]]
     prior_turns: List[Dict[str, str]] = field(default_factory=list)
+    interaction_context: Optional["InteractionContext"] = None
 
 
 @dataclass
