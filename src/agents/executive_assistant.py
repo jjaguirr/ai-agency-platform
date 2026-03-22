@@ -675,6 +675,11 @@ class ExecutiveAssistant:
         # conversation intelligence (topic tagging, specialist metrics).
         self.delegation_recorder = None
 
+        # Optional context assembler — wired by create_default_app.
+        # When present, builds InteractionContext (cross-domain snapshots)
+        # for each delegation. Same injection pattern as audit_logger.
+        self._context_assembler = None
+
         # In-memory conversation history. Populated by handle_customer_interaction,
         # lost on LRU eviction from EARegistry — acceptable for now.
         self._conversation_histories: dict[str, list[dict]] = {}
@@ -1452,12 +1457,25 @@ The key difference: automation tools give you software to configure. I give you 
             logger.warning(f"Memory search failed during delegation, proceeding without: {e}")
             domain_memories = []
 
+        # Assemble cross-domain context if an assembler is wired.
+        # Best-effort: failure → None, delegation proceeds without context.
+        interaction_context = None
+        if self._context_assembler is not None:
+            try:
+                interaction_context = await self._context_assembler.assemble(
+                    self.customer_id,
+                    relevant_domains={domain} if domain else set(),
+                )
+            except Exception as e:
+                logger.warning(f"Context assembly failed, proceeding without: {e}")
+
         task = SpecialistTask(
             description=task_description,
             customer_id=self.customer_id,
             business_context=state.business_context,
             domain_memories=domain_memories,
             prior_turns=prior_turns,
+            interaction_context=interaction_context,
         )
 
         # Record delegation start (fresh delegations only — follow-ups

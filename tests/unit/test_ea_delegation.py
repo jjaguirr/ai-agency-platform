@@ -526,3 +526,95 @@ class TestLastSpecialistDomain:
         )
 
         assert ea.last_specialist_domain is None
+
+
+# --- Context assembler wiring -----------------------------------------------
+
+class TestContextAssemblerWiring:
+    def test_context_assembler_defaults_to_none(self, ea):
+        """Same injection pattern as audit_logger — set by factory, not ctor."""
+        assert ea._context_assembler is None
+
+    @pytest.mark.asyncio
+    async def test_delegation_passes_interaction_context_when_assembler_wired(self, ea, state):
+        """When a ContextAssembler is wired, specialist receives non-None context."""
+        from src.agents.context import ContextAssembler, InteractionContext, CustomerPreferences
+
+        received = []
+
+        async def _capture(task):
+            received.append(task)
+            return SpecialistResult(
+                status=SpecialistStatus.COMPLETED, domain="social_media",
+                payload={}, confidence=0.8, summary_for_ea="ok",
+            )
+
+        spec = _make_specialist()
+        spec.execute_task = _capture
+        ea.delegation_registry = DelegationRegistry()
+        ea.delegation_registry.register(spec)
+        state.delegation_target = "social_media"
+
+        # Wire a mock assembler that returns a minimal InteractionContext
+        assembler = AsyncMock(spec=ContextAssembler)
+        assembler.assemble = AsyncMock(return_value=InteractionContext(
+            customer_preferences=CustomerPreferences(tone="friendly"),
+        ))
+        ea._context_assembler = assembler
+
+        await ea._delegate_to_specialist(state)
+
+        assert len(received) == 1
+        assert received[0].interaction_context is not None
+        assert received[0].interaction_context.customer_preferences.tone == "friendly"
+
+    @pytest.mark.asyncio
+    async def test_delegation_works_without_context_assembler(self, ea, state):
+        """No assembler wired → interaction_context is None, no crash."""
+        received = []
+
+        async def _capture(task):
+            received.append(task)
+            return SpecialistResult(
+                status=SpecialistStatus.COMPLETED, domain="social_media",
+                payload={}, confidence=0.8, summary_for_ea="ok",
+            )
+
+        spec = _make_specialist()
+        spec.execute_task = _capture
+        ea.delegation_registry = DelegationRegistry()
+        ea.delegation_registry.register(spec)
+        state.delegation_target = "social_media"
+        ea._context_assembler = None
+
+        await ea._delegate_to_specialist(state)
+
+        assert len(received) == 1
+        assert received[0].interaction_context is None
+
+    @pytest.mark.asyncio
+    async def test_context_assembly_failure_doesnt_block_delegation(self, ea, state):
+        """Assembler raises → delegation proceeds with None context."""
+        received = []
+
+        async def _capture(task):
+            received.append(task)
+            return SpecialistResult(
+                status=SpecialistStatus.COMPLETED, domain="social_media",
+                payload={}, confidence=0.8, summary_for_ea="ok",
+            )
+
+        spec = _make_specialist()
+        spec.execute_task = _capture
+        ea.delegation_registry = DelegationRegistry()
+        ea.delegation_registry.register(spec)
+        state.delegation_target = "social_media"
+
+        broken_assembler = AsyncMock()
+        broken_assembler.assemble = AsyncMock(side_effect=RuntimeError("assembler boom"))
+        ea._context_assembler = broken_assembler
+
+        await ea._delegate_to_specialist(state)
+
+        assert len(received) == 1
+        assert received[0].interaction_context is None
