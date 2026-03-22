@@ -58,7 +58,7 @@ class TestSeedDemoData:
         notifications = await proactive_store.list_pending_notifications(
             CID, now=datetime.now(timezone.utc),
         )
-        assert len(notifications) >= 3
+        assert len(notifications) == 3
 
     @pytest.mark.asyncio
     async def test_seeds_activity_counters(self, fake_redis, onboarding_store, proactive_store):
@@ -67,7 +67,19 @@ class TestSeedDemoData:
         today = date.today().isoformat()
         raw = await fake_redis.get(f"activity:{CID}:messages:{today}")
         assert raw is not None
-        assert int(raw) > 0
+        assert int(raw) == 47
+
+    @pytest.mark.asyncio
+    async def test_seeds_delegation_counters(self, fake_redis, onboarding_store, proactive_store):
+        await seed_demo_data(fake_redis, CID, onboarding_store, proactive_store)
+
+        today = date.today().isoformat()
+        raw = await fake_redis.get(f"activity:{CID}:delegations:{today}")
+        assert raw is not None
+        delegations = json.loads(raw)
+        assert "finance" in delegations
+        assert "scheduling" in delegations
+        assert delegations["finance"] == 5
 
     @pytest.mark.asyncio
     async def test_tenant_isolated(self, fake_redis, onboarding_store, proactive_store):
@@ -90,7 +102,10 @@ class TestSeedDemoData:
         await seed_demo_data(fake_redis, CID, None, proactive_store)
 
         raw = await fake_redis.get(f"settings:{CID}")
-        assert raw is not None  # Settings still seeded
+        assert raw is not None
+        settings = json.loads(raw)
+        assert settings["personality"]["name"] == "Aria"
+        assert settings["working_hours"]["timezone"] == "America/New_York"
 
     @pytest.mark.asyncio
     async def test_works_without_proactive_store(self, fake_redis, onboarding_store):

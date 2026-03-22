@@ -86,7 +86,7 @@ class TestOnboardingIntercept:
         assert resp.status_code == 200
         body = resp.json()
         # Should get an onboarding intro, not the EA
-        assert "Assistant" in body["response"] or "assistant" in body["response"].lower()
+        assert "Assistant" in body["response"]
         mock_ea.handle_customer_interaction.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -137,10 +137,10 @@ class TestOnboardingIntercept:
 
         # Settings should now have working hours written
         raw = await fake_redis.get(f"settings:{CID}")
-        if raw:
-            settings = json.loads(raw)
-            assert settings["working_hours"]["start"] == "09:00"
-            assert settings["working_hours"]["end"] == "17:00"
+        assert raw is not None, "preferences step must write settings to Redis"
+        settings = json.loads(raw)
+        assert settings["working_hours"]["start"] == "09:00"
+        assert settings["working_hours"]["end"] == "17:00"
 
     @pytest.mark.asyncio
     async def test_full_flow_completes_onboarding(
@@ -249,6 +249,23 @@ class TestOnboardingInterrupt:
         # Should get onboarding response, not EA
         mock_ea.handle_customer_interaction.assert_not_awaited()
         assert "hours" in resp.json()["response"].lower() or "time" in resp.json()["response"].lower()
+
+
+class TestOnboardingResponseShape:
+    @pytest.mark.asyncio
+    async def test_onboarding_response_includes_conversation_id(
+        self, aclient, auth_headers, onboarding_store,
+    ):
+        await onboarding_store.initialize(CID)
+        resp = await aclient.post(
+            "/v1/conversations/message",
+            headers=auth_headers,
+            json={"message": "hello", "channel": "whatsapp"},
+        )
+        body = resp.json()
+        assert "conversation_id" in body
+        assert isinstance(body["conversation_id"], str)
+        assert len(body["conversation_id"]) > 0
 
 
 class TestOnboardingPersonality:

@@ -51,14 +51,22 @@ class ProvisionRequest(BaseModel):
                     "Omit to auto-generate.",
     )
     tier: Tier = "professional"
-    demo: bool = False
+    demo: bool = Field(
+        default=False,
+        description="Seed sample data (settings, notifications, activity) "
+                    "and mark onboarding completed. For demos/prospects.",
+    )
 
 
 class ProvisionResponse(BaseModel):
     customer_id: str
     token: str
     tier: Tier
-    dashboard_secret: Optional[str] = None
+    dashboard_secret: Optional[str] = Field(
+        default=None,
+        description="Secret for dashboard authentication. Always set on "
+                    "successful provision; None only in legacy responses.",
+    )
 
 
 class HistoryMessage(BaseModel):

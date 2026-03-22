@@ -6,6 +6,16 @@ POST /v1/conversations/message
   auth: Bearer token (customer_id claim)
   → {response, conversation_id}
 
+Request lifecycle:
+  1. Input safety gate — reject/sanitize risky input
+  2. Onboarding intercept — if onboarding is incomplete, route to the
+     guided flow instead of the EA (unless the message is a real business
+     request, which falls through to the EA)
+  3. EA call — delegate to the executive assistant
+  4. Output safety gate — redact leaked internals
+  5. Persistence — write exchange to ConversationRepository
+  6. Side effects — activity counters, proactive inbound hook
+
 The EA handles its own partial failures (specialist timeout, LLM degraded)
 and returns a fallback string — those are 200s. We only map to 503 when
 the EA's handle_customer_interaction *raises*, which means an infrastructure

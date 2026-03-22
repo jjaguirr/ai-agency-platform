@@ -43,7 +43,7 @@ class TestStepIntroduction:
         result = generate_step_response(
             STEP_INTRODUCTION, None, DEFAULT_PERSONALITY, {},
         )
-        assert "?" in result.response  # Contains a question
+        assert "business" in result.response.lower()
 
     def test_advance_is_true(self):
         result = generate_step_response(
@@ -64,22 +64,21 @@ class TestStepBusinessContext:
             STEP_BUSINESS_CONTEXT, "I run a restaurant in downtown",
             DEFAULT_PERSONALITY, {},
         )
-        assert result.collected is not None
-        assert "business_type" in result.collected
+        assert result.collected["business_type"] == "restaurant"
 
     def test_parses_consulting(self):
         result = generate_step_response(
             STEP_BUSINESS_CONTEXT, "We're a consulting firm",
             DEFAULT_PERSONALITY, {},
         )
-        assert result.collected["business_type"] is not None
+        assert result.collected["business_type"] == "consulting"
 
     def test_stores_raw_description(self):
         result = generate_step_response(
             STEP_BUSINESS_CONTEXT, "I run a small bakery and café",
             DEFAULT_PERSONALITY, {},
         )
-        assert "business_description" in result.collected
+        assert result.collected["business_description"] == "I run a small bakery and café"
 
     def test_asks_about_preferences(self):
         result = generate_step_response(
@@ -132,12 +131,13 @@ class TestStepPreferences:
         assert wh["end"] == "18:00"
 
     def test_response_mentions_quick_win(self):
-        """After collecting preferences, the response should suggest something."""
+        """After collecting preferences, the response should suggest a feature."""
         result = generate_step_response(
             STEP_PREFERENCES, "9 to 5",
             DEFAULT_PERSONALITY, {"business_type": "restaurant"},
         )
-        assert "?" in result.response  # Contains a suggestion/question
+        response_lower = result.response.lower()
+        assert "reservation" in response_lower or "summary" in response_lower
 
     def test_advance_is_true(self):
         result = generate_step_response(
@@ -187,9 +187,7 @@ class TestStepQuickWin:
             STEP_QUICK_WIN, "no thanks, maybe later",
             DEFAULT_PERSONALITY, {"business_type": "consulting"},
         )
-        # No settings_update or briefing not enabled
-        if result.settings_update:
-            assert result.settings_update.get("briefing", {}).get("enabled") is not True
+        assert result.settings_update is None
 
     def test_advance_is_true(self):
         result = generate_step_response(
@@ -270,7 +268,7 @@ class TestParseWorkingHours:
     def test_with_timezone(self):
         result = parse_working_hours("9am to 5pm Eastern")
         assert result is not None
-        assert "eastern" in result.get("timezone", "").lower() or "east" in result.get("timezone", "").lower()
+        assert result["timezone"] == "US/Eastern"
 
     def test_unparseable_returns_none(self):
         result = parse_working_hours("whenever really")
@@ -279,3 +277,29 @@ class TestParseWorkingHours:
     def test_just_a_number_returns_none(self):
         result = parse_working_hours("42")
         assert result is None
+
+
+class TestEdgeCases:
+    def test_out_of_range_step_returns_completion(self):
+        result = generate_step_response(99, None, DEFAULT_PERSONALITY, {})
+        assert "set" in result.response.lower() or "dashboard" in result.response.lower()
+        assert result.advance is True
+
+    def test_detect_real_request_none(self):
+        assert detect_real_request(None) is False
+
+    def test_affirmative_with_punctuation(self):
+        """_is_affirmative strips punctuation — 'Yes!' and 'Sure.' should match."""
+        result_yes = generate_step_response(
+            STEP_QUICK_WIN, "Yes!",
+            DEFAULT_PERSONALITY, {"business_type": "consulting"},
+        )
+        assert result_yes.settings_update is not None
+        assert result_yes.settings_update["briefing"]["enabled"] is True
+
+        result_sure = generate_step_response(
+            STEP_QUICK_WIN, "Sure.",
+            DEFAULT_PERSONALITY, {"business_type": "consulting"},
+        )
+        assert result_sure.settings_update is not None
+        assert result_sure.settings_update["briefing"]["enabled"] is True

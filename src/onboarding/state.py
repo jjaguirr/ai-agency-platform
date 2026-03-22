@@ -13,6 +13,7 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
+# Must match flow.NUM_STEPS — the store uses this to detect completion.
 NUM_STEPS = 5
 
 
@@ -60,6 +61,12 @@ class OnboardingStateStore:
     async def advance(
         self, customer_id: str, collected_data: Optional[dict] = None,
     ) -> OnboardingState:
+        """Increment current_step, merge collected_data, return new state.
+
+        Transitions not_started → in_progress on first call.  Marks
+        completed when current_step reaches NUM_STEPS.  Auto-creates
+        a fresh state if the customer has no key in Redis.
+        """
         state = await self.get(customer_id)
         if state is None:
             state = OnboardingState()

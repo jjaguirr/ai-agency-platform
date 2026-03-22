@@ -274,9 +274,8 @@ def _step_quick_win(
 
 
 def _step_completion(
-    _message: Optional[str], personality: dict, _collected: dict,
+    _message: Optional[str], _personality: dict, _collected: dict,
 ) -> StepResult:
-    name = personality.get("name", "Assistant")
     return StepResult(
         response=(
             f"You're all set! I'm here whenever you need me — just send a message. "

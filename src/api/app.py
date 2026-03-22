@@ -67,6 +67,10 @@ def create_app(
     `analytics_service` is Optional for the same reason as
     `conversation_repo`: pre-intelligence tests don't need one. The
     analytics route returns 503 when it's None.
+
+    `onboarding_state_store` is Optional: when absent the onboarding
+    intercept in conversations.py is skipped and messages go straight
+    to the EA.  Pre-onboarding tests omit it for backward compatibility.
     """
     app = FastAPI(
         title="AI Agency Platform API",

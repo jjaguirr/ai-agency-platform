@@ -30,32 +30,35 @@ DEMO_SETTINGS = Settings(
     connected_services=ConnectedServices(calendar=False, n8n=False),
 )
 
-DEMO_NOTIFICATIONS = [
-    {
-        "domain": "finance",
-        "trigger_type": "anomaly",
-        "priority": "HIGH",
-        "title": "Unusual transaction detected",
-        "message": "A charge of $2,450 from 'AcmeParts Ltd' is 3x your typical spend with this vendor.",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    },
-    {
-        "domain": "scheduling",
-        "trigger_type": "conflict",
-        "priority": "MEDIUM",
-        "title": "Calendar conflict tomorrow",
-        "message": "You have overlapping meetings at 2:00 PM: 'Design Review' and 'Client Check-in'.",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    },
-    {
-        "domain": "ea",
-        "trigger_type": "morning_briefing",
-        "priority": "LOW",
-        "title": "Morning briefing",
-        "message": "Good morning! You have 3 meetings today, 2 pending follow-ups, and 1 invoice due.",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    },
-]
+def _demo_notifications() -> list[dict]:
+    """Build notifications with fresh timestamps (not module-load time)."""
+    now = datetime.now(timezone.utc).isoformat()
+    return [
+        {
+            "domain": "finance",
+            "trigger_type": "anomaly",
+            "priority": "HIGH",
+            "title": "Unusual transaction detected",
+            "message": "A charge of $2,450 from 'AcmeParts Ltd' is 3x your typical spend with this vendor.",
+            "created_at": now,
+        },
+        {
+            "domain": "scheduling",
+            "trigger_type": "conflict",
+            "priority": "MEDIUM",
+            "title": "Calendar conflict tomorrow",
+            "message": "You have overlapping meetings at 2:00 PM: 'Design Review' and 'Client Check-in'.",
+            "created_at": now,
+        },
+        {
+            "domain": "ea",
+            "trigger_type": "morning_briefing",
+            "priority": "LOW",
+            "title": "Morning briefing",
+            "message": "Good morning! You have 3 meetings today, 2 pending follow-ups, and 1 invoice due.",
+            "created_at": now,
+        },
+    ]
 
 
 async def seed_demo_data(
@@ -78,7 +81,7 @@ async def seed_demo_data(
 
     # 3. Sample notifications
     if proactive_store is not None:
-        for notif in DEMO_NOTIFICATIONS:
+        for notif in _demo_notifications():
             await proactive_store.add_pending_notification(customer_id, notif)
 
     # 4. Activity counters

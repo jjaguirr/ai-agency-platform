@@ -113,6 +113,9 @@ class TestProvisionSeeding:
 
         raw = await fake_redis.get(f"settings:{cid}")
         assert raw is not None
+        settings = json.loads(raw)
+        assert settings["personality"]["tone"] == "professional"
+        assert settings["working_hours"]["timezone"] == "UTC"
 
 
 class TestProvisionDemo:
@@ -146,7 +149,7 @@ class TestProvisionDemo:
 
         raw = await fake_redis.get(f"settings:{cid}")
         settings = json.loads(raw)
-        assert settings["personality"]["name"] != "Assistant"
+        assert settings["personality"]["name"] == "Aria"
 
     @pytest.mark.asyncio
     async def test_demo_false_does_not_seed_demo_data(self, aclient, fake_redis):

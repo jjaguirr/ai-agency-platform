@@ -123,6 +123,22 @@ class TestAdvance:
         assert state2.started_at == state1.started_at
 
 
+class TestAdvanceEdgeCases:
+    @pytest.mark.asyncio
+    async def test_advance_on_completed_preserves_status(self, store):
+        await store.initialize(CID)
+        await store.mark_completed(CID)
+        state = await store.advance(CID)
+        assert state.status == "completed"
+
+    @pytest.mark.asyncio
+    async def test_advance_on_uninitialized_creates_state(self, store):
+        state = await store.advance(CID)
+        assert state is not None
+        assert state.current_step == 1
+        assert state.status == "in_progress"
+
+
 class TestMarkCompleted:
     @pytest.mark.asyncio
     async def test_force_completes(self, store):
