@@ -51,12 +51,14 @@ class ProvisionRequest(BaseModel):
                     "Omit to auto-generate.",
     )
     tier: Tier = "professional"
+    demo: bool = False
 
 
 class ProvisionResponse(BaseModel):
     customer_id: str
     token: str
     tier: Tier
+    dashboard_secret: Optional[str] = None
 
 
 class HistoryMessage(BaseModel):

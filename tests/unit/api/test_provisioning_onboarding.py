@@ -10,7 +10,7 @@ os.environ.setdefault(
 )
 
 import fakeredis.aioredis
-from fastapi.testclient import TestClient
+import httpx
 
 from src.api.app import create_app
 from src.api.ea_registry import EARegistry
@@ -53,61 +53,57 @@ def app(mock_orchestrator, fake_redis, onboarding_store):
 
 
 @pytest.fixture
-def client(app):
-    return TestClient(app)
+async def aclient(app):
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
 
 
 class TestProvisionSeeding:
-    def test_seeds_default_settings(self, client, fake_redis):
-        resp = client.post("/v1/customers/provision", json={"tier": "basic"})
+    @pytest.mark.asyncio
+    async def test_seeds_default_settings(self, aclient, fake_redis):
+        resp = await aclient.post("/v1/customers/provision", json={"tier": "basic"})
         assert resp.status_code == 201
         cid = resp.json()["customer_id"]
 
-        # Settings key exists with defaults
-        import asyncio
-        raw = asyncio.get_event_loop().run_until_complete(
-            fake_redis.get(f"settings:{cid}")
-        )
+        raw = await fake_redis.get(f"settings:{cid}")
         assert raw is not None
         settings = json.loads(raw)
         assert settings["working_hours"]["timezone"] == "UTC"
         assert settings["personality"]["tone"] == "professional"
 
-    def test_creates_auth_secret(self, client, fake_redis):
-        resp = client.post("/v1/customers/provision", json={"tier": "basic"})
+    @pytest.mark.asyncio
+    async def test_creates_auth_secret(self, aclient, fake_redis):
+        resp = await aclient.post("/v1/customers/provision", json={"tier": "basic"})
         cid = resp.json()["customer_id"]
 
-        import asyncio
-        secret = asyncio.get_event_loop().run_until_complete(
-            fake_redis.get(f"auth:{cid}:secret")
-        )
+        secret = await fake_redis.get(f"auth:{cid}:secret")
         assert secret is not None
-        # Should be a non-trivial string
         decoded = secret.decode() if isinstance(secret, bytes) else secret
         assert len(decoded) > 10
 
-    def test_response_includes_dashboard_secret(self, client):
-        resp = client.post("/v1/customers/provision", json={"tier": "basic"})
+    @pytest.mark.asyncio
+    async def test_response_includes_dashboard_secret(self, aclient):
+        resp = await aclient.post("/v1/customers/provision", json={"tier": "basic"})
         body = resp.json()
         assert "dashboard_secret" in body
         assert body["dashboard_secret"] is not None
         assert len(body["dashboard_secret"]) > 10
 
-    def test_initializes_onboarding(self, client, fake_redis):
-        resp = client.post("/v1/customers/provision", json={"tier": "basic"})
+    @pytest.mark.asyncio
+    async def test_initializes_onboarding(self, aclient, fake_redis):
+        resp = await aclient.post("/v1/customers/provision", json={"tier": "basic"})
         cid = resp.json()["customer_id"]
 
-        import asyncio
-        raw = asyncio.get_event_loop().run_until_complete(
-            fake_redis.get(f"onboarding:{cid}")
-        )
+        raw = await fake_redis.get(f"onboarding:{cid}")
         assert raw is not None
         state = json.loads(raw)
         assert state["status"] == "not_started"
         assert state["current_step"] == 0
 
-    def test_explicit_customer_id(self, client, fake_redis):
-        resp = client.post(
+    @pytest.mark.asyncio
+    async def test_explicit_customer_id(self, aclient, fake_redis):
+        resp = await aclient.post(
             "/v1/customers/provision",
             json={"tier": "basic", "customer_id": "acme-test-001"},
         )
@@ -115,60 +111,51 @@ class TestProvisionSeeding:
         cid = resp.json()["customer_id"]
         assert cid == "acme-test-001"
 
-        import asyncio
-        raw = asyncio.get_event_loop().run_until_complete(
-            fake_redis.get(f"settings:{cid}")
-        )
+        raw = await fake_redis.get(f"settings:{cid}")
         assert raw is not None
 
 
 class TestProvisionDemo:
-    def test_demo_flag_accepted(self, client):
-        resp = client.post(
+    @pytest.mark.asyncio
+    async def test_demo_flag_accepted(self, aclient):
+        resp = await aclient.post(
             "/v1/customers/provision",
             json={"tier": "professional", "demo": True},
         )
         assert resp.status_code == 201
 
-    def test_demo_marks_onboarding_completed(self, client, fake_redis):
-        resp = client.post(
+    @pytest.mark.asyncio
+    async def test_demo_marks_onboarding_completed(self, aclient, fake_redis):
+        resp = await aclient.post(
             "/v1/customers/provision",
             json={"tier": "professional", "demo": True},
         )
         cid = resp.json()["customer_id"]
 
-        import asyncio
-        raw = asyncio.get_event_loop().run_until_complete(
-            fake_redis.get(f"onboarding:{cid}")
-        )
+        raw = await fake_redis.get(f"onboarding:{cid}")
         state = json.loads(raw)
         assert state["status"] == "completed"
 
-    def test_demo_seeds_non_default_settings(self, client, fake_redis):
-        resp = client.post(
+    @pytest.mark.asyncio
+    async def test_demo_seeds_non_default_settings(self, aclient, fake_redis):
+        resp = await aclient.post(
             "/v1/customers/provision",
             json={"tier": "professional", "demo": True},
         )
         cid = resp.json()["customer_id"]
 
-        import asyncio
-        raw = asyncio.get_event_loop().run_until_complete(
-            fake_redis.get(f"settings:{cid}")
-        )
+        raw = await fake_redis.get(f"settings:{cid}")
         settings = json.loads(raw)
-        # Demo should have non-default personality name
         assert settings["personality"]["name"] != "Assistant"
 
-    def test_demo_false_does_not_seed_demo_data(self, client, fake_redis):
-        resp = client.post(
+    @pytest.mark.asyncio
+    async def test_demo_false_does_not_seed_demo_data(self, aclient, fake_redis):
+        resp = await aclient.post(
             "/v1/customers/provision",
             json={"tier": "professional"},
         )
         cid = resp.json()["customer_id"]
 
-        import asyncio
-        raw = asyncio.get_event_loop().run_until_complete(
-            fake_redis.get(f"onboarding:{cid}")
-        )
+        raw = await fake_redis.get(f"onboarding:{cid}")
         state = json.loads(raw)
         assert state["status"] == "not_started"
