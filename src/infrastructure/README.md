@@ -67,13 +67,13 @@ Enterprise Tier:
 ### 1. Initialize System
 ```bash
 # Install dependencies
-pip install -r requirements.txt
+uv sync --extra dev
 
 # Start core services
-docker-compose up -d postgres redis qdrant
+docker compose up -d postgres redis qdrant
 
 # Initialize port allocation system
-python -m infrastructure.cli metrics
+uv run python -m src.infrastructure.cli metrics
 ```
 
 ### 2. Provision Customer Environment
@@ -246,13 +246,9 @@ python -m pytest tests/integration/test_port_allocation_integration.py::TestPort
 ```
 
 ### Load Testing
-```bash
-# Test rapid customer provisioning
-python scripts/load_test_provisioning.py --customers 100 --concurrent 10
-
-# Test port allocation performance
-python scripts/benchmark_port_allocation.py --allocations 1000
-```
+Load/benchmark scripts are planned but not yet implemented. See the
+integration suite for the current performance assertions:
+`tests/integration/test_port_allocation_integration.py`.
 
 ## 📊 Monitoring & Metrics
 
@@ -368,7 +364,7 @@ docker-compose -f deploy/customers/docker-compose.<customer_id>.yml restart <ser
 ```
 
 ### Support Resources
-- **Documentation**: [Technical Design Document](../../docs/architecture/Technical-Design-Document.md)
+- **Documentation**: [Technical Design Document](../../docs/architecture/Technical%20Design%20Document.md)
 - **Issue Tracking**: GitHub Issues with `infrastructure` label
 - **Performance Monitoring**: Built-in metrics and monitoring
 - **Community Support**: Platform development team

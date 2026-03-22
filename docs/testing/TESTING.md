@@ -2,7 +2,12 @@
 
 ## Overview
 
-We've implemented a **state-of-the-art testing framework** combining traditional TDD with 2024's latest AI agent evaluation methodologies. This approach ensures our Executive Assistant meets the highest standards for conversational AI systems.
+> **Status note:** This document describes the *target* testing design — several
+> frameworks (Mozilla AnyAgent, Inspect AI) and test files listed below are
+> planned but not yet wired in. For the current test layout and how to run the
+> suite today, see [`tests/README.md`](../../tests/README.md).
+
+We're building a testing framework that combines traditional TDD with AI agent evaluation methodologies. This approach ensures our Executive Assistant meets the highest standards for conversational AI systems.
 
 ## Testing Architecture
 
@@ -19,17 +24,14 @@ Our testing strategy combines multiple frameworks for comprehensive coverage:
 
 ```
 tests/
-├── unit/                    # Fast unit tests with AI evaluation
-│   ├── test_ea_core_modern.py      # Core EA functionality
-│   ├── test_conversation.py        # Conversation handling
-│   └── test_business_analysis.py   # Business understanding
-├── integration/             # Service integration tests
-│   ├── test_memory_system.py       # Memory persistence
-│   └── test_cross_channel.py       # Multi-channel continuity
+├── unit/                    # Fast unit tests (see tests/README.md for subdirs)
+│   └── test_ea_core_modern.py      # Core EA functionality
+├── e2e/                     # Full-app integration, no live services
+├── integration/             # Real Postgres/Redis/Qdrant tests
 ├── acceptance/              # End-to-end scenario tests
-│   ├── test_customer_scenarios.py  # Customer persona testing
-│   └── test_business_outcomes.py   # ROI and success metrics
-└── conftest.py             # Comprehensive test configuration
+│   └── test_customer_scenarios.py  # Customer persona testing
+├── business/                # Business-outcome validation
+└── conftest.py              # Shared fixtures
 ```
 
 ## 🚀 **Quick Start**
@@ -162,16 +164,16 @@ async def test_ea_meets_response_time_requirements(self, basic_ea, ea_performanc
 
 ```bash
 # Only AI evaluation tests
-pytest -m "evaluation"
+uv run pytest -m "evaluation"
 
 # Performance benchmarks only
-pytest -m "performance" 
+uv run pytest -m "performance"
 
 # Exclude real API calls (default for fast development)
-pytest -m "not real_api"
+uv run pytest -m "not real_api"
 
 # Integration tests with real services
-pytest -m "integration and real_api"
+uv run pytest -m "integration and real_api"
 ```
 
 ## 🎭 **Customer Personas**
@@ -289,10 +291,10 @@ Our tests validate Phase-1 PRD requirements:
 
 ```bash
 # Detailed test output
-pytest tests/unit/test_ea_core_modern.py -v --tb=long
+uv run pytest tests/unit/test_ea_core_modern.py -v --tb=long
 
 # Run single test with debug
-pytest tests/unit/test_ea_core_modern.py::TestEABasicConversation::test_ea_responds_to_greeting_with_evaluation -v -s
+uv run pytest tests/unit/test_ea_core_modern.py::TestEABasicConversation::test_ea_responds_to_greeting_with_evaluation -v -s
 ```
 
 ### **AI Evaluation Debugging**
@@ -354,7 +356,7 @@ pytest tests/ -m performance --benchmark-only
 
 - [Phase-1 PRD](../architecture/Phase-1-PRD.md) - Business requirements
 - [TDD Research Plan](../development/TDD-Research-Plan.md) - Original TDD strategy
-- [Executive Assistant Implementation](../../src/agents/executive-assistant.py) - EA code
+- [Executive Assistant Implementation](../../src/agents/executive_assistant.py) - EA code
 - [Mozilla AnyAgent Docs](https://mozilla-ai.github.io/any-agent/) - AI evaluation framework
 - [Inspect AI Docs](https://inspect.aisi.org.uk/) - Agent benchmarking platform
 

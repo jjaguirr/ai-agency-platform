@@ -2,63 +2,64 @@
 
 ## Directory Structure
 
-### `/unit/` - Unit Tests
-- `test_ea_core_modern.py` - Core EA functionality tests
-- Tests isolated components with minimal dependencies
+### `/unit/` — Unit Tests
+Isolated component tests, no live services. Organized by module:
+- `api/` — FastAPI routes, auth, EA registry, activity counters
+- `safety/` — prompt guard, output scanner, rate limiter, audit
+- `proactive/` — heartbeat daemon, noise gate, behaviors, triggers
+- `intelligence/` — summarizer, quality analyzer, sweep, analytics
+- `workflows/` — n8n catalog, client, IR, customizer
+- `ai_ml/` — workflow generator, assembler, explainer
+- Top-level `test_*.py` — EA core, specialists, channels, config
 
-### `/integration/` - Integration Tests  
-- `test_real_executive_assistant.py` - Full EA integration with real services
-- `test_integration_docker.py` - Docker service integration tests
-- Tests components working together with real dependencies
+### `/e2e/` — End-to-End Integration Tests
+Full request→response chains through `create_app()` with fakeredis +
+in-memory repos. No Docker required.
+- `test_customer_onboarding.py` — message pipeline (safety→EA→persist→counter)
+- `test_workflow_creation.py` — specialist delegation + action confirmation
+- `test_business_discovery.py` — proactive notification lifecycle
+- `test_memory_persistence.py` — conversation intelligence sweep
+- `test_cross_channel.py` — cross-tenant isolation + dashboard auth
 
-### `/acceptance/` - User Acceptance Tests
-- `test_customer_scenarios.py` - End-to-end customer scenarios
-- Tests complete user journeys and business requirements
+### `/integration/` — Service Integration Tests
+Tests against real Postgres/Redis/Qdrant/Neo4j. Skip when services unavailable.
 
-### `/demos/` - Demonstration Scripts
-- `demo_enhanced_ea.py` - Shows sophisticated LangGraph conversation management
-- Executable examples for understanding system capabilities
+### `/business/`, `/acceptance/` — Scenario Tests
+Business-outcome validation with customer personas. Require OpenAI API key.
 
-### `/legacy/` - Historical Test Files
-- `test_enhanced_ea.py` - Previous test iterations
-- `test_enhanced_ea_fixed.py` - Fixed version with LangGraph testing patterns
-- `test_ea_basic.py` - Simple CI test with mocks
-- `test_mcp_memory_integration.py` - Old MCP memory tests (now using Mem0)
-- **Note**: These may contain useful test patterns for reference
+### `/memory/` — Memory-Layer Tests
+Mem0 + conversation continuity integration.
+
+### `/demos/` — Demonstration Scripts
+Executable examples, not collected by pytest.
+
+### `/legacy/` — Historical Test Files
+Previous iterations kept for reference patterns. Excluded from CI.
+
+### `/utils/` — Test Helpers
+`TestDataManager`, `TestResourceManager`, performance utilities.
+(Classes prefixed `Test*` for naming convention — they have `__init__`
+so pytest correctly skips collecting them.)
 
 ## Running Tests
 
-### Quick Test (Current working tests)
 ```bash
-./scripts/quick_test.sh
+# Fast dev loop — unit + e2e, no live services
+uv run pytest tests/unit/ tests/e2e/ -q
+
+# Single file with failures-first
+uv run pytest tests/unit/proactive/ -x
+
+# Integration tests (requires docker compose up postgres redis)
+uv run pytest tests/integration/ -v
+
+# Everything except legacy/demos
+uv run pytest tests/ --ignore=tests/legacy --ignore=tests/demos
 ```
 
-### Full Test Suite
-```bash
-# Unit tests (fast)
-pytest tests/unit/ -v
-
-# Integration tests (requires services)
-docker-compose up redis postgres
-pytest tests/integration/ -v
-
-# All tests
-pytest tests/ -v --ignore=tests/legacy --ignore=tests/demos
-```
-
-### Demo Scripts
-```bash
-# Show EA capabilities
-python tests/demos/demo_enhanced_ea.py
-```
-
-## Test Configuration
-- `conftest.py` - Shared fixtures and configuration
-- `pytest.ini` - Pytest settings
-
-## Current Status
-- ✅ Unit tests: Basic structure in place
-- 🔧 Integration tests: Need async fixture fixes  
-- 📝 Acceptance tests: Framework ready
-- ✅ Demos: Working examples available
-- 📚 Legacy: Historical implementations preserved
+## Configuration
+- `conftest.py` — shared fixtures (live-service fixtures skip cleanly when unreachable)
+- `e2e/conftest.py` — in-memory repos + ScriptedEA for E2E
+- `unit/*/conftest.py` — module-specific fixtures
+- Pytest settings live in `pyproject.toml` under `[tool.pytest.ini_options]`
+  (`asyncio_mode = "auto"`, `--strict-markers`, 30s timeout)

@@ -24,7 +24,7 @@ Knowledge management will be integrated with:
 ---
 
 For current documentation, see:
-- **Project overview**: [PROJECT-SUMMARY.md](../PROJECT-SUMMARY.md)
-- **Business requirements**: [Product Requirements Document.md](../docs/architecture/Product%20Requirements%20Document.md)
-- **Technical architecture**: [Technical Design Document.md](../docs/architecture/Technical%20Design%20Document.md)
-- **System configuration**: [CLAUDE.md](../CLAUDE.md)
+- **Project overview**: [docs/README.md](../docs/README.md)
+- **Business requirements**: [Phase-1-PRD](../docs/architecture/Phase-1-PRD.md) · [Phase-2-PRD](../docs/architecture/Phase-2-PRD.md) · [Phase-3-PRD](../docs/architecture/Phase-3-PRD.md)
+- **Technical architecture**: [Technical Design Document](../docs/architecture/Technical%20Design%20Document.md)
+- **Development setup**: [DEVELOPMENT.md](../DEVELOPMENT.md)

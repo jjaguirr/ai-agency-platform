@@ -153,10 +153,10 @@ curl http://localhost:8084/health
 ### 3. Run Tests
 ```bash
 # Install dependencies
-pip install -r requirements.txt
+uv sync --extra dev
 
 # Run memory integration tests
-python -m pytest tests/memory/ -v
+uv run pytest tests/memory/ -v
 ```
 
 ### 4. Initialize Customer Memory
