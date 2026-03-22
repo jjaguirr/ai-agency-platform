@@ -1,6 +1,12 @@
 """
-AI Agency Platform - Enhanced Executive Assistant Agent with AI/ML Memory Integration
-Sophisticated LangGraph conversation management with advanced business learning capabilities
+Executive Assistant — LangGraph orchestrator with specialist delegation.
+
+Routes customer messages through intent classification, delegates operational
+tasks to domain specialists (finance, scheduling, workflows, social media),
+and retains strategic/advisory questions. Personality-aware: tone and language
+adapt per customer via settings Redis. Cross-domain context assembly feeds
+specialists a read-only InteractionContext so they can reference calendar,
+finance, and workflow state without direct access.
 """
 
 import asyncio
@@ -614,16 +620,12 @@ class WorkflowCreator:
             return {"success": False, "error": str(e)}
 
 class ExecutiveAssistant:
-    """
-    Enhanced Executive Assistant with sophisticated LangGraph conversation management
-    
-    Features:
-    - Advanced intent classification with confidence scoring
-    - Multi-turn conversation state tracking
-    - Conditional conversation routing
-    - Template-first workflow creation
-    - Comprehensive business context learning
-    - Intelligent conversation branching
+    """LangGraph-based EA that orchestrates specialist delegation.
+
+    Owns the conversation graph, personality loading, context assembly, and
+    delegation lifecycle. Specialists receive a SpecialistTask with pre-assembled
+    InteractionContext; the EA merges their result into the response, applying
+    tone-aware synthesis.
     """
     
     def __init__(self, customer_id: str, mcp_server_url: str = None):

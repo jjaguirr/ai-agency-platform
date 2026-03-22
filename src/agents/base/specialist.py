@@ -61,6 +61,8 @@ class SpecialistTask:
     domain_memories are pre-fetched by the EA — the specialist never gets
     direct memory-client access. prior_turns carries clarification Q&A on
     multi-turn delegations without exposing the full conversation.
+    interaction_context is the cross-domain snapshot assembled by
+    ContextAssembler — None when the assembler is not wired.
     """
     description: str
     customer_id: str

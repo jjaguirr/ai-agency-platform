@@ -100,7 +100,7 @@ _SLACK_TEMPLATE = WorkflowTemplate(
     description="Send alerts to Slack channel on events",
     integrations=["slack"],
     category="notifications",
-    tags=["alert", "slack", "notification"],
+    tags=["alert", "slack", "notification", "report"],
     raw={
         "name": "Slack Alert Pipeline",
         "nodes": [],
@@ -189,8 +189,9 @@ class TestListFailureContext:
         result = await specialist.execute_task(task)
 
         assert result.status == SpecialistStatus.COMPLETED
-        summary_lower = result.summary_for_ea.lower()
-        assert "fail" in summary_lower or "error" in summary_lower or "issue" in summary_lower
+        # _failure_note produces "Heads up: recent issues with {names}."
+        assert "recent issues" in result.summary_for_ea.lower()
+        assert "Monday Report" in result.summary_for_ea
 
     @pytest.mark.asyncio
     async def test_list_no_failure_mention_when_clean(self, specialist, store, ctx):
@@ -237,10 +238,26 @@ class TestDeploySuggestions:
         result = await specialist.execute_task(task)
 
         assert result.status == SpecialistStatus.COMPLETED
-        # The suggestion should mention the related template
-        summary_lower = result.summary_for_ea.lower()
-        # Should mention the deployed workflow and potentially suggest another
-        assert "deployed" in summary_lower or "active" in summary_lower
+        # Must contain both: deployment confirmation AND related suggestion
+        assert "deployed and active" in result.summary_for_ea.lower()
+        assert "you might also like" in result.summary_for_ea.lower()
+
+    @pytest.mark.asyncio
+    async def test_deploy_records_cooldown_after_suggestion(self, specialist, ctx, proactive_store):
+        """After suggesting a related template, cooldown is recorded."""
+        task = _task(
+            "send me my HubSpot pipeline every Monday at 9am to user@example.com",
+            ctx,
+        )
+        await specialist.execute_task(task)
+
+        # The suggested template should now be cooling down
+        # HubSpot template shares "report"/"weekly" tags — one of the other templates
+        # got suggested; check that its cooldown key was set
+        is_cooling = await proactive_store.is_cooling_down(
+            CUSTOMER_ID, "wf_suggest:slack_alerts",
+        )
+        assert is_cooling
 
     @pytest.mark.asyncio
     async def test_suggestion_respects_cooldown(self, specialist, ctx, proactive_store):
@@ -257,11 +274,42 @@ class TestDeploySuggestions:
         result = await specialist.execute_task(task)
 
         assert result.status == SpecialistStatus.COMPLETED
-        # Should NOT suggest the Slack template since it's cooling down
-        assert "slack alert" not in result.summary_for_ea.lower()
+        # Should NOT suggest — all other templates are cooling down
+        assert "you might also like" not in result.summary_for_ea.lower()
 
 
 # --- Graceful degradation ---------------------------------------------------
+
+class TestSuggestionError:
+    @pytest.mark.asyncio
+    async def test_catalog_error_in_suggest_does_not_crash_deploy(
+        self, store, n8n_client, proactive_store, ctx,
+    ):
+        """If catalog.list_local() raises during suggestion, deploy still succeeds."""
+        await store.set_config(CUSTOMER_ID, base_url="http://n8n.test", api_key="k")
+
+        broken_catalog = AsyncMock()
+        broken_catalog.search_local = lambda q: [_HUBSPOT_TEMPLATE]
+        broken_catalog.list_local = lambda: (_ for _ in ()).throw(RuntimeError("catalog broken"))
+        broken_catalog.search_community = AsyncMock(return_value=[])
+
+        specialist = WorkflowSpecialist(
+            store=store,
+            catalog=broken_catalog,
+            n8n_client_factory=lambda base_url, api_key: n8n_client,
+            proactive_state=proactive_store,
+        )
+        task = _task(
+            "send me my HubSpot pipeline every Monday at 9am to user@example.com",
+            ctx,
+        )
+        result = await specialist.execute_task(task)
+
+        assert result.status == SpecialistStatus.COMPLETED
+        # Deploy succeeded but no suggestion (error swallowed)
+        assert "deployed and active" in result.summary_for_ea.lower()
+        assert "you might also like" not in result.summary_for_ea.lower()
+
 
 class TestWorkflowGracefulDegradation:
     @pytest.mark.asyncio

@@ -7,6 +7,9 @@ summaries, and spending queries — all from conversation data passed
 in through SpecialistTask. No external accounting integrations, no
 direct memory-client access.
 
+Pattern awareness: expense entries consult InteractionContext for baseline
+deviation and budget overspend, surfacing warnings in the EA summary.
+
 Routing overlap with social_media is the interesting bit: "$500 on
 Facebook ads" is a finance action (track it) even though Facebook is
 a social keyword. "How much does Instagram advertising cost?" is a
@@ -187,6 +190,7 @@ class FinanceSpecialist(SpecialistAgent):
     # --- Assessment ---------------------------------------------------------
 
     def assess_task(self, task_description: str, context: "BusinessContext") -> TaskAssessment:
+        """Score finance confidence from dollar signs, action verbs, and category keywords."""
         text = task_description.lower()
 
         confidence = 0.0
@@ -242,6 +246,7 @@ class FinanceSpecialist(SpecialistAgent):
     # --- Execution ----------------------------------------------------------
 
     async def execute_task(self, task: SpecialistTask) -> SpecialistResult:
+        """Route to expense entry, summary, or portfolio; stage anomalies on completion."""
         text = task.description.lower()
 
         # Route to the right handler based on intent.
@@ -287,6 +292,7 @@ class FinanceSpecialist(SpecialistAgent):
     # --- Expense entry ------------------------------------------------------
 
     def _handle_expense_entry(self, task: SpecialistTask) -> SpecialistResult:
+        """Extract amount/vendor/category from multi-turn corpus; ask for clarification if incomplete."""
         # Pool the current message with prior customer turns so multi-turn
         # clarification works: the amount might be in task.description and
         # the vendor in a prior turn, or vice versa.
@@ -352,6 +358,7 @@ class FinanceSpecialist(SpecialistAgent):
     async def _maybe_stage_anomaly(
         self, customer_id: str, amount: float, category: str,
     ) -> None:
+        """Record the transaction and queue a domain event if it exceeds 2x baseline."""
         # Best-effort. A dead Redis or a slow pipe must not break expense
         # tracking — that's the primary path, this is the side channel.
         try:

@@ -121,26 +121,30 @@ class TestNoLLMToneFormatting:
         wordy = SpecialistResult(
             status=SpecialistStatus.COMPLETED, domain="finance",
             payload={"amount": 500}, confidence=0.85,
-            summary_for_ea="Tracked $500.00 → Acme Corp (category: marketing).",
+            summary_for_ea="I can see that you tracked $500.00 to Acme Corp.",
         )
         result = await ea._synthesize_specialist_result(wordy, context)
-        # Concise should be short — no extra framing added
-        assert len(result) <= len(wordy.summary_for_ea)
+        # Concise should strip "I can see that" preamble
+        assert not result.lower().startswith("i can see")
+        assert "$500" in result
 
     @pytest.mark.asyncio
     async def test_friendly_adds_casual_framing(self, ea, sample_result, context):
         ea._personality = {"tone": "friendly", "language": "en", "name": "Aria"}
         result = await ea._synthesize_specialist_result(sample_result, context)
-        # Friendly wraps with casual framing — should differ from raw summary
-        assert result != sample_result.summary_for_ea
+        # Friendly prepends "All done!"
+        assert result.startswith("All done!")
+        assert sample_result.summary_for_ea in result
 
     @pytest.mark.asyncio
     async def test_detailed_includes_payload(self, ea, sample_result, context):
         ea._personality = {"tone": "detailed", "language": "en", "name": "Aria"}
         result = await ea._synthesize_specialist_result(sample_result, context)
-        # Detailed should include structured payload info
-        assert "marketing" in result
-        assert "Acme" in result.replace("Acme Corp", "Acme")  # from payload or summary
+        # Detailed appends "Details:" section from payload
+        assert "Details:" in result
+        # Payload keys should be unpacked (amount, vendor, category)
+        assert "500" in result
+        assert "Acme Corp" in result
 
     @pytest.mark.asyncio
     async def test_four_tones_produce_different_outputs(self, ea, sample_result, context):

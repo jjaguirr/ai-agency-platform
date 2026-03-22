@@ -288,8 +288,9 @@ class TestBufferWarning:
         result = await specialist.execute_task(task)
 
         assert result.status == SpecialistStatus.COMPLETED
-        summary_lower = result.summary_for_ea.lower()
-        assert "tight" in summary_lower or "buffer" in summary_lower or "back-to-back" in summary_lower
+        assert "back-to-back" in result.summary_for_ea.lower()
+        # Should name the conflicting event
+        assert "team standup" in result.summary_for_ea.lower()
 
     @pytest.mark.asyncio
     async def test_no_buffer_warning_with_space(self, store, ctx):
@@ -322,8 +323,28 @@ class TestBufferWarning:
         result = await specialist.execute_task(task)
 
         assert result.status == SpecialistStatus.COMPLETED
-        summary_lower = result.summary_for_ea.lower()
-        assert "tight" not in summary_lower and "buffer" not in summary_lower and "back-to-back" not in summary_lower
+        assert "back-to-back" not in result.summary_for_ea.lower()
+
+    @pytest.mark.asyncio
+    async def test_buffer_note_with_malformed_snapshot_event(self, store, ctx):
+        """Calendar snapshot has event with unparseable start → no crash, no warning."""
+        await store.set_buffer_minutes(CUSTOMER_ID, 15)
+
+        cal = FakeCalendar()
+        ic = InteractionContext(
+            customer_preferences=CustomerPreferences(buffer_minutes=15),
+            calendar_snapshot=CalendarSnapshot(
+                events_next_24h=[{"title": "Garbage", "start": "not-a-date"}],
+            ),
+        )
+        specialist = SchedulingSpecialist(
+            calendar=cal, clock=lambda: FIXED_NOW, proactive_state=store,
+        )
+        task = _task("schedule a meeting with John at 2pm", ctx, interaction_context=ic)
+        result = await specialist.execute_task(task)
+
+        assert result.status == SpecialistStatus.COMPLETED
+        assert "back-to-back" not in result.summary_for_ea.lower()
 
 
 # --- Slot find: preferred hours ranking -------------------------------------
@@ -368,12 +389,37 @@ class TestSlotPreferredHours:
 
         assert result.status == SpecialistStatus.COMPLETED
         slots = result.payload["slots"]
-        if len(slots) >= 2:
-            # Should be in chronological order (9am first)
-            assert slots[0]["start"] <= slots[1]["start"]
+        assert len(slots) >= 2, "FakeCalendar should return multiple slots"
+        # Chronological: 9am before 10am
+        assert slots[0]["start"] < slots[1]["start"]
+        assert "T09:00" in slots[0]["start"]
 
 
 # --- Graceful degradation ---------------------------------------------------
+
+class TestPreferenceRecordingFailure:
+    @pytest.mark.asyncio
+    async def test_recording_failure_does_not_break_create(self, ctx):
+        """ProactiveStateStore raises during recording → event still created."""
+        from unittest.mock import AsyncMock
+        broken_store = AsyncMock()
+        broken_store.record_scheduling_preference = AsyncMock(
+            side_effect=ConnectionError("redis down"),
+        )
+        # add_domain_event needed for _maybe_stage_conflict
+        broken_store.add_domain_event = AsyncMock()
+
+        cal = FakeCalendar()
+        specialist = SchedulingSpecialist(
+            calendar=cal, clock=lambda: FIXED_NOW, proactive_state=broken_store,
+        )
+        task = _task("schedule a meeting with John at 2pm for 30 minutes", ctx)
+        result = await specialist.execute_task(task)
+
+        assert result.status == SpecialistStatus.COMPLETED
+        assert len(cal._created) == 1
+        assert "Booked" in result.summary_for_ea
+
 
 class TestSchedulingGracefulDegradation:
     @pytest.mark.asyncio

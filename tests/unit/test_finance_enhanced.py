@@ -100,7 +100,7 @@ class TestExpenseDeviation:
         result = await specialist.execute_task(task)
 
         assert result.status == SpecialistStatus.COMPLETED
-        assert "higher than" in result.summary_for_ea.lower() or "usual" in result.summary_for_ea.lower()
+        assert "higher than your usual" in result.summary_for_ea.lower()
 
     @pytest.mark.asyncio
     async def test_no_deviation_note_within_normal_range(self, specialist, ctx, store):
@@ -146,6 +146,24 @@ class TestBudgetTracking:
         assert result.status == SpecialistStatus.COMPLETED
         summary_lower = result.summary_for_ea.lower()
         assert "budget" in summary_lower
+        # Should mention the spent amount and the limit
+        assert "$3,000" in result.summary_for_ea or "$2,600" in result.summary_for_ea
+
+    @pytest.mark.asyncio
+    async def test_budget_exceeded_warning(self, specialist, ctx, store):
+        """Expense pushes past budget limit → 'over your budget' warning."""
+        await store.set_budget(CUSTOMER_ID, "marketing", 500.0)
+
+        ic = InteractionContext(
+            finance_snapshot=FinanceSnapshot(
+                budget_status={"marketing": {"limit": 500.0, "spent": 450.0}},
+            ),
+        )
+        task = _task("track $200 to Acme Corp for marketing", ctx, interaction_context=ic)
+        result = await specialist.execute_task(task)
+
+        assert result.status == SpecialistStatus.COMPLETED
+        assert "over" in result.summary_for_ea.lower()
 
     @pytest.mark.asyncio
     async def test_no_budget_mention_without_budget_set(self, specialist, ctx):
@@ -177,13 +195,15 @@ class TestSummaryComparison:
         result = await specialist.execute_task(task)
 
         assert result.status == SpecialistStatus.COMPLETED
-        # Should have some reference to baseline or average
+        # Should contain baseline comparison with dollar amounts
         summary_lower = result.summary_for_ea.lower()
-        assert "average" in summary_lower or "baseline" in summary_lower or "$" in summary_lower
+        assert "baseline" in summary_lower or "average" in summary_lower
+        # Must reference the baseline figure from context
+        assert "$300" in result.summary_for_ea
 
     @pytest.mark.asyncio
-    async def test_summary_works_without_context(self, specialist, ctx):
-        """No interaction_context → summary still works (existing behavior)."""
+    async def test_summary_no_baseline_note_without_context(self, specialist, ctx):
+        """No interaction_context → no baseline mention in summary."""
         memories = [
             {"content": "Tracked $400 for marketing ads"},
         ]
@@ -191,4 +211,22 @@ class TestSummaryComparison:
         result = await specialist.execute_task(task)
 
         assert result.status == SpecialistStatus.COMPLETED
-        assert result.summary_for_ea is not None
+        assert "baseline" not in result.summary_for_ea.lower()
+        assert "average" not in result.summary_for_ea.lower()
+        # Should still produce a useful spending summary
+        assert "$400" in result.summary_for_ea
+
+    @pytest.mark.asyncio
+    async def test_deviation_at_exactly_2x_does_not_trigger(self, specialist, ctx, store):
+        """Amount == 2x baseline → threshold is >2x, so no note."""
+        for _ in range(4):
+            await store.record_transaction(CUSTOMER_ID, 200.0)
+
+        ic = InteractionContext(
+            finance_snapshot=FinanceSnapshot(transaction_baseline=200.0),
+        )
+        task = _task("track $400 to Acme Corp for marketing", ctx, interaction_context=ic)
+        result = await specialist.execute_task(task)
+
+        assert result.status == SpecialistStatus.COMPLETED
+        assert "higher than your usual" not in result.summary_for_ea.lower()

@@ -14,6 +14,9 @@ specialist outscores us.
 
 The constructor takes an optional `clock` callable so tests can pin
 "tomorrow at 2pm" to a known reference. Defaults to `datetime.now`.
+
+Preference learning: duration and preferred hours from InteractionContext
+bias slot finding and default meeting length.
 """
 from __future__ import annotations
 
@@ -212,6 +215,7 @@ class SchedulingSpecialist(SpecialistAgent):
     def assess_task(
         self, task_description: str, context: "BusinessContext"
     ) -> TaskAssessment:
+        """Score scheduling confidence; damp when 'schedule' co-occurs with another domain's action noun."""
         text = task_description.lower()
 
         confidence = 0.0
@@ -255,6 +259,7 @@ class SchedulingSpecialist(SpecialistAgent):
     # --- Execution ----------------------------------------------------------
 
     async def execute_task(self, task: SpecialistTask) -> SpecialistResult:
+        """Dispatch confirmed follow-ups directly; otherwise classify intent and route."""
         if self._calendar is None:
             return SpecialistResult(
                 status=SpecialistStatus.FAILED,
@@ -295,6 +300,7 @@ class SchedulingSpecialist(SpecialistAgent):
     # --- Intent dispatch ----------------------------------------------------
 
     def _classify_intent(self, text: str) -> str:
+        """Keyword-first intent classification; most-specific cues win, fallback is overview."""
         # Order matters — more specific cues first.
         if any(c in text for c in ("find me", "find a slot", "find a time",
                                    "when can i meet", "find me a slot",
@@ -325,6 +331,7 @@ class SchedulingSpecialist(SpecialistAgent):
     async def _handle_overview(
         self, task: SpecialistTask, corpus: str, text: str
     ) -> SpecialistResult:
+        """List events for the mentioned day (default today)."""
         day = self._resolve_day(text)
         start = day.replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=1)
@@ -357,6 +364,7 @@ class SchedulingSpecialist(SpecialistAgent):
     async def _handle_create(
         self, task: SpecialistTask, corpus: str, text: str
     ) -> SpecialistResult:
+        """Parse time/duration/attendees, check conflicts, create the event, record preferences."""
         when = self._parse_datetime(text)
         if when is None:
             return SpecialistResult(
@@ -488,6 +496,7 @@ class SchedulingSpecialist(SpecialistAgent):
     async def _handle_reschedule(
         self, task: SpecialistTask, corpus: str, text: str
     ) -> SpecialistResult:
+        """Resolve the target event, parse destination time, update via calendar client."""
         candidates = await self._find_candidates(corpus, text)
         if len(candidates) != 1:
             return self._clarify_ambiguity(candidates, verb="reschedule")
@@ -588,6 +597,7 @@ class SchedulingSpecialist(SpecialistAgent):
     async def _handle_availability(
         self, task: SpecialistTask, corpus: str, text: str
     ) -> SpecialistResult:
+        """Check free/busy for the resolved window and list conflicts."""
         start, end = self._resolve_window(text)
         free = await self._calendar.is_free(start, end)
         conflicts = (
@@ -620,6 +630,7 @@ class SchedulingSpecialist(SpecialistAgent):
     async def _handle_slot_find(
         self, task: SpecialistTask, corpus: str, text: str
     ) -> SpecialistResult:
+        """Find open slots in the requested window; sort by preferred hours when available."""
         duration = self._parse_find_duration(text) or timedelta(minutes=30)
         start, end = self._resolve_window(text, default_span_days=5)
 

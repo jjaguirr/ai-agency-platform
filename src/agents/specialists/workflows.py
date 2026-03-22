@@ -11,6 +11,9 @@ Seams: WorkflowStore, WorkflowCatalog, and an N8nClient factory. All
 optional — the no-arg constructor works so the EA's importlib loop can
 instantiate it, but execute degrades to "not configured" until a store
 is wired in.
+
+Contextual enhancements: list surfaces recent failures from
+InteractionContext; deploy suggests related templates with cooldowns.
 """
 from __future__ import annotations
 
@@ -113,6 +116,7 @@ class WorkflowSpecialist(SpecialistAgent):
     def assess_task(
         self, task_description: str, context: "BusinessContext"
     ) -> TaskAssessment:
+        """Score automation confidence; damp when calendar nouns appear without recurrence markers."""
         text = task_description.lower()
 
         confidence = 0.0
@@ -155,6 +159,7 @@ class WorkflowSpecialist(SpecialistAgent):
     # --- Execution ----------------------------------------------------------
 
     async def execute_task(self, task: SpecialistTask) -> SpecialistResult:
+        """Classify intent and dispatch. Requires a configured workflow store."""
         if self._store is None:
             return self._failed("workflow store not configured")
 
@@ -170,6 +175,7 @@ class WorkflowSpecialist(SpecialistAgent):
         return await handler(task, text)
 
     def _classify_intent(self, text: str) -> str:
+        """Keyword intent dispatch: list, pause, resume, delete, or deploy (default)."""
         if any(p in text for p in ("what automation", "what workflow",
                                    "list my automation", "list my workflow",
                                    "automations do i have",
@@ -188,6 +194,7 @@ class WorkflowSpecialist(SpecialistAgent):
     # --- List ---------------------------------------------------------------
 
     async def _handle_list(self, task: SpecialistTask, text: str) -> SpecialistResult:
+        """List customer automations; append failure context from InteractionContext."""
         wfs = await self._store.list_workflows(task.customer_id)
         if not wfs:
             return SpecialistResult(
@@ -217,6 +224,7 @@ class WorkflowSpecialist(SpecialistAgent):
 
     @staticmethod
     def _failure_note(task: SpecialistTask) -> str:
+        """Build a warning string from recent workflow failures in the snapshot."""
         ic = task.interaction_context
         if ic is None or ic.workflow_snapshot is None:
             return ""
@@ -297,6 +305,7 @@ class WorkflowSpecialist(SpecialistAgent):
     # --- Deploy -------------------------------------------------------------
 
     async def _handle_deploy(self, task: SpecialistTask, text: str) -> SpecialistResult:
+        """Match a template, collect parameters across turns, deploy to n8n, suggest related."""
         if self._catalog is None:
             return self._failed("template catalog not configured")
 

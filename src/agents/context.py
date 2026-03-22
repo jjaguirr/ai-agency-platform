@@ -30,12 +30,14 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class CalendarSnapshot:
+    """Next-24h calendar view: events list and conflict flag."""
     events_next_24h: List[Dict[str, Any]]
     has_conflicts: bool = False
 
 
 @dataclass(frozen=True)
 class FinanceSnapshot:
+    """Spending baseline and budget status for pattern-awareness checks."""
     transaction_baseline: Optional[float] = None
     recent_expense_total: Optional[float] = None
     top_category: Optional[str] = None
@@ -44,6 +46,7 @@ class FinanceSnapshot:
 
 @dataclass(frozen=True)
 class WorkflowSnapshot:
+    """Active automation count, names, and recent failures."""
     active_count: int = 0
     workflow_names: List[str] = field(default_factory=list)
     recent_failures: List[Dict[str, Any]] = field(default_factory=list)
@@ -51,6 +54,7 @@ class WorkflowSnapshot:
 
 @dataclass
 class CustomerPreferences:
+    """Customer settings loaded from Redis each interaction. Safe defaults — missing keys never break specialists."""
     tone: str = "professional"
     working_hours: Optional[Dict[str, str]] = None
     business_type: str = ""
@@ -62,6 +66,7 @@ class CustomerPreferences:
 
 @dataclass
 class DelegationRecord:
+    """One entry in the delegation log passed to specialists for continuity."""
     domain: str = ""
     status: str = ""
     timestamp: str = ""
@@ -175,6 +180,7 @@ class ContextAssembler:
     # --- Per-domain fetch methods -------------------------------------------
 
     async def _fetch_calendar(self, customer_id: str, calendar_client) -> CalendarSnapshot:
+        """Pull next-24h events and detect time overlaps."""
         now = datetime.now(timezone.utc)
         end = now + timedelta(hours=24)
         events = await calendar_client.list_events(now, end)
@@ -202,12 +208,14 @@ class ContextAssembler:
         )
 
     async def _fetch_finance(self, customer_id: str) -> FinanceSnapshot:
+        """Pull running transaction baseline from proactive state."""
         baseline = await self._proactive.get_transaction_baseline(customer_id)
         return FinanceSnapshot(
             transaction_baseline=baseline,
         )
 
     async def _fetch_workflows(self, customer_id: str, workflow_store) -> WorkflowSnapshot:
+        """Pull active/errored workflow list from the workflow store."""
         workflows = await workflow_store.list_workflows(customer_id)
         active = [w for w in workflows if w.get("status") == "active"]
         return WorkflowSnapshot(
@@ -217,10 +225,12 @@ class ContextAssembler:
         )
 
     async def _fetch_notifications(self, customer_id: str) -> List[Dict[str, Any]]:
+        """Pull pending un-snoozed notifications."""
         now = datetime.now(timezone.utc)
         return await self._proactive.list_pending_notifications(customer_id, now=now)
 
     async def _fetch_preferences(self, customer_id: str) -> CustomerPreferences:
+        """Load tone/language/working-hours from settings Redis; fall back to defaults."""
         prefs = CustomerPreferences()
         try:
             raw = await self._settings_redis.get(f"settings:{customer_id}")

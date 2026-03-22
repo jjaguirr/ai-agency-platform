@@ -102,7 +102,8 @@ class TestInteractionContextDataclass:
         assert ctx.finance_snapshot is None
         assert ctx.workflow_snapshot is None
         assert ctx.pending_notifications == []
-        assert ctx.customer_preferences is not None
+        assert isinstance(ctx.customer_preferences, CustomerPreferences)
+        assert ctx.customer_preferences.tone == "professional"
         assert ctx.delegation_history == []
 
     def test_calendar_snapshot_fields(self):
@@ -399,5 +400,6 @@ class TestAssemblerNotifications:
             CUSTOMER_ID,
             relevant_domains=set(),
         )
-        assert len(ctx.pending_notifications) >= 1
+        assert len(ctx.pending_notifications) == 1
         assert ctx.pending_notifications[0]["domain"] == "finance"
+        assert ctx.pending_notifications[0]["title"] == "Unusual expense"
