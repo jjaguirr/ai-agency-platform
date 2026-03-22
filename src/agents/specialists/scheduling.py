@@ -1,16 +1,10 @@
 """
 Scheduling specialist agent.
 
-Handles calendar queries, meeting creation, rescheduling, cancellation,
-availability checks, and slot finding. All calendar I/O goes through a
-`CalendarClient` Protocol seam — no Google/Outlook/CalDAV import here.
-
-Preference learning (optional, via ``proactive_state``): each booked
-meeting records duration and hour; after three samples the modal
-duration replaces the hardcoded 60m default for unspecified-duration
-requests, and slot-finding uses the learned duration instead of 30m.
-Conflicts are surfaced in the response text ("Heads up — this overlaps
-Design review"), not just staged to the proactive channel.
+Third specialist in the delegation framework. Handles calendar queries,
+meeting creation, rescheduling, cancellation, availability checks, and
+slot finding. All calendar I/O goes through a `CalendarClient` Protocol
+seam — no Google/Outlook/CalDAV import here.
 
 Routing tension: "schedule" on its own is a weak signal. "Schedule a
 post" is social; "schedule a payment" is finance; "schedule a meeting"
@@ -373,28 +367,18 @@ class SchedulingSpecialist(SpecialistAgent):
                 clarification_question="What time works for this?",
             )
 
-        duration = (
-            self._parse_duration(text)
-            or await self._learned_duration(task.customer_id)
-            or timedelta(minutes=60)
-        )
+        duration = self._parse_duration(text) or timedelta(minutes=60)
         attendees = self._parse_attendees(corpus)
         title = self._derive_title(corpus, attendees)
         end = when + duration
 
-        # Conflict check — runs before create so the overlap list
-        # doesn't include the event we're about to add. Surfaced in the
-        # response AND staged to proactive; the booking goes ahead
-        # either way because the customer asked for this slot.
-        conflict_note = ""
+        # Proactive side channel — check before creating so the conflict
+        # list doesn't include the event we're about to add. FYI only:
+        # the booking goes ahead regardless.
         if self._proactive is not None:
-            conflicts = await self._check_conflicts(when, end)
-            if conflicts:
-                titles = ", ".join(e.title for e in conflicts)
-                conflict_note = f" Heads up — this overlaps {titles}."
-                await self._stage_conflict_event(
-                    task.customer_id, title, when, end, conflicts,
-                )
+            await self._maybe_stage_conflict(
+                task.customer_id, title, when, end,
+            )
 
         evt = await self._calendar.create_event(
             title=title,
@@ -402,21 +386,6 @@ class SchedulingSpecialist(SpecialistAgent):
             end=end,
             attendees=attendees,
         )
-
-        # Feed the preference learner. Best-effort — a Redis hiccup
-        # must not block the booking confirmation.
-        if self._proactive is not None:
-            try:
-                await self._proactive.record_meeting_booked(
-                    task.customer_id,
-                    duration_min=int(duration.total_seconds() // 60),
-                    hour=when.hour,
-                )
-            except Exception:
-                logger.exception(
-                    "Preference recording failed for customer=%s; continuing",
-                    task.customer_id,
-                )
 
         return SpecialistResult(
             status=SpecialistStatus.COMPLETED,
@@ -431,44 +400,26 @@ class SchedulingSpecialist(SpecialistAgent):
             confidence=0.85,
             summary_for_ea=(
                 f"Booked: {evt.title} on {evt.start.strftime('%Y-%m-%d %H:%M')} "
-                f"for {int(duration.total_seconds() // 60)}m.{conflict_note}"
+                f"for {int(duration.total_seconds() // 60)}m."
             ),
         )
 
-    async def _learned_duration(
-        self, customer_id: str,
-    ) -> Optional[timedelta]:
-        """Modal duration from past bookings, or None if too few samples."""
-        if self._proactive is None:
-            return None
-        try:
-            prefs = await self._proactive.get_scheduling_prefs(customer_id)
-        except Exception:
-            return None
-        if not prefs or prefs.get("sample_count", 0) < 3:
-            return None
-        return timedelta(minutes=prefs["preferred_duration"])
-
-    async def _check_conflicts(
-        self, start: datetime, end: datetime,
-    ) -> List[CalendarEvent]:
+    async def _maybe_stage_conflict(
+        self, customer_id: str, title: str, start: datetime, end: datetime,
+    ) -> None:
+        # Best-effort. A 503 from the calendar API or a dead Redis must
+        # not block the create — this is advisory, not authoritative.
         try:
             if await self._calendar.is_free(start, end):
-                return []
-            return await self._calendar.list_events(start, end)
-        except Exception:
-            logger.exception("Conflict check failed; treating as clear")
-            return []
-
-    async def _stage_conflict_event(
-        self, customer_id: str, title: str,
-        start: datetime, end: datetime, overlaps: List[CalendarEvent],
-    ) -> None:
-        try:
+                return
+            overlaps = await self._calendar.list_events(start, end)
             await self._proactive.add_domain_event(customer_id, {
                 "type": "schedule_conflict",
-                "new_event": {"title": title, "start": start.isoformat(),
-                              "end": end.isoformat()},
+                "new_event": {
+                    "title": title,
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                },
                 "conflicts_with": [
                     {"title": e.title, "start": e.start.isoformat()}
                     for e in overlaps
@@ -476,8 +427,7 @@ class SchedulingSpecialist(SpecialistAgent):
             })
         except Exception:
             logger.exception(
-                "Conflict staging failed for customer=%s; continuing",
-                customer_id,
+                "Conflict check failed for customer=%s; skipping", customer_id,
             )
 
     # --- Reschedule ---------------------------------------------------------
@@ -617,11 +567,7 @@ class SchedulingSpecialist(SpecialistAgent):
     async def _handle_slot_find(
         self, task: SpecialistTask, corpus: str, text: str
     ) -> SpecialistResult:
-        duration = (
-            self._parse_find_duration(text)
-            or await self._learned_duration(task.customer_id)
-            or timedelta(minutes=30)
-        )
+        duration = self._parse_find_duration(text) or timedelta(minutes=30)
         start, end = self._resolve_window(text, default_span_days=5)
 
         slots = await self._calendar.find_slots(duration, start, end)
