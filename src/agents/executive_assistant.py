@@ -1571,6 +1571,56 @@ The key difference: automation tools give you software to configure. I give you 
         except Exception as e:
             logger.warning(f"Personality load failed, using defaults: {e}")
 
+    async def _maybe_onboard(self, message: str) -> Optional[str]:
+        """Route to onboarding flow if incomplete. Returns the flow's
+        reply, or None to signal 'proceed with normal handling'.
+
+        Interrupt handling: if the message looks like a real task
+        request, hand it to the normal graph and append a gentle
+        'we can finish setup later' note. The flow state doesn't
+        advance — next non-task message resumes where they left off.
+        """
+        if self.settings_redis is None:
+            return None
+        try:
+            from src.onboarding.flow import OnboardingFlow
+            from src.onboarding.state import OnboardingStateStore
+
+            store = OnboardingStateStore(self.settings_redis)
+            if await store.is_complete(self.customer_id):
+                return None
+
+            flow = OnboardingFlow(
+                state_store=store,
+                settings_redis=self.settings_redis,
+                personality=self._personality,
+            )
+
+            state = await store.get(self.customer_id)
+            if state.status == "in_progress" and flow.looks_like_real_request(message):
+                # Customer is clearly using the system — handle their
+                # request, note that setup can resume later. Returning
+                # None lets the normal graph run; we append the note
+                # via a post-hook flag.
+                self._onboarding_interrupted = True
+                return None
+
+            return await flow.handle(self.customer_id, message)
+        except Exception as e:
+            # Onboarding is a nicety. A Redis blip or import error
+            # must not block the customer from using the EA.
+            logger.warning(f"Onboarding check failed, skipping: {e}")
+            return None
+
+    def _track_history(self, conversation_id: str, message: str, response: str) -> None:
+        self._conversation_histories.setdefault(conversation_id, [])
+        self._conversation_histories[conversation_id].append(
+            {"role": "human", "content": message, "timestamp": datetime.now().isoformat()}
+        )
+        self._conversation_histories[conversation_id].append(
+            {"role": "ai", "content": response, "timestamp": datetime.now().isoformat()}
+        )
+
     async def _record_delegation_start(
         self, conversation_id: str, domain: str,
     ) -> str | None:
@@ -1772,6 +1822,15 @@ The key difference: automation tools give you software to configure. I give you 
             # don't each hit Redis.
             await self._load_personality()
 
+            # Onboarding gate. First-run customers get the guided setup
+            # wizard instead of normal delegation. Once complete this is
+            # one cheap Redis GET per turn. No settings_redis → legacy
+            # path, skip the check entirely.
+            onboarding_reply = await self._maybe_onboard(message)
+            if onboarding_reply is not None:
+                self._track_history(conversation_id, message, onboarding_reply)
+                return onboarding_reply
+
             # Get business context
             business_context = await self.memory.get_business_context()
 
@@ -1853,6 +1912,15 @@ The key difference: automation tools give you software to configure. I give you 
             self._conversation_histories[conversation_id].append(
                 {"role": "ai", "content": response, "timestamp": datetime.now().isoformat()}
             )
+
+            # Onboarding was interrupted by a real request — append a
+            # gentle note so the customer knows setup can resume.
+            if getattr(self, "_onboarding_interrupted", False):
+                self._onboarding_interrupted = False
+                response += (
+                    "\n\n(We can finish setup later — just say 'continue "
+                    "setup' or I'll pick back up next time.)"
+                )
 
             logger.info(f"Enhanced EA handled interaction for customer {self.customer_id} via {channel.value}")
 
