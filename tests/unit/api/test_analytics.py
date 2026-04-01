@@ -339,7 +339,7 @@ class TestAnalyticsParams:
             "specialist_performance": [],
             "trends": {"conversations_by_day": [], "delegations_by_day": []},
         })
-        client = TestClient(_app(svc))
+        client = TestClient(_app(analytics_service=svc))
         tok = create_token("cust_b")
 
         client.get(

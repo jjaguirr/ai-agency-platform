@@ -15,19 +15,25 @@ This creates `.venv/` with a compliant interpreter and installs runtime + dev de
 
 ## Running tests
 
-The pytest config in `pyproject.toml` bakes in `--cov-fail-under=80`, but existing code sits at ~12% coverage. The full suite will always report FAIL on the coverage gate until legacy modules catch up.
+Pytest config lives in `pyproject.toml` (`[tool.pytest.ini_options]`):
+`asyncio_mode = "auto"`, `--strict-markers`, 30-second per-test timeout.
 
-**Dev loop (fast, no coverage):**
+**Dev loop (fast — unit + e2e, no live services):**
 ```bash
-uv run pytest --no-cov tests/unit/path/ -x
+uv run pytest tests/unit/ tests/e2e/ -q
+```
+
+**Single module, fail-fast:**
+```bash
+uv run pytest tests/unit/proactive/ -x
 ```
 
 **Coverage for a specific module:**
 ```bash
-uv run pytest --no-cov --cov=src/agents/ai_ml/workflow_generator --cov-report=term-missing tests/unit/ai_ml/
+uv run pytest --cov=src/agents/ai_ml/workflow_generator --cov-report=term-missing tests/unit/ai_ml/
 ```
 
-**Full suite (CI parity, expect coverage failure on legacy code):**
+**Full suite (includes integration tests that need live services):**
 ```bash
 uv run pytest
 ```

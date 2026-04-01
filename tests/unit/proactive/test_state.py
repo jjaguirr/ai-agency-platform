@@ -110,6 +110,15 @@ class TestDailyCount:
         await store.increment_daily_count(CID)
         assert await store.get_daily_count(CID) == 2
 
+    async def test_on_date_isolates_buckets(self, store):
+        from datetime import date
+        d1, d2 = date(2026, 3, 19), date(2026, 3, 20)
+        await store.increment_daily_count(CID, on_date=d1)
+        await store.increment_daily_count(CID, on_date=d1)
+        await store.increment_daily_count(CID, on_date=d2)
+        assert await store.get_daily_count(CID, on_date=d1) == 2
+        assert await store.get_daily_count(CID, on_date=d2) == 1
+
 
 def _notif(nid: str, **extra) -> dict:
     base = {
