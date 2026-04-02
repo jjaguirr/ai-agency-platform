@@ -12,10 +12,9 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from typing import Dict, List, Any
 
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("OPENAI_API_KEY"),
-    reason="Requires live services (LLM, Redis, Postgres)",
-)
+from tests.conftest import requires_live_services
+
+pytestmark = [pytest.mark.integration, requires_live_services]
 
 # AI Agent Testing Frameworks (mock implementations)
 # from any_agent.evaluation import LlmJudge, AgentJudge

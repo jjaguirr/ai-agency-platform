@@ -11,6 +11,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 # Import the EA components we need
 from src.agents.executive_assistant import ExecutiveAssistant, BusinessContext
+from tests.conftest import requires_live_services
+
+pytestmark = [pytest.mark.integration, requires_live_services]
 
 
 class TestFixtureIsolationVerification:

@@ -9,6 +9,9 @@ import time
 from datetime import datetime
 from typing import Dict, List
 from src.agents.executive_assistant import ExecutiveAssistant, ConversationChannel
+from tests.conftest import requires_live_services
+
+pytestmark = [pytest.mark.integration, requires_live_services]
 
 
 class ConversationDisplay:

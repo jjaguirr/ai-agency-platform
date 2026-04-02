@@ -16,10 +16,9 @@ from typing import Dict, List, Any
 pytest.importorskip("mem0")
 pytest.importorskip("asyncpg")
 
-pytestmark = pytest.mark.skipif(
-    not os.getenv("RUN_INTEGRATION_TESTS"),
-    reason="requires live mem0/Redis/Postgres; set RUN_INTEGRATION_TESTS=1",
-)
+from tests.conftest import requires_live_services
+
+pytestmark = [pytest.mark.integration, requires_live_services]
 
 from src.memory.mem0_manager import EAMemoryManager, OptimizedMemoryRouter, maintain_conversation_continuity
 from src.memory.isolation_validator import MemoryIsolationValidator
