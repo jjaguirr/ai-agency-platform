@@ -1,9 +1,8 @@
 """
 Per-customer EA instance cache with LRU eviction.
 
-ExecutiveAssistant.__init__ is expensive — it connects to Redis, initialises
-mem0, compiles the LangGraph, wires specialists. We build once per customer
-per process and reuse.
+ExecutiveAssistant.__init__ is expensive — it connects to Redis, compiles the
+LangGraph, wires specialists. We build once per customer per process and reuse.
 
 Concurrency contract: two requests for the same customer arriving at the
 same time while no EA is cached must result in ONE build, not two. We use
@@ -11,8 +10,8 @@ a per-customer asyncio.Lock around the build path (not a global lock —
 different customers can build in parallel).
 
 Memory bound: size-capped LRU. Without this, a long tail of occasional
-customers accumulates forever — each EA holds open Redis + mem0
-connections, a compiled LangGraph, specialist wiring. Under the default
+customers accumulates forever — each EA holds open Redis connections, a
+compiled LangGraph, specialist wiring. Under the default
 cap a worker's EA memory is deterministically bounded at
 max_size × sizeof(one EA). Eviction happens synchronously on insert; no
 background sweeper, no extra failure modes.
@@ -83,8 +82,8 @@ class EARegistry:
         while len(self._instances) >= self._max_size:
             evicted_cid, _ = self._instances.popitem(last=False)
             # EA has no close() — we just drop the reference. Its Redis
-            # and mem0 connections will close when GC collects it. Log
-            # so thrash is visible if max_size is tuned too low.
+            # connections will close when GC collects it. Log so thrash
+            # is visible if max_size is tuned too low.
             logger.info("EA registry evicted customer=%s (LRU, cap=%d)",
                         evicted_cid, self._max_size)
 
@@ -103,8 +102,8 @@ class EARegistry:
                 self._touch(customer_id)
                 return self._instances[customer_id]
             # Factory is sync and does blocking I/O (EA.__init__ connects
-            # to Redis + mem0, compiles LangGraph). Run it off-loop so a
-            # slow build for customer A doesn't stall requests for B.
+            # to Redis, compiles LangGraph). Run it off-loop so a slow
+            # build for customer A doesn't stall requests for B.
             loop = asyncio.get_running_loop()
             ea = await loop.run_in_executor(None, self._factory, customer_id)
             if self._post_create_hook is not None:

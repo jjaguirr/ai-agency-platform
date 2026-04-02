@@ -173,3 +173,6 @@ docker-compose.phase1.yml
 # Docker volumes and database data - NEVER COMMIT THESE
 data/
 data/**/*
+
+# Local tooling state
+.omc/

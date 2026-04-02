@@ -113,19 +113,7 @@ test_docker_builds() {
     log_info "Testing Docker image builds..."
     
     cd "${PROJECT_DIR}"
-    
-    # Test memory monitor build
-    if [ -f "src/memory/Dockerfile.monitor" ]; then
-        log_info "Testing memory monitor Docker build..."
-        if docker build -f src/memory/Dockerfile.monitor src/memory/ -t ai-agency-memory-monitor:test &> /dev/null; then
-            log_success "Memory monitor build successful"
-            docker rmi ai-agency-memory-monitor:test &> /dev/null || true
-        else
-            log_error "Memory monitor build failed"
-            exit 1
-        fi
-    fi
-    
+
     # Test security API build
     if [ -f "src/security/Dockerfile.llamaguard-api" ]; then
         log_info "Testing security API Docker build..."
@@ -200,13 +188,8 @@ validate_required_files() {
         "docker-compose.yml"
         "docker-compose.ci.yml"
         "src/database/schema.sql"
-        "src/memory/Dockerfile.monitor"
-        "src/memory/requirements-monitor.txt"
-        "src/memory/monitor_service.py"
         "src/security/Dockerfile.llamaguard-api"
         "src/security/requirements.txt"
-        "src/security/llamaguard-api.py"
-        "test_ea_basic.py"
     )
     
     local missing_files=()
@@ -328,7 +311,6 @@ Generated: $(date)
 - [x] docker-compose.ci.yml is valid
 
 ### Docker Images
-- [x] Memory monitor builds successfully
 - [x] Security API builds successfully
 
 ### Required Files

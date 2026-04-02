@@ -85,7 +85,6 @@ def test_dependencies():
     dependencies = [
         ("redis", "Redis client"),
         ("psycopg2", "PostgreSQL client"),
-        ("mem0", "Mem0 AI memory"),
         ("openai", "OpenAI API client"),
         ("langchain_core", "LangChain core"),
         ("langgraph", "LangGraph"),

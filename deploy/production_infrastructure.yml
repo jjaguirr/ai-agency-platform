@@ -49,11 +49,7 @@ data:
     port_ranges:
       mcp_server: [30000, 30999]      # 1000 customers
       postgres: [31000, 31999]
-      redis: [32000, 32999] 
-      qdrant: [33000, 33999]
-      neo4j: [34000, 34999]
-      neo4j_bolt: [35000, 35999]
-      memory_monitor: [36000, 36999]
+      redis: [32000, 32999]
       security_service: [37000, 37999]
     
   # Security configuration
@@ -325,8 +321,6 @@ spec:
       port: 5432  # PostgreSQL
     - protocol: TCP
       port: 6379  # Redis
-    - protocol: TCP
-      port: 6333  # Qdrant
 
 ---
 # Service Monitor for Prometheus

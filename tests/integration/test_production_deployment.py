@@ -242,8 +242,6 @@ class ProductionDeploymentIntegrationTests:
             integration_tests = [
                 ('mcp_server_postgres', self._test_mcp_postgres_integration),
                 ('mcp_server_redis', self._test_mcp_redis_integration),
-                ('memory_qdrant', self._test_memory_qdrant_integration),
-                ('memory_neo4j', self._test_memory_neo4j_integration),
                 ('monitoring_services', self._test_monitoring_integration),
                 ('security_services', self._test_security_integration)
             ]
@@ -388,7 +386,7 @@ class ProductionDeploymentIntegrationTests:
                 'success': True,
                 'customer_id': customer_id,
                 'provisioning_time': provisioning_time,
-                'services': ['postgres', 'redis', 'qdrant', 'neo4j', 'mcp-server', 'memory-monitor']
+                'services': ['postgres', 'redis', 'mcp-server']
             }
         else:
             return {
@@ -402,7 +400,7 @@ class ProductionDeploymentIntegrationTests:
         # Simulate infrastructure health check
         await asyncio.sleep(1)
         
-        services = ['postgres', 'redis', 'qdrant', 'neo4j', 'mcp-server', 'memory-monitor']
+        services = ['postgres', 'redis', 'mcp-server']
         service_health = {service: True for service in services}
         
         return {
@@ -577,17 +575,7 @@ class ProductionDeploymentIntegrationTests:
         """Test MCP server to Redis integration."""
         await asyncio.sleep(0.3)
         return {'integration_working': True, 'response_time_ms': 35}
-    
-    async def _test_memory_qdrant_integration(self, customer_id: str) -> Dict[str, Any]:
-        """Test Memory service to Qdrant integration."""
-        await asyncio.sleep(0.4)
-        return {'integration_working': True, 'response_time_ms': 120}
-    
-    async def _test_memory_neo4j_integration(self, customer_id: str) -> Dict[str, Any]:
-        """Test Memory service to Neo4j integration."""
-        await asyncio.sleep(0.6)
-        return {'integration_working': True, 'response_time_ms': 95}
-    
+
     async def _test_monitoring_integration(self, customer_id: str) -> Dict[str, Any]:
         """Test monitoring service integration."""
         await asyncio.sleep(0.3)

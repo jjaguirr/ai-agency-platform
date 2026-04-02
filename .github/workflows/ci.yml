@@ -49,9 +49,6 @@ jobs:
           timeout 60 bash -c 'until docker compose -f docker-compose.ci.yml exec -T redis redis-cli ping 2>/dev/null | grep -q PONG; do sleep 3; done'
           echo "Redis ready"
 
-          timeout 90 bash -c 'until wget --spider --quiet http://localhost:6333/health 2>/dev/null; do sleep 3; done'
-          echo "Qdrant ready"
-
       - name: Run unit tests
         run: uv run pytest tests/unit/ --tb=short -q
         env:
