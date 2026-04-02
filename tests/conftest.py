@@ -136,8 +136,6 @@ def jewelry_business_context():
         daily_operations=["social media posting", "order processing", "customer service"],
         pain_points=["manual social media", "invoice creation", "follow-up emails"],
         current_tools=["Instagram", "Shopify", "Gmail"],
-        revenue_range="$100K-500K",
-        time_constraints={"social_media": "2h/day", "invoicing": "4h/week"}
     )
 
 
@@ -151,8 +149,6 @@ def consulting_business_context():
         daily_operations=["client calls", "report generation", "proposal writing"],
         pain_points=["manual reports", "client follow-up", "time tracking"],
         current_tools=["Zoom", "Microsoft Office", "CRM"],
-        revenue_range="$250K+",
-        hourly_rate=150
     )
 
 
@@ -216,7 +212,7 @@ async def ea_with_business_context(jewelry_business_context):
 # === AnyAgent Evaluation Fixtures ===
 
 @pytest.fixture
-def ea_any_agent(mock_openai):
+def ea_any_agent():
     """Mock AnyAgent for testing."""
     mock_agent = MagicMock()
     mock_agent.run = AsyncMock(return_value="Mock AnyAgent response")
@@ -301,14 +297,16 @@ def ea_evaluation_criteria():
 
 @pytest.fixture
 def ea_performance_benchmarks():
-    """Performance benchmarks from Phase-1 PRD."""
+    """Performance benchmarks from Phase-1 PRD (deprecated — use performance_benchmarks)."""
     return {
-        "response_time": 2.0,  # <2 seconds response time
+        "text_response_max_time": 2.0,  # <2 seconds response time
+        "response_time": 2.0,  # legacy alias for text_response_max_time
         "customer_satisfaction": 4.5,  # >4.5/5.0 satisfaction
         "memory_recall": 0.5,  # <500ms memory recall
         "automation_accuracy": 0.95,  # >95% template matching accuracy
-        "business_learning": 0.9  # >90% business context retention
+        "business_learning": 0.9,  # >90% business context retention
     }
+
 
 @pytest.fixture
 def performance_benchmarks():
@@ -316,17 +314,25 @@ def performance_benchmarks():
     return {
         # Core business requirements (Phase-1 PRD)
         "text_response_max_time": 2.0,      # <2 seconds - business requirement
-        "voice_response_max_time": 0.5,     # <500ms - business requirement  
+        "voice_response_max_time": 0.5,     # <500ms - business requirement
         "memory_recall_max_time": 0.5,      # <500ms - business requirement
-        
+
         # Test category standards
-        "unit_max_time": 0.1,              # <100ms for isolated unit tests
-        "integration_max_time": 2.0,       # <2s for service integration
-        "e2e_max_time": 10.0,              # <10s for full workflow tests
-        
-        # Specialized scenarios  
-        "concurrent_max_time": 5.0,        # <5s for concurrent operations
-        "provisioning_max_time": 60.0,     # <60s for EA provisioning (business requirement)
+        "unit_max_time": 0.1,               # <100ms for isolated unit tests
+        "integration_max_time": 2.0,        # <2s for service integration
+        "e2e_max_time": 10.0,               # <10s for full workflow tests
+
+        # Specialized scenarios
+        "concurrent_max_time": 5.0,         # <5s for concurrent operations
+        "provisioning_max_time": 30.0,      # <30s target for EA provisioning (PRD)
+        "provisioning_limit_time": 60.0,    # <60s hard limit for EA provisioning (PRD)
+        "template_matching_max_time": 0.5,  # <500ms for automation template matching
+
+        # Legacy aliases (backward compatibility with older tests)
+        "response_time": 2.0,
+        "memory_recall": 0.5,
+        "customer_satisfaction": 4.5,
+        "automation_accuracy": 0.95,
     }
 
 

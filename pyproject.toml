@@ -142,6 +142,10 @@ markers = [
     "memory: Tests for memory and context persistence",
     "cross_channel: Tests for cross-channel conversation continuity",
     "e2e: End-to-end tests",
+    "unit_performance: Unit-level performance benchmarks",
+    "integration_performance: Integration performance benchmarks",
+    "memory_performance: Memory recall performance benchmarks",
+    "e2e_performance: End-to-end performance benchmarks",
     "voice_performance: Voice latency benchmarks",
     "provisioning_performance: Customer provisioning benchmarks",
 ]
