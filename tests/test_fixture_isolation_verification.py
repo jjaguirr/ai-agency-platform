@@ -134,8 +134,13 @@ class TestFixtureIsolationVerification:
             f"EA cleanup failed - remaining keys: {remaining_keys}"
     
     @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_ea_with_business_context_no_complex_fixture_chain(self):
-        """FAILING TEST: ea_with_business_context should be self-contained, not chained."""
+        """ea_with_business_context should be self-contained, not chained.
+
+        Instantiates a real ExecutiveAssistant and hits live Redis +
+        Postgres for store_business_context / get_business_context.
+        """
         
         # This test verifies the NEW implementation doesn't have complex fixture chains
         # It should fail until we implement the simplified version

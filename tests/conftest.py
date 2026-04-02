@@ -448,3 +448,121 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "evaluation: mark test as using AI evaluation frameworks"
     )
+
+
+# === Integration test gating ===
+#
+# Probes run once at module load. Each returns (reachable, misconfig_msg):
+#   (True,  None)  service up, creds accepted
+#   (False, None)  service unreachable — legitimate skip
+#   (False, str)   service responded but rejected us — config error
+#
+# The third state is the trap a bare `except Exception: return False`
+# falls into: a developer with POSTGRES_PASSWORD=their_local_pw exported
+# would see "Postgres unavailable" skips while the actual integration
+# tests (which read that env var) would have worked. We surface that
+# loudly inside collection_modifyitems — but only when integration
+# tests are actually in the collection. Running `pytest tests/unit/`
+# with a misconfigured Postgres stays silent.
+
+def _probe_redis() -> tuple[bool, str | None]:
+    # Integration tests hardcode redis://localhost:6379/15 — match that.
+    try:
+        client = redis.Redis(
+            host="localhost", port=6379, db=15,
+            socket_connect_timeout=1, socket_timeout=1,
+        )
+        client.ping()
+        return True, None
+    except redis.AuthenticationError as e:
+        # Server replied NOAUTH/WRONGPASS — it's up, your creds are wrong.
+        return False, f"Redis rejected auth: {e}"
+    except redis.ConnectionError:
+        return False, None
+    except Exception:
+        return False, None
+
+
+def _probe_postgres() -> tuple[bool, str | None]:
+    import os
+    host = os.getenv("POSTGRES_HOST", "localhost")
+    db = os.getenv("POSTGRES_DB", "mcphub_test")
+    user = os.getenv("POSTGRES_USER", "mcphub")
+    pw = os.getenv("POSTGRES_PASSWORD", "mcphub_password")
+    try:
+        import psycopg2
+    except ImportError:
+        return False, None
+    try:
+        conn = psycopg2.connect(
+            host=host, database=db, user=user, password=pw,
+            connect_timeout=1,
+        )
+        conn.close()
+        return True, None
+    except psycopg2.OperationalError as e:
+        msg = str(e).strip()
+        # "FATAL: ..." comes from the server — it answered, so it's reachable.
+        # Covers: password authentication failed, role does not exist,
+        # database does not exist. All mean: fix your config, don't skip.
+        if "FATAL" in msg:
+            return False, (
+                f"Postgres at {host} responded but rejected the connection: "
+                f"{msg!r}. Check POSTGRES_USER / POSTGRES_PASSWORD / "
+                f"POSTGRES_DB — the integration tests read these."
+            )
+        # "Connection refused", "could not connect", "timeout expired" —
+        # transport-layer failure, no server on the other end.
+        return False, None
+    except Exception:
+        return False, None
+
+
+_REDIS_UP, _REDIS_MISCONFIG = _probe_redis()
+_POSTGRES_UP, _POSTGRES_MISCONFIG = _probe_postgres()
+_INTEGRATION_SERVICES_UP = _REDIS_UP and _POSTGRES_UP
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip @pytest.mark.integration tests when Redis or Postgres are unreachable.
+
+    Tests in tests/business/ and tests/integration/ instantiate a real
+    ExecutiveAssistant and exercise it against live services. On a fresh
+    clone with no services, they fail on NoneType attribute errors deep
+    in the EA's storage layer rather than skipping cleanly. This hook
+    short-circuits that — one probe per service at collection time, then
+    a skip marker on every integration test if either is down.
+
+    Three outcomes:
+      services up                 → tests run
+      services unreachable        → tests skip
+      services up but rejecting   → pytest.exit, fix your config
+    """
+    if _INTEGRATION_SERVICES_UP:
+        return
+
+    integration_items = [i for i in items if "integration" in i.keywords]
+    if not integration_items:
+        # No integration tests collected (e.g. `pytest tests/unit/`).
+        # Misconfigured Postgres on the dev box is none of our business.
+        return
+
+    misconfig = _REDIS_MISCONFIG or _POSTGRES_MISCONFIG
+    if misconfig:
+        pytest.exit(
+            f"Integration service reachable but misconfigured.\n  {misconfig}\n"
+            f"  ({len(integration_items)} integration tests would have been "
+            f"silently skipped.)",
+            returncode=2,
+        )
+
+    missing = []
+    if not _REDIS_UP:
+        missing.append("Redis@localhost:6379")
+    if not _POSTGRES_UP:
+        missing.append("Postgres unreachable (check POSTGRES_HOST/PORT)")
+    skip_integration = pytest.mark.skip(
+        reason=f"integration services unavailable: {', '.join(missing)}"
+    )
+    for item in integration_items:
+        item.add_marker(skip_integration)

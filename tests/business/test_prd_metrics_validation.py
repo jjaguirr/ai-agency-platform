@@ -13,6 +13,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 from src.agents.executive_assistant import ExecutiveAssistant, ConversationChannel
 
+# Real ExecutiveAssistant + live storage — gated by conftest service probe.
+pytestmark = pytest.mark.integration
+
 
 class TestPhase1PRDMetrics:
     """

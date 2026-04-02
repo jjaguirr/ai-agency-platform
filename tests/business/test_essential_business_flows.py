@@ -10,6 +10,9 @@ from datetime import datetime
 from typing import Dict, List
 from src.agents.executive_assistant import ExecutiveAssistant, ConversationChannel
 
+# Real ExecutiveAssistant + live storage — gated by conftest service probe.
+pytestmark = pytest.mark.integration
+
 
 class ConversationDisplay:
     """Real-time conversation display for tests"""

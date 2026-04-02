@@ -13,6 +13,9 @@ from unittest.mock import Mock, patch, AsyncMock
 from src.agents.executive_assistant import ExecutiveAssistant, ConversationChannel
 from tests.conftest import BusinessContext
 
+# Real ExecutiveAssistant + live storage — gated by conftest service probe.
+pytestmark = pytest.mark.integration
+
 
 class TestEABusinessProposition:
     """Test suite validating Phase 1 business propositions"""

@@ -9,6 +9,12 @@ import time
 from src.agents.executive_assistant import ExecutiveAssistant, ConversationChannel
 from tests.utils.test_data_manager import TestDataManager
 
+# Every test here instantiates a real ExecutiveAssistant and exercises
+# handle_customer_interaction against live storage backends. Without
+# Postgres/Redis the EA degrades to fallback responses that can't
+# satisfy these assertions. Gated by conftest service probe.
+pytestmark = pytest.mark.integration
+
 
 class TestEABusinessValidation:
     """Core business validation tests"""
