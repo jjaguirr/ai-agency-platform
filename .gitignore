@@ -2,6 +2,7 @@
 .claude/
 .claude_dev_active
 claude-dev
+.omc/
 
 # Environment Variables - NEVER COMMIT SECRETS
 .env

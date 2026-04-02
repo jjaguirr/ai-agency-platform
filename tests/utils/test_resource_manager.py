@@ -129,16 +129,6 @@ async def cleanup_ea_resources(ea, customer_id: str):
     except Exception as e:
         cleanup_errors.append(f"Database cleanup failed: {e}")
     
-    try:
-        # Mem0 cleanup (if available)
-        if hasattr(ea, 'mem0_memory'):
-            # Delete all memories for this customer
-            memories = ea.mem0_memory.get_all(user_id=customer_id)
-            for memory in memories:
-                ea.mem0_memory.delete(memory_id=memory['id'])
-    except Exception as e:
-        cleanup_errors.append(f"Mem0 cleanup failed: {e}")
-    
     # Fail fast on cleanup errors - don't hide them
     if cleanup_errors:
         raise Exception(f"EA resource cleanup failed for {customer_id}: {cleanup_errors}")

@@ -27,14 +27,12 @@ class FakeLLM:
 
 @pytest.fixture
 def ea():
-    """EA with redis/mem0 mocked out. LLM is None; tests inject their own."""
+    """EA with redis mocked out. LLM is None; tests inject their own."""
     with patch("src.agents.executive_assistant.redis.Redis", return_value=MagicMock()), \
-         patch("src.agents.executive_assistant.Memory") as mock_mem, \
          patch.dict("os.environ", {}, clear=False):
         # Clear OPENAI_API_KEY so llm init is skipped
         import os
         os.environ.pop("OPENAI_API_KEY", None)
-        mock_mem.from_config.return_value = MagicMock()
         from src.agents.executive_assistant import ExecutiveAssistant
         yield ExecutiveAssistant("test-customer")
 
