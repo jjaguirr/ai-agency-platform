@@ -128,19 +128,9 @@ addopts = [
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
-    "unit: Unit tests for individual components",
     "integration: Integration tests requiring services",
-    "acceptance: End-to-end acceptance tests with scenarios",
-    "agent_test: Tests using AI agent evaluation frameworks",
     "evaluation: Tests using LLM/Agent judges for evaluation",
     "performance: Performance benchmark tests",
-    "conversation: Conversational AI testing",
-    "scenario: Scenario-driven testing",
-    "slow: Tests that take longer than 10 seconds",
-    "mock: Tests using mocked services",
-    "real_api: Tests requiring real API calls (OpenAI, etc.)",
-    "memory: Tests for memory and context persistence",
-    "cross_channel: Tests for cross-channel conversation continuity",
     "e2e: End-to-end tests",
     "unit_performance: Unit-level performance benchmarks",
     "integration_performance: Integration performance benchmarks",
