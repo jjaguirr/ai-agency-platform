@@ -1,3 +1,12 @@
+-- ════════════════════════════════════════════════════════════════════════════
+-- SUPERSEDED by alembic/versions/20260402_a1c0e7f9b3d2_conversations_base.py
+--
+-- Kept for reference and for the stamp-parity test in
+-- tests/integration/test_alembic_migrations.py::TestStampOnLegacyDB.
+-- Do not apply manually.  Run `alembic upgrade head` instead.
+-- Existing databases that ran this file: run `alembic stamp head` once.
+-- ════════════════════════════════════════════════════════════════════════════
+--
 -- Migration 001: Persistent conversation storage.
 --
 -- Two tables: conversations (header) and messages (append-only log).

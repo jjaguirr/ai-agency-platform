@@ -25,7 +25,7 @@ import pytest_asyncio
 asyncpg = pytest.importorskip("asyncpg")
 
 REPO_ROOT = Path(__file__).parents[2]
-MIGRATIONS_DIR = REPO_ROOT / "src" / "database" / "migrations"
+ALEMBIC_INI = REPO_ROOT / "alembic.ini"
 
 
 def _dsn() -> str:
@@ -39,13 +39,6 @@ def _dsn() -> str:
     return f"postgresql://{user}:{pw}@{host}:{port}/{db}"
 
 
-# Migrations are idempotent so re-applying per-test is harmless; cheaper
-# than fighting pytest-asyncio's event-loop-scope rules for a handful
-# of integration tests. Sorted glob so 001 runs before 002 — file naming
-# is the ordering contract.
-_MIGRATION_SQL = [p.read_text() for p in sorted(MIGRATIONS_DIR.glob("*.sql"))]
-
-
 @pytest_asyncio.fixture
 async def pool():
     dsn = _dsn()
@@ -54,17 +47,14 @@ async def pool():
     except (OSError, asyncpg.PostgresError) as e:
         pytest.skip(f"Postgres unavailable at {dsn!r}: {e}")
 
-    # Apply migrations. schema_migrations may not exist in a bare test DB,
-    # so ensure it's present first (idempotent CREATE).
-    async with p.acquire() as conn:
-        await conn.execute(
-            "CREATE TABLE IF NOT EXISTS schema_migrations ("
-            "  version VARCHAR(50) PRIMARY KEY,"
-            "  description TEXT,"
-            "  applied_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP)"
-        )
-        for sql in _MIGRATION_SQL:
-            await conn.execute(sql)
+    # Apply Alembic migrations to public.  Idempotent — upgrade head
+    # is a no-op when already at head.  alembic.command.* are sync;
+    # env.py spots the running loop and threads its own asyncio.run().
+    from alembic import command
+    from alembic.config import Config
+    os.environ.setdefault("DATABASE_URL", dsn)
+    cfg = Config(str(ALEMBIC_INI))
+    command.upgrade(cfg, "head")
 
     yield p
     await p.close()
@@ -507,10 +497,12 @@ class TestSchemaCheck:
         # Migration applied in pool fixture — should pass.
         await repo.check_schema()
 
-    async def test_check_schema_raises_clearly_when_table_missing(self, pool):
+    async def test_check_schema_raises_when_revision_stale(self, pool):
         """
-        Rename the table out of the way, assert check_schema raises a
-        descriptive error (not a bare asyncpg error), then rename back.
+        Rewind alembic_version to an earlier revision and assert
+        check_schema raises with the upgrade hint.  The old test
+        renamed a table — that no longer trips the check (Alembic
+        only reads its own version table, not pg_tables).
         """
         from src.database.conversation_repository import (
             ConversationRepository, SchemaNotReadyError,
@@ -518,17 +510,18 @@ class TestSchemaCheck:
         repo = ConversationRepository(pool)
 
         async with pool.acquire() as conn:
+            real = await conn.fetchval(
+                "SELECT version_num FROM alembic_version")
             await conn.execute(
-                "ALTER TABLE conversations RENAME TO conversations_hidden")
+                "UPDATE alembic_version SET version_num = 'a1c0e7f9b3d2'")
         try:
             with pytest.raises(SchemaNotReadyError) as exc_info:
                 await repo.check_schema()
-            assert "conversations" in str(exc_info.value)
-            assert "migration" in str(exc_info.value).lower()
+            assert "alembic upgrade head" in str(exc_info.value)
         finally:
             async with pool.acquire() as conn:
                 await conn.execute(
-                    "ALTER TABLE conversations_hidden RENAME TO conversations")
+                    "UPDATE alembic_version SET version_num = $1", real)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
