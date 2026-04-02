@@ -306,8 +306,10 @@ class TestExemptPaths:
 class TestFailOpen:
     @pytest.mark.asyncio
     async def test_redis_down_passes_request_through(self, tight_config, clock):
-        from unittest.mock import AsyncMock
-        broken = AsyncMock()
+        # redis.pipeline() is sync — AsyncMock would return a coroutine
+        # the prod code never awaits. MagicMock raises at the call site.
+        from unittest.mock import MagicMock
+        broken = MagicMock()
         broken.pipeline.side_effect = ConnectionError("redis down")
         mw = RateLimitMiddleware(_ok_app, broken, tight_config, now=clock)
         # Would normally be limited after 3; all 10 pass because Redis is dead.
