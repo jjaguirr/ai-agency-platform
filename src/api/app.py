@@ -169,7 +169,7 @@ def create_default_app() -> FastAPI:  # pragma: no cover
 
     Deliberately NOT called at import time — building the orchestrator
     touches Docker, the port allocator touches Redis/Postgres, and
-    ExecutiveAssistant connects to mem0. None of that should happen
+    ExecutiveAssistant connects to Redis. None of that should happen
     because someone imported this module.
     """
     from contextlib import asynccontextmanager

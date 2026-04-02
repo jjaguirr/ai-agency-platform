@@ -12,10 +12,6 @@ redis==5.0.1
 psycopg2-binary==2.9.9
 requests==2.31.0
 
-# Memory management (real dependencies)
-mem0ai>=0.1.0
-chromadb>=1.0.0
-
 # Testing utilities
 unittest-xml-reporting==3.2.0
 fakeredis==2.20.0  # Fallback for Redis if service unavailable

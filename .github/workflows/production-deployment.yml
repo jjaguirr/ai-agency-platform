@@ -194,16 +194,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          
-      - name: Build and push Memory Monitor image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: src/memory/Dockerfile.monitor
-          push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/memory-monitor:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
   # Staging Deployment
   deploy-staging:
@@ -288,14 +278,9 @@ jobs:
           kubectl set image deployment/mcp-server-$NEXT \
             mcp-server=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
             -n ai-agency-production
-            
-          kubectl set image deployment/memory-monitor-$NEXT \
-            memory-monitor=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/memory-monitor:${{ github.sha }} \
-            -n ai-agency-production
-            
+
           # Wait for deployment
           kubectl rollout status deployment/mcp-server-$NEXT -n ai-agency-production --timeout=${{ env.DEPLOYMENT_TIMEOUT }}s
-          kubectl rollout status deployment/memory-monitor-$NEXT -n ai-agency-production --timeout=${{ env.DEPLOYMENT_TIMEOUT }}s
           
           # Health check new environment
           echo "Running health checks on $NEXT environment"
@@ -425,7 +410,6 @@ jobs:
           
           # Rollback to previous deployment
           kubectl rollout undo deployment/mcp-server-production -n ai-agency-production
-          kubectl rollout undo deployment/memory-monitor-production -n ai-agency-production
           
           # Wait for rollback
           kubectl rollout status deployment/mcp-server-production -n ai-agency-production --timeout=300s
