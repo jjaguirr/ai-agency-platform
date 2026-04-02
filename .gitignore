@@ -65,6 +65,8 @@ yarn-debug.log*
 yarn-error.log*
 
 # Runtime data
+.omc/
+.claude_dev_active
 pids/
 *.pid
 *.seed
