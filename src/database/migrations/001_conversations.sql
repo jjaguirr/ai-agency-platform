@@ -1,3 +1,11 @@
+-- ─────────────────────────────────────────────────────────────────────
+-- SUPERSEDED by Alembic revision 156127bc0bf1.
+--
+-- This file is kept for reference and for the integration-test
+-- fixtures that still apply it directly. Do NOT extend it.
+-- New schema changes go in alembic/versions/. To bring an existing
+-- database under Alembic, run `alembic stamp head`.
+-- ─────────────────────────────────────────────────────────────────────
 -- Migration 001: Persistent conversation storage.
 --
 -- Two tables: conversations (header) and messages (append-only log).

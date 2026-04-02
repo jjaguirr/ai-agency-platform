@@ -38,6 +38,20 @@ uv run pytest --cov=src/agents/ai_ml/workflow_generator --cov-report=term-missin
 uv run pytest
 ```
 
+## Database
+
+Schema is managed with Alembic. The API refuses to start if the
+database isn't at the current head revision. Against a local
+Postgres:
+
+```bash
+alembic upgrade head
+```
+
+See [docs/database/migrations.md](docs/database/migrations.md) for
+adopting a pre-Alembic DB, adding revisions, rollback, and running
+the migration integration tests.
+
 ## Dashboard
 
 Svelte + Vite in `dashboard/`; FastAPI serves the built assets at `/` with the API at `/v1/`. Requires Node 22+.
