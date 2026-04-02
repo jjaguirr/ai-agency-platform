@@ -14,7 +14,9 @@ logger = logging.getLogger(__name__)
 
 class TestResourceManager:
     """Manages test resource cleanup and ensures test isolation."""
-    
+    # Helper class — "TestResource Manager", not a pytest test class.
+    __test__ = False
+
     def __init__(self):
         self.resources_to_cleanup: List[Callable] = []
         self.customer_ids_used: List[str] = []

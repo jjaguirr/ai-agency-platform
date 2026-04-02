@@ -28,20 +28,19 @@ logger = logging.getLogger(__name__)
 
 class ProductionDeploymentIntegrationTests:
     """Comprehensive integration tests for production deployment."""
-    
-    def __init__(self):
-        self.test_customers = []
-        self.test_results = {}
-        self.cleanup_required = []
-        
+
     @pytest.fixture(autouse=True)
     async def setup_and_cleanup(self):
         """Setup and cleanup for each test."""
-        # Setup
+        # Setup — instance state lives here so pytest can collect the class
+        # (test classes can't have __init__).
+        self.test_customers = []
+        self.test_results = {}
+        self.cleanup_required = []
         self.test_start_time = time.time()
-        
+
         yield
-        
+
         # Cleanup
         await self._cleanup_test_resources()
     
