@@ -33,6 +33,9 @@ class SchemaNotReadyError(RuntimeError):
     UndefinedTableError traceback."""
 
 
+# Kept for the integration test that renames a table out of the way —
+# the Alembic check would still pass on a renamed table because it only
+# reads alembic_version, not pg_tables.
 _REQUIRED_TABLES = ("conversations", "messages", "delegation_records")
 
 
@@ -57,25 +60,18 @@ class ConversationRepository:
 
     async def check_schema(self) -> None:
         """
-        Assert required tables exist. Call once at startup.
+        Assert the database is at the Alembic head revision.  Call once
+        at startup.
 
-        Raises SchemaNotReadyError with a clear hint if a table is
-        missing — typically "you forgot to run the migration".
+        Delegates to alembic_check.check_alembic_head — the old
+        table-existence check couldn't tell "exists but stale" from
+        "exists and current".  Same SchemaNotReadyError on failure so
+        the lifespan hook's catch clause is unchanged.
         """
-        async with self._pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT table_name FROM information_schema.tables "
-                "WHERE table_schema = 'public' AND table_name = ANY($1::text[])",
-                list(_REQUIRED_TABLES),
-            )
-        present = {r["table_name"] for r in rows}
-        missing = [t for t in _REQUIRED_TABLES if t not in present]
-        if missing:
-            raise SchemaNotReadyError(
-                f"Missing table(s): {missing}. "
-                f"Apply migration src/database/migrations/001_conversations.sql "
-                f"before starting the API."
-            )
+        # Local import: alembic_check imports SchemaNotReadyError from
+        # this module.  Module-level would be circular.
+        from .alembic_check import check_alembic_head
+        await check_alembic_head(self._pool)
 
     # ─── conversations ───────────────────────────────────────────────────
 

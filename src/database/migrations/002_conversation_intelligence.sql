@@ -1,3 +1,12 @@
+-- ════════════════════════════════════════════════════════════════════════════
+-- SUPERSEDED by alembic/versions/20260402_b2d4f8e1a6c5_conversation_intelligence.py
+--
+-- Kept for reference and for the stamp-parity test in
+-- tests/integration/test_alembic_migrations.py::TestStampOnLegacyDB.
+-- Do not apply manually.  Run `alembic upgrade head` instead.
+-- Existing databases that ran this file: run `alembic stamp head` once.
+-- ════════════════════════════════════════════════════════════════════════════
+--
 -- Migration 002: Conversation intelligence layer.
 --
 -- Extends conversations with summary, topic tags, and quality signals.

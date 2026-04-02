@@ -46,6 +46,8 @@ dependencies = [
     "asyncpg>=0.29.0",
     "psycopg2-binary>=2.9.9",
     "redis[hiredis]>=5.0.0",
+    "alembic>=1.13.0",
+    "sqlalchemy[asyncio]>=2.0.25",
 
     # HTTP clients
     "aiohttp>=3.9.0",

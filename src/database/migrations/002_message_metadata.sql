@@ -1,3 +1,11 @@
+-- ════════════════════════════════════════════════════════════════════════════
+-- SUPERSEDED by alembic/versions/20260402_b2d4f8e1a6c5_conversation_intelligence.py
+--
+-- Folded into the same Alembic revision as 002_conversation_intelligence.sql
+-- (both shared the '002' version slot in schema_migrations).  Kept for
+-- reference and for the stamp-parity test.  Do not apply manually.
+-- ════════════════════════════════════════════════════════════════════════════
+--
 -- Migration 002: specialist_domain on messages
 --
 -- Tags assistant messages with which specialist handled the turn, so the
