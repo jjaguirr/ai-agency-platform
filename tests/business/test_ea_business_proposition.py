@@ -18,7 +18,7 @@ class TestEABusinessProposition:
     """Test suite validating Phase 1 business propositions"""
 
     @pytest.mark.asyncio
-    async def test_ea_available_within_60_seconds_onboarding(self, mock_ea):
+    async def test_ea_available_within_60_seconds_onboarding(self):
         """
         Business Proposition: EA available and calling customer within 60 seconds of purchase
         PRD Success Metric: EA available and calling customer within 60 seconds of purchase
@@ -32,7 +32,7 @@ class TestEABusinessProposition:
         ea = ExecutiveAssistant(customer_id=customer_id)
         
         # Test initial contact capability
-        welcome_message = await ea.process_message(
+        welcome_message = await ea.handle_customer_interaction(
             message="System: New customer onboarding initiated",
             channel=ConversationChannel.PHONE
         )
@@ -47,7 +47,7 @@ class TestEABusinessProposition:
         print(f"✅ EA provisioned in {provisioning_time:.2f}s (< 60s requirement)")
 
     @pytest.mark.asyncio
-    async def test_business_discovery_conversation_within_5_minutes(self, mock_ea):
+    async def test_business_discovery_conversation_within_5_minutes(self):
         """
         Business Proposition: EA learns business through conversation
         PRD Success Metric: Match customer need to workflow template within first 5 minutes
@@ -64,7 +64,7 @@ class TestEABusinessProposition:
         I need help automating these repetitive tasks.
         """
         
-        response = await ea.process_message(
+        response = await ea.handle_customer_interaction(
             message=business_intro,
             channel=ConversationChannel.PHONE
         )
@@ -91,7 +91,7 @@ class TestEABusinessProposition:
         print(f"✅ Business understanding score: {understanding_score}/8")
 
     @pytest.mark.asyncio
-    async def test_workflow_template_matching_capability(self, mock_ea):
+    async def test_workflow_template_matching_capability(self):
         """
         Business Proposition: EA creates workflows using pre-built templates
         PRD Success Metric: >95% workflow success rate using template-based approach
@@ -120,7 +120,7 @@ class TestEABusinessProposition:
         successful_matches = 0
         
         for scenario in automation_requests:
-            response = await ea.process_message(
+            response = await ea.handle_customer_interaction(
                 message=scenario["request"],
                 channel=ConversationChannel.PHONE
             )
@@ -146,7 +146,7 @@ class TestEABusinessProposition:
         print(f"✅ Template matching success rate: {success_rate}%")
 
     @pytest.mark.asyncio 
-    async def test_response_time_requirements(self, mock_ea):
+    async def test_response_time_requirements(self):
         """
         Business Proposition: Professional EA response times
         PRD Success Metric: <2 seconds text response, <500ms voice response
@@ -155,7 +155,7 @@ class TestEABusinessProposition:
         
         # Test text response time
         text_start = time.time()
-        text_response = await ea.process_message(
+        text_response = await ea.handle_customer_interaction(
             message="What can you help me with today?",
             channel=ConversationChannel.WHATSAPP
         )
@@ -163,7 +163,7 @@ class TestEABusinessProposition:
         
         # Test phone response time (simulated)
         phone_start = time.time()
-        phone_response = await ea.process_message(
+        phone_response = await ea.handle_customer_interaction(
             message="Hello, this is a quick question",
             channel=ConversationChannel.PHONE
         )
@@ -179,7 +179,7 @@ class TestEABusinessProposition:
         print(f"✅ Phone response time: {phone_time:.3f}s (< 2s requirement)")
 
     @pytest.mark.asyncio
-    async def test_memory_persistence_across_interactions(self, mock_ea):
+    async def test_memory_persistence_across_interactions(self):
         """
         Business Proposition: EA remembers complete business context
         PRD Success Metric: Remember 100% of business context across interactions
@@ -193,7 +193,7 @@ class TestEABusinessProposition:
         Our main pain point is managing client onboarding and project tracking.
         """
         
-        initial_response = await ea.process_message(
+        initial_response = await ea.handle_customer_interaction(
             message=context_message,
             channel=ConversationChannel.EMAIL
         )
@@ -204,7 +204,7 @@ class TestEABusinessProposition:
         # Second interaction - test context recall
         recall_message = "What did I tell you about my business earlier?"
         
-        recall_response = await ea.process_message(
+        recall_response = await ea.handle_customer_interaction(
             message=recall_message,
             channel=ConversationChannel.WHATSAPP
         )
@@ -239,7 +239,7 @@ class TestEABusinessProposition:
         # Customer 1 shares sensitive business information
         customer1_info = "My business revenue is $500K annually and I work with Apple Inc."
         
-        await ea1.process_message(
+        await ea1.handle_customer_interaction(
             message=customer1_info,
             channel=ConversationChannel.EMAIL
         )
@@ -247,7 +247,7 @@ class TestEABusinessProposition:
         # Customer 2 asks about business information
         customer2_query = "What do you know about other customers' revenue or clients?"
         
-        ea2_response = await ea2.process_message(
+        ea2_response = await ea2.handle_customer_interaction(
             message=customer2_query,
             channel=ConversationChannel.PHONE
         )
@@ -265,7 +265,7 @@ class TestEABusinessProposition:
         print("✅ Customer data isolation maintained")
 
     @pytest.mark.asyncio
-    async def test_multi_channel_communication_capability(self, mock_ea):
+    async def test_multi_channel_communication_capability(self):
         """
         Business Proposition: 24/7 EA availability across all channels
         PRD Success Metric: 99.9% EA availability across WhatsApp, Email, Phone
@@ -279,7 +279,7 @@ class TestEABusinessProposition:
         
         for channel in ConversationChannel:
             try:
-                response = await ea.process_message(
+                response = await ea.handle_customer_interaction(
                     message=test_message,
                     channel=channel
                 )
@@ -304,7 +304,7 @@ class TestEABusinessROI:
     """Test EA business value and ROI calculations"""
     
     @pytest.mark.asyncio
-    async def test_automation_roi_calculation(self, mock_ea):
+    async def test_automation_roi_calculation(self):
         """
         Business Proposition: EA provides measurable business value
         Test ROI calculation for common automation scenarios
@@ -316,7 +316,7 @@ class TestEABusinessROI:
         How much could I save with automation?
         """
         
-        response = await ea.process_message(
+        response = await ea.handle_customer_interaction(
             message=roi_scenario,
             channel=ConversationChannel.EMAIL
         )
@@ -336,7 +336,7 @@ class TestEABusinessROI:
         print(f"✅ Business value understanding: {value_understanding}/8")
 
     @pytest.mark.asyncio
-    async def test_competitive_differentiation(self, mock_ea):
+    async def test_competitive_differentiation(self):
         """
         Business Proposition: EA-first approach vs multi-agent complexity
         Test that EA positions itself as a complete assistant, not just software
@@ -345,7 +345,7 @@ class TestEABusinessROI:
         
         positioning_query = "How are you different from other automation tools?"
         
-        response = await ea.process_message(
+        response = await ea.handle_customer_interaction(
             message=positioning_query,
             channel=ConversationChannel.PHONE
         )
@@ -395,7 +395,7 @@ class TestEABusinessScenarios:
     """End-to-end business scenario testing"""
     
     @pytest.mark.asyncio
-    async def test_complete_customer_journey(self, mock_ea, business_scenario_data):
+    async def test_complete_customer_journey(self, business_scenario_data):
         """
         Business Proposition: Complete EA customer journey validation
         Tests the full customer experience from onboarding to value delivery
@@ -411,7 +411,7 @@ class TestEABusinessScenarios:
             I'm looking for ways to automate these processes.
             """
             
-            discovery_response = await ea.process_message(
+            discovery_response = await ea.handle_customer_interaction(
                 message=business_intro,
                 channel=ConversationChannel.PHONE
             )
@@ -419,7 +419,7 @@ class TestEABusinessScenarios:
             # Step 2: Automation consultation
             automation_query = "What specific automations would you recommend for my business?"
             
-            consultation_response = await ea.process_message(
+            consultation_response = await ea.handle_customer_interaction(
                 message=automation_query,
                 channel=ConversationChannel.WHATSAPP
             )
@@ -427,7 +427,7 @@ class TestEABusinessScenarios:
             # Step 3: Implementation guidance
             implementation_query = "How do we get started with implementing these automations?"
             
-            implementation_response = await ea.process_message(
+            implementation_response = await ea.handle_customer_interaction(
                 message=implementation_query,
                 channel=ConversationChannel.EMAIL
             )
