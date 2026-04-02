@@ -19,10 +19,9 @@ from unittest.mock import Mock, patch
 pytest.importorskip("asyncpg")
 pytest.importorskip("redis")
 
-pytestmark = pytest.mark.skipif(
-    not os.getenv("RUN_INTEGRATION_TESTS"),
-    reason="requires live Redis/Postgres; set RUN_INTEGRATION_TESTS=1",
-)
+from tests.conftest import requires_live_services
+
+pytestmark = [pytest.mark.integration, requires_live_services]
 
 from src.infrastructure.port_allocator import (
     PortAllocator, ServiceType, create_port_allocator, allocate_customer_ports

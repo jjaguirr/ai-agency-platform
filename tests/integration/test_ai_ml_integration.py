@@ -25,11 +25,9 @@ import pytest
 pytest.importorskip("mem0")
 pytest.importorskip("sentence_transformers")
 
-# Integration tests need live Redis/Postgres/Neo4j. Gate on env flag.
-pytestmark = pytest.mark.skipif(
-    not os.getenv("RUN_INTEGRATION_TESTS"),
-    reason="requires live services; set RUN_INTEGRATION_TESTS=1",
-)
+from tests.conftest import requires_live_services
+
+pytestmark = [pytest.mark.integration, requires_live_services]
 
 # Configure logging for test output
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
