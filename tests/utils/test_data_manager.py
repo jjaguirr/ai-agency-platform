@@ -21,7 +21,9 @@ logger = logging.getLogger(__name__)
 
 class TestDataManager:
     """Manages unique test data generation and guaranteed cleanup."""
-    
+    # Helper class — "TestData Manager", not a pytest test class.
+    __test__ = False
+
     def __init__(self, test_name: str):
         self.test_name = test_name.replace("::", "_").replace("[", "_").replace("]", "_")
         self.resources_created: List[Tuple[str, str]] = []
@@ -231,3 +233,5 @@ async def test_data_manager(test_name: str):
         yield manager
     finally:
         await manager.cleanup_all()
+# This is an asynccontextmanager helper, not a test function.
+test_data_manager.__test__ = False

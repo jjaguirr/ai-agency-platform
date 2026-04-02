@@ -204,8 +204,12 @@ class TestListEvents:
 class TestFailSoft:
     @pytest.mark.asyncio
     async def test_log_never_raises_on_redis_failure(self):
-        from unittest.mock import AsyncMock
-        broken = AsyncMock()
+        # redis.pipeline() is sync — returns a Pipeline whose .execute()
+        # is the awaitable. AsyncMock here would hand back an unawaited
+        # coroutine instead of raising, and the test would pass for the
+        # wrong reason.
+        from unittest.mock import MagicMock
+        broken = MagicMock()
         broken.pipeline.side_effect = ConnectionError("redis down")
 
         audit = AuditLogger(broken)

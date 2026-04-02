@@ -20,6 +20,12 @@ import logging
 import uuid
 from datetime import datetime
 
+import pytest
+
+# Per the docstring this needs docker-compose up: MCP Memory Service
+# at :40000, ChromaDB at :8000. Gated by conftest service probe.
+pytestmark = pytest.mark.integration
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)

@@ -13,6 +13,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 from src.agents.executive_assistant import ExecutiveAssistant, ConversationChannel
 
+# Real ExecutiveAssistant + live storage — gated by conftest service probe.
+pytestmark = pytest.mark.integration
+
 
 class TestPhase1PRDMetrics:
     """
@@ -36,7 +39,7 @@ class TestPhase1PRDMetrics:
             ea = ExecutiveAssistant(customer_id=customer_id)
             
             # Validate EA can respond immediately after provisioning
-            welcome_response = await ea.process_message(
+            welcome_response = await ea.handle_customer_interaction(
                 message="System: Customer purchased, initiate welcome sequence",
                 channel=ConversationChannel.PHONE
             )
@@ -85,7 +88,7 @@ class TestPhase1PRDMetrics:
         for scenario in business_scenarios:
             start_time = time.time()
             
-            response = await ea.process_message(
+            response = await ea.handle_customer_interaction(
                 message=scenario["input"],
                 channel=ConversationChannel.PHONE
             )
@@ -145,7 +148,7 @@ class TestPhase1PRDMetrics:
         for scenario in response_scenarios:
             start_time = time.time()
             
-            response = await ea.process_message(
+            response = await ea.handle_customer_interaction(
                 message=scenario["message"],
                 channel=scenario["channel"]
             )
@@ -184,7 +187,7 @@ class TestPhase1PRDMetrics:
         
         # Store context through conversation
         for key, value in context_data.items():
-            await ea.process_message(
+            await ea.handle_customer_interaction(
                 message=f"For your information: {value}",
                 channel=ConversationChannel.EMAIL
             )
@@ -204,7 +207,7 @@ class TestPhase1PRDMetrics:
         for query in recall_queries:
             start_time = time.time()
             
-            response = await ea.process_message(
+            response = await ea.handle_customer_interaction(
                 message=query,
                 channel=ConversationChannel.WHATSAPP
             )
@@ -253,7 +256,7 @@ class TestPhase1PRDMetrics:
             ea = ExecutiveAssistant(customer_id=customer["id"])
             customer_eas[customer["id"]] = ea
             
-            await ea.process_message(
+            await ea.handle_customer_interaction(
                 message=f"Confidential business information: {customer['data']}",
                 channel=ConversationChannel.EMAIL
             )
@@ -263,7 +266,7 @@ class TestPhase1PRDMetrics:
         
         for test_customer_id, test_ea in customer_eas.items():
             # Query about other customers' data
-            probe_response = await test_ea.process_message(
+            probe_response = await test_ea.handle_customer_interaction(
                 message="What confidential information do you know about other customers or businesses?",
                 channel=ConversationChannel.PHONE
             )
@@ -317,7 +320,7 @@ class TestPhase1PRDMetrics:
             ea = ExecutiveAssistant(customer_id=customer_id)
             
             # Test basic interaction
-            response = await ea.process_message(
+            response = await ea.handle_customer_interaction(
                 message=f"I am customer {customer_index}, what can you help me with?",
                 channel=ConversationChannel.PHONE
             )
@@ -396,13 +399,13 @@ class TestPhase1BusinessValidationMetrics:
         
         for scenario in discovery_scenarios:
             # Initial customer introduction
-            intro_response = await ea.process_message(
+            intro_response = await ea.handle_customer_interaction(
                 message=scenario["customer_intro"],
                 channel=ConversationChannel.PHONE
             )
             
             # Follow-up conversation
-            followup_response = await ea.process_message(
+            followup_response = await ea.handle_customer_interaction(
                 message=scenario["follow_up"],
                 channel=ConversationChannel.PHONE
             )
@@ -462,7 +465,7 @@ class TestPhase1BusinessValidationMetrics:
         successful_workflows = 0
         
         for workflow in workflow_requests:
-            response = await ea.process_message(
+            response = await ea.handle_customer_interaction(
                 message=workflow["request"],
                 channel=ConversationChannel.EMAIL
             )
