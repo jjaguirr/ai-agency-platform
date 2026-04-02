@@ -45,6 +45,49 @@ class MockAgentJudge:
 from src.agents.executive_assistant import ExecutiveAssistant, ConversationChannel, BusinessContext
 
 
+# === Live-Service Availability Gating ===
+
+import functools
+import os
+import socket
+
+
+@functools.lru_cache(maxsize=None)
+def _probe_tcp(host: str, port: int, timeout: float = 1.0) -> bool:
+    """Return True if a TCP connection to host:port succeeds within timeout."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+@functools.lru_cache(maxsize=None)
+def live_services_available() -> bool:
+    """True when the local integration stack (Redis + Postgres + Qdrant + OpenAI key) is reachable.
+
+    Used by integration/business test modules to skip cleanly on a fresh clone
+    where Docker services and API credentials aren't configured. Probes are
+    cached so collection only pays the cost once.
+    """
+    if not os.getenv("OPENAI_API_KEY"):
+        return False
+    return (
+        _probe_tcp("localhost", 6379)   # Redis
+        and _probe_tcp("localhost", 5432)   # Postgres
+        and _probe_tcp("localhost", 6333)   # Qdrant (Mem0 vector store)
+    )
+
+
+LIVE_SERVICES_SKIP_REASON = (
+    "requires live integration stack (Redis/Postgres/Qdrant on localhost + OPENAI_API_KEY)"
+)
+
+requires_live_services = pytest.mark.skipif(
+    not live_services_available(), reason=LIVE_SERVICES_SKIP_REASON
+)
+
+
 # Removed deprecated event_loop fixture - pytest-asyncio handles this automatically
 
 

@@ -11,12 +11,15 @@ from typing import Dict, List, Any
 from unittest.mock import patch
 
 from src.agents.executive_assistant import (
-    ExecutiveAssistant, 
-    ConversationChannel, 
+    ExecutiveAssistant,
+    ConversationChannel,
     BusinessContext,
     ConversationIntent,
     ConversationPhase
 )
+from tests.conftest import requires_live_services
+
+pytestmark = [pytest.mark.integration, requires_live_services]
 
 
 @pytest.mark.integration
