@@ -300,34 +300,38 @@ def ea_evaluation_criteria():
 # === Performance Benchmarks ===
 
 @pytest.fixture
-def ea_performance_benchmarks():
-    """Performance benchmarks from Phase-1 PRD."""
-    return {
-        "response_time": 2.0,  # <2 seconds response time
-        "customer_satisfaction": 4.5,  # >4.5/5.0 satisfaction
-        "memory_recall": 0.5,  # <500ms memory recall
-        "automation_accuracy": 0.95,  # >95% template matching accuracy
-        "business_learning": 0.9  # >90% business context retention
-    }
-
-@pytest.fixture
 def performance_benchmarks():
     """Standardized performance benchmarks aligned with Phase-1 PRD requirements."""
     return {
         # Core business requirements (Phase-1 PRD)
         "text_response_max_time": 2.0,      # <2 seconds - business requirement
-        "voice_response_max_time": 0.5,     # <500ms - business requirement  
+        "voice_response_max_time": 0.5,     # <500ms - business requirement
         "memory_recall_max_time": 0.5,      # <500ms - business requirement
-        
+
         # Test category standards
         "unit_max_time": 0.1,              # <100ms for isolated unit tests
         "integration_max_time": 2.0,       # <2s for service integration
         "e2e_max_time": 10.0,              # <10s for full workflow tests
-        
-        # Specialized scenarios  
+
+        # Specialized scenarios
         "concurrent_max_time": 5.0,        # <5s for concurrent operations
-        "provisioning_max_time": 60.0,     # <60s for EA provisioning (business requirement)
+        "provisioning_max_time": 30.0,     # <30s for EA provisioning (PRD target)
+        "provisioning_limit_time": 60.0,   # <60s for EA provisioning (PRD hard limit)
+        "template_matching_max_time": 300.0,  # <5min for complex AI operations
+
+        # Legacy compatibility (DEPRECATED — use specific keys above)
+        "response_time": 2.0,              # → text_response_max_time
+        "memory_recall": 0.5,              # → memory_recall_max_time
+        "customer_satisfaction": 4.5,      # >4.5/5.0 (not a perf metric)
+        "automation_accuracy": 0.95,       # >95% template matching accuracy
+        "business_learning": 0.9,          # >90% business context retention
     }
+
+
+@pytest.fixture
+def ea_performance_benchmarks(performance_benchmarks):
+    """DEPRECATED: use performance_benchmarks. Kept for backward compat."""
+    return performance_benchmarks
 
 
 # === Scenario Testing Fixtures ===
