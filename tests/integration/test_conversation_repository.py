@@ -503,32 +503,62 @@ class TestDeleteCustomerData:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestSchemaCheck:
-    async def test_check_schema_passes_after_migration(self, repo):
-        # Migration applied in pool fixture — should pass.
+    """check_schema() now compares the live alembic_version against
+    the on-disk head revision. The pool fixture applies raw SQL
+    (legacy path) so the DB has tables but no alembic_version — this
+    is exactly the state a pre-Alembic prod DB is in. Stamping it is
+    the documented adoption step; the first test exercises that."""
+
+    async def test_check_schema_passes_after_stamp(self, pool, repo):
+        from src.database.migrations import head_revision
+        head = head_revision()
+        async with pool.acquire() as conn:
+            # What `alembic stamp head` does, minus the CLI plumbing.
+            await conn.execute(
+                "CREATE TABLE IF NOT EXISTS alembic_version "
+                "(version_num VARCHAR(32) NOT NULL, "
+                " CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num))"
+            )
+            await conn.execute("DELETE FROM alembic_version")
+            await conn.execute(
+                "INSERT INTO alembic_version (version_num) VALUES ($1)", head
+            )
         await repo.check_schema()
 
-    async def test_check_schema_raises_clearly_when_table_missing(self, pool):
-        """
-        Rename the table out of the way, assert check_schema raises a
-        descriptive error (not a bare asyncpg error), then rename back.
-        """
+    async def test_check_schema_raises_when_not_at_head(self, pool):
+        """A stale (or absent) alembic_version must produce a
+        SchemaNotReadyError naming the fix, not a bare asyncpg error.
+        We point version_num at a revision that doesn't exist, assert,
+        then restore — other tests in this module share the DB."""
         from src.database.conversation_repository import (
             ConversationRepository, SchemaNotReadyError,
         )
-        repo = ConversationRepository(pool)
+        from src.database.migrations import head_revision
 
+        repo = ConversationRepository(pool)
+        head = head_revision()
         async with pool.acquire() as conn:
             await conn.execute(
-                "ALTER TABLE conversations RENAME TO conversations_hidden")
+                "CREATE TABLE IF NOT EXISTS alembic_version "
+                "(version_num VARCHAR(32) NOT NULL, "
+                " CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num))"
+            )
+            await conn.execute("DELETE FROM alembic_version")
+            await conn.execute(
+                "INSERT INTO alembic_version (version_num) VALUES ('stale000')"
+            )
         try:
             with pytest.raises(SchemaNotReadyError) as exc_info:
                 await repo.check_schema()
-            assert "conversations" in str(exc_info.value)
-            assert "migration" in str(exc_info.value).lower()
+            assert "alembic upgrade head" in str(exc_info.value)
+            assert "stale000" in str(exc_info.value)
         finally:
             async with pool.acquire() as conn:
+                await conn.execute("DELETE FROM alembic_version")
                 await conn.execute(
-                    "ALTER TABLE conversations_hidden RENAME TO conversations")
+                    "INSERT INTO alembic_version (version_num) VALUES ($1)",
+                    head,
+                )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

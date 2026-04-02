@@ -315,7 +315,7 @@ GET /metrics/environments
 
 ### Deployment Checklist
 - [ ] Core infrastructure services running
-- [ ] Database migrations completed
+- [ ] Database migrations completed — `alembic upgrade head` (see [docs/database/migrations.md](../../docs/database/migrations.md))
 - [ ] Port ranges configured and validated
 - [ ] Security policies applied
 - [ ] Monitoring and alerting configured

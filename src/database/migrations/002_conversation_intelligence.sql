@@ -1,3 +1,8 @@
+-- ─────────────────────────────────────────────────────────────────────
+-- SUPERSEDED by Alembic revision 10c5d1b838c1.
+-- Kept for reference and integration-test fixtures. New schema
+-- changes go in alembic/versions/.
+-- ─────────────────────────────────────────────────────────────────────
 -- Migration 002: Conversation intelligence layer.
 --
 -- Extends conversations with summary, topic tags, and quality signals.

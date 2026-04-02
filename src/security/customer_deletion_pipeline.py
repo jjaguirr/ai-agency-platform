@@ -184,7 +184,7 @@ class StorageConfig:
 # PostgreSQL tables keyed by VARCHAR/TEXT customer_id without FK — must be
 # deleted explicitly since they won't cascade from customers(id). Source:
 # src/memory/schema.sql, customer_business_context in src/database/schema.sql,
-# and conversations in src/database/migrations/001_conversations.sql.
+# and conversations (Alembic rev 156127bc0bf1 — see docs/database/migrations.md).
 # Note: `messages` cascades from `conversations` via FK, so deleting
 # conversations here cleans both.
 PG_VARCHAR_TABLES: list[str] = [
