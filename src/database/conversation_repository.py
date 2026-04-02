@@ -27,13 +27,10 @@ logger = logging.getLogger(__name__)
 
 
 class SchemaNotReadyError(RuntimeError):
-    """Raised at startup when the conversations/messages tables don't
-    exist. Distinct from a generic asyncpg error so the lifespan hook
-    can catch it and log an actionable message instead of a bare
-    UndefinedTableError traceback."""
-
-
-_REQUIRED_TABLES = ("conversations", "messages", "delegation_records")
+    """Raised at startup when the database isn't at the Alembic head
+    revision. Distinct from a generic asyncpg error so the lifespan
+    hook can catch it and log an actionable message instead of a bare
+    traceback."""
 
 
 def _iso(ts: datetime) -> str:
@@ -57,25 +54,50 @@ class ConversationRepository:
 
     async def check_schema(self) -> None:
         """
-        Assert required tables exist. Call once at startup.
+        Assert the database is at the Alembic head revision. Call once
+        at startup.
 
-        Raises SchemaNotReadyError with a clear hint if a table is
-        missing — typically "you forgot to run the migration".
+        Compares ``alembic_version.version_num`` against the head of
+        the on-disk migration chain. Anything other than an exact
+        match raises SchemaNotReadyError with the literal command the
+        operator should run.
+
+        We deliberately do *not* auto-migrate. Production schema
+        changes are an operator decision (backups, maintenance window,
+        read replicas to consider). The API's job is to refuse to
+        start with a clear instruction, not to guess.
+
+        A database that predates Alembic — built from the raw SQL in
+        ``src/database/migrations/*.sql`` — has no ``alembic_version``
+        table. The error message covers that case explicitly: stamp
+        first, then upgrade.
         """
+        # Local import: pulls in alembic + reads alembic.ini from disk.
+        # check_schema() runs once at startup so the cost is fine, and
+        # keeping it out of module scope means importing this file in
+        # tests doesn't require alembic to be installed.
+        from src.database.migrations import current_revision, head_revision
+
+        head = head_revision()
         async with self._pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT table_name FROM information_schema.tables "
-                "WHERE table_schema = 'public' AND table_name = ANY($1::text[])",
-                list(_REQUIRED_TABLES),
-            )
-        present = {r["table_name"] for r in rows}
-        missing = [t for t in _REQUIRED_TABLES if t not in present]
-        if missing:
+            current = await current_revision(conn)
+
+        if current == head:
+            return
+
+        if current is None:
             raise SchemaNotReadyError(
-                f"Missing table(s): {missing}. "
-                f"Apply migration src/database/migrations/001_conversations.sql "
-                f"before starting the API."
+                "Database has not been initialised with Alembic "
+                "(no alembic_version table, or it is empty). "
+                "Run: `alembic upgrade head`. "
+                "If this database was built from the legacy raw SQL "
+                "files, run `alembic stamp head` first to adopt it."
             )
+
+        raise SchemaNotReadyError(
+            f"Database is at Alembic revision {current!r} but the code "
+            f"expects {head!r}. Run: `alembic upgrade head`."
+        )
 
     # ─── conversations ───────────────────────────────────────────────────
 
