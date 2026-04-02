@@ -250,3 +250,106 @@ class ProactiveStateStore:
     ) -> None:
         key = _key(customer_id, "wf_last_exec", workflow_id)
         await self._r.set(key, execution_id)
+
+    # -- Budget tracking (finance pattern awareness) -------------------------
+
+    async def set_budget(
+        self, customer_id: str, category: str, limit: float,
+    ) -> None:
+        key = _key(customer_id, "budget", category)
+        await self._r.set(key, str(limit))
+
+    async def get_budget(
+        self, customer_id: str, category: str,
+    ) -> Optional[float]:
+        key = _key(customer_id, "budget", category)
+        val = await self._r.get(key)
+        if val is None:
+            return None
+        raw = val.decode() if isinstance(val, bytes) else val
+        return float(raw)
+
+    async def get_all_budgets(self, customer_id: str) -> Dict[str, float]:
+        # Scan for budget keys. Pattern: proactive:{cid}:budget:*
+        prefix = _key(customer_id, "budget", "")
+        budgets: Dict[str, float] = {}
+        cursor = 0
+        while True:
+            cursor, keys = await self._r.scan(cursor, match=f"{prefix}*", count=50)
+            for k in keys:
+                raw_key = k.decode() if isinstance(k, bytes) else k
+                category = raw_key.split(":")[-1]
+                val = await self._r.get(k)
+                if val is not None:
+                    raw_val = val.decode() if isinstance(val, bytes) else val
+                    budgets[category] = float(raw_val)
+            if cursor == 0:
+                break
+        return budgets
+
+    # -- Scheduling preference learning ----------------------------------------
+    # Durations stored as a capped list (most recent 50). Hours stored in a
+    # sorted set keyed by score (frequency). Buffer is a plain string.
+
+    _SCHED_MAX_SAMPLES = 50
+
+    async def record_scheduling_preference(
+        self, customer_id: str, duration_minutes: int, hour: int,
+    ) -> None:
+        dur_key = _key(customer_id, "sched", "durations")
+        hour_key = _key(customer_id, "sched", "preferred_hours")
+        pipe = self._r.pipeline()
+        pipe.rpush(dur_key, str(duration_minutes))
+        pipe.ltrim(dur_key, -self._SCHED_MAX_SAMPLES, -1)
+        pipe.zincrby(hour_key, 1, str(hour))
+        await pipe.execute()
+
+    async def get_preferred_duration(self, customer_id: str) -> Optional[int]:
+        key = _key(customer_id, "sched", "durations")
+        raw = await self._r.lrange(key, 0, -1)
+        if not raw:
+            return None
+        durations = [
+            int(v.decode() if isinstance(v, bytes) else v) for v in raw
+        ]
+        # Return mode (most common duration)
+        from collections import Counter
+        counts = Counter(durations)
+        return counts.most_common(1)[0][0]
+
+    async def get_preferred_hours(self, customer_id: str) -> List[int]:
+        key = _key(customer_id, "sched", "preferred_hours")
+        # ZREVRANGE returns highest-score first
+        raw = await self._r.zrevrange(key, 0, -1)
+        return [int(v.decode() if isinstance(v, bytes) else v) for v in raw]
+
+    async def set_buffer_minutes(self, customer_id: str, minutes: int) -> None:
+        key = _key(customer_id, "sched", "buffer_minutes")
+        await self._r.set(key, str(minutes))
+
+    async def get_buffer_minutes(self, customer_id: str) -> int:
+        key = _key(customer_id, "sched", "buffer_minutes")
+        val = await self._r.get(key)
+        if val is None:
+            return 0
+        return int(val.decode() if isinstance(val, bytes) else val)
+
+    # -- Topic counting (workflow suggestion triggers) -------------------------
+
+    async def increment_topic_count(
+        self, customer_id: str, topic: str,
+    ) -> int:
+        key = _key(customer_id, "wf_topic_counts")
+        result = await self._r.hincrby(key, topic, 1)
+        return int(result)
+
+    async def get_topic_counts(
+        self, customer_id: str,
+    ) -> Dict[str, int]:
+        key = _key(customer_id, "wf_topic_counts")
+        raw = await self._r.hgetall(key)
+        return {
+            (k.decode() if isinstance(k, bytes) else k):
+            int(v.decode() if isinstance(v, bytes) else v)
+            for k, v in raw.items()
+        }

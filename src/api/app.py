@@ -213,6 +213,12 @@ def create_default_app() -> FastAPI:  # pragma: no cover
     import os as _os
     ea_max = int(_os.environ.get("EA_REGISTRY_MAX_SIZE", "128"))
 
+    from src.agents.context import ContextAssembler
+    context_assembler = ContextAssembler(
+        proactive_store=proactive_store,
+        settings_redis=redis_client,
+    )
+
     def _ea_factory(cid: str) -> ExecutiveAssistant:
         ea = ExecutiveAssistant(customer_id=cid)
         # audit_logger is optional on the EA; when present,
@@ -222,6 +228,8 @@ def create_default_app() -> FastAPI:  # pragma: no cover
         # The EA's own memory client is on db=hash(customer_id)%16.
         # Personality settings live in db 0, so hand it the shared client.
         ea.settings_redis = redis_client
+        # Cross-domain context for specialist delegation.
+        ea._context_assembler = context_assembler
         return ea
 
     ea_registry = EARegistry(factory=_ea_factory, max_size=ea_max)

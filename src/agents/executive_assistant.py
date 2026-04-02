@@ -1,6 +1,12 @@
 """
-AI Agency Platform - Enhanced Executive Assistant Agent with AI/ML Memory Integration
-Sophisticated LangGraph conversation management with advanced business learning capabilities
+Executive Assistant — LangGraph orchestrator with specialist delegation.
+
+Routes customer messages through intent classification, delegates operational
+tasks to domain specialists (finance, scheduling, workflows, social media),
+and retains strategic/advisory questions. Personality-aware: tone and language
+adapt per customer via settings Redis. Cross-domain context assembly feeds
+specialists a read-only InteractionContext so they can reference calendar,
+finance, and workflow state without direct access.
 """
 
 import asyncio
@@ -614,16 +620,12 @@ class WorkflowCreator:
             return {"success": False, "error": str(e)}
 
 class ExecutiveAssistant:
-    """
-    Enhanced Executive Assistant with sophisticated LangGraph conversation management
-    
-    Features:
-    - Advanced intent classification with confidence scoring
-    - Multi-turn conversation state tracking
-    - Conditional conversation routing
-    - Template-first workflow creation
-    - Comprehensive business context learning
-    - Intelligent conversation branching
+    """LangGraph-based EA that orchestrates specialist delegation.
+
+    Owns the conversation graph, personality loading, context assembly, and
+    delegation lifecycle. Specialists receive a SpecialistTask with pre-assembled
+    InteractionContext; the EA merges their result into the response, applying
+    tone-aware synthesis.
     """
     
     def __init__(self, customer_id: str, mcp_server_url: str = None):
@@ -674,6 +676,11 @@ class ExecutiveAssistant:
         # When present, writes delegation lifecycle to Postgres for
         # conversation intelligence (topic tagging, specialist metrics).
         self.delegation_recorder = None
+
+        # Optional context assembler — wired by create_default_app.
+        # When present, builds InteractionContext (cross-domain snapshots)
+        # for each delegation. Same injection pattern as audit_logger.
+        self._context_assembler = None
 
         # In-memory conversation history. Populated by handle_customer_interaction,
         # lost on LRU eviction from EARegistry — acceptable for now.
@@ -1452,12 +1459,25 @@ The key difference: automation tools give you software to configure. I give you 
             logger.warning(f"Memory search failed during delegation, proceeding without: {e}")
             domain_memories = []
 
+        # Assemble cross-domain context if an assembler is wired.
+        # Best-effort: failure → None, delegation proceeds without context.
+        interaction_context = None
+        if self._context_assembler is not None:
+            try:
+                interaction_context = await self._context_assembler.assemble(
+                    self.customer_id,
+                    relevant_domains={domain} if domain else set(),
+                )
+            except Exception as e:
+                logger.warning(f"Context assembly failed, proceeding without: {e}")
+
         task = SpecialistTask(
             description=task_description,
             customer_id=self.customer_id,
             business_context=state.business_context,
             domain_memories=domain_memories,
             prior_turns=prior_turns,
+            interaction_context=interaction_context,
         )
 
         # Record delegation start (fresh delegations only — follow-ups
@@ -1649,13 +1669,16 @@ The key difference: automation tools give you software to configure. I give you 
 
         The specialist provides summary_for_ea as a hint but the EA owns
         phrasing. With an LLM we prompt it to speak as the configured
-        persona; without, the hint IS the response (it's already prose).
+        persona; without, tone-aware formatting is applied directly.
         """
+        tone = self._personality.get("tone", "professional")
+        tone_guidance = _TONE_GUIDANCE.get(tone, _TONE_GUIDANCE["professional"])
+
         if self.llm and result.summary_for_ea:
             synthesis_prompt = (
                 f"You are {self._personality['name']}, the Executive Assistant for {context.business_name or 'the customer'}. "
                 f"A specialist on your team just checked something for the customer. "
-                f"Relay this naturally in your own voice — warm, concise, no jargon:\n\n"
+                f"Relay this naturally in your own voice. {tone_guidance}\n\n"
                 f"{result.summary_for_ea}\n\n"
                 f"Supporting data: {json.dumps(result.payload)}"
             )
@@ -1665,7 +1688,46 @@ The key difference: automation tools give you software to configure. I give you 
             except Exception as e:
                 logger.warning(f"Synthesis LLM call failed, using specialist summary: {e}")
 
-        return result.summary_for_ea or f"I checked on that — here's what I found: {json.dumps(result.payload)}"
+        return self._apply_tone(result, tone)
+
+    @staticmethod
+    def _apply_tone(result: SpecialistResult, tone: str) -> str:
+        """Tone-aware formatting for the no-LLM path.
+
+        Professional: summary as-is (current behaviour).
+        Concise: strip filler, just the data.
+        Friendly: casual framing.
+        Detailed: append structured payload info.
+        """
+        summary = result.summary_for_ea
+        payload_json = json.dumps(result.payload)
+
+        if not summary:
+            return f"I checked on that — here's what I found: {payload_json}"
+
+        if tone == "concise":
+            # Strip common preamble patterns
+            import re as _re
+            stripped = _re.sub(
+                r"^(I can see|Here'?s what I found:?|I found that|Let me share)\s*",
+                "", summary, flags=_re.IGNORECASE,
+            ).strip()
+            return stripped or summary
+
+        if tone == "friendly":
+            return f"All done! {summary}"
+
+        if tone == "detailed":
+            details = ", ".join(
+                f"{k}: {v}" for k, v in result.payload.items()
+                if k != "memories_consulted"
+            )
+            if details:
+                return f"{summary}\n\nDetails: {details}"
+            return summary
+
+        # professional (default) or unknown
+        return summary
 
     async def _handle_general_assistance(self, state: ConversationState) -> ConversationState:
         """Handle general business assistance requests"""

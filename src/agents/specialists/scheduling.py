@@ -14,6 +14,9 @@ specialist outscores us.
 
 The constructor takes an optional `clock` callable so tests can pin
 "tomorrow at 2pm" to a known reference. Defaults to `datetime.now`.
+
+Preference learning: duration and preferred hours from InteractionContext
+bias slot finding and default meeting length.
 """
 from __future__ import annotations
 
@@ -212,6 +215,7 @@ class SchedulingSpecialist(SpecialistAgent):
     def assess_task(
         self, task_description: str, context: "BusinessContext"
     ) -> TaskAssessment:
+        """Score scheduling confidence; damp when 'schedule' co-occurs with another domain's action noun."""
         text = task_description.lower()
 
         confidence = 0.0
@@ -255,6 +259,7 @@ class SchedulingSpecialist(SpecialistAgent):
     # --- Execution ----------------------------------------------------------
 
     async def execute_task(self, task: SpecialistTask) -> SpecialistResult:
+        """Dispatch confirmed follow-ups directly; otherwise classify intent and route."""
         if self._calendar is None:
             return SpecialistResult(
                 status=SpecialistStatus.FAILED,
@@ -295,6 +300,7 @@ class SchedulingSpecialist(SpecialistAgent):
     # --- Intent dispatch ----------------------------------------------------
 
     def _classify_intent(self, text: str) -> str:
+        """Keyword-first intent classification; most-specific cues win, fallback is overview."""
         # Order matters — more specific cues first.
         if any(c in text for c in ("find me", "find a slot", "find a time",
                                    "when can i meet", "find me a slot",
@@ -325,6 +331,7 @@ class SchedulingSpecialist(SpecialistAgent):
     async def _handle_overview(
         self, task: SpecialistTask, corpus: str, text: str
     ) -> SpecialistResult:
+        """List events for the mentioned day (default today)."""
         day = self._resolve_day(text)
         start = day.replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=1)
@@ -357,6 +364,7 @@ class SchedulingSpecialist(SpecialistAgent):
     async def _handle_create(
         self, task: SpecialistTask, corpus: str, text: str
     ) -> SpecialistResult:
+        """Parse time/duration/attendees, check conflicts, create the event, record preferences."""
         when = self._parse_datetime(text)
         if when is None:
             return SpecialistResult(
@@ -367,7 +375,11 @@ class SchedulingSpecialist(SpecialistAgent):
                 clarification_question="What time works for this?",
             )
 
-        duration = self._parse_duration(text) or timedelta(minutes=60)
+        explicit_duration = self._parse_duration(text)
+        if explicit_duration is not None:
+            duration = explicit_duration
+        else:
+            duration = self._learned_duration(task) or timedelta(minutes=60)
         attendees = self._parse_attendees(corpus)
         title = self._derive_title(corpus, attendees)
         end = when + duration
@@ -387,6 +399,22 @@ class SchedulingSpecialist(SpecialistAgent):
             attendees=attendees,
         )
 
+        # Record preference for future learning
+        if self._proactive is not None:
+            try:
+                dur_min = int(duration.total_seconds() // 60)
+                await self._proactive.record_scheduling_preference(
+                    task.customer_id, dur_min, when.hour,
+                )
+            except Exception:
+                logger.exception("Preference recording failed; continuing")
+
+        summary = (
+            f"Booked: {evt.title} on {evt.start.strftime('%Y-%m-%d %H:%M')} "
+            f"for {int(duration.total_seconds() // 60)}m."
+        )
+        summary += self._buffer_note(task, end)
+
         return SpecialistResult(
             status=SpecialistStatus.COMPLETED,
             domain=self.domain,
@@ -398,11 +426,44 @@ class SchedulingSpecialist(SpecialistAgent):
                 "attendees": list(evt.attendees),
             },
             confidence=0.85,
-            summary_for_ea=(
-                f"Booked: {evt.title} on {evt.start.strftime('%Y-%m-%d %H:%M')} "
-                f"for {int(duration.total_seconds() // 60)}m."
-            ),
+            summary_for_ea=summary,
         )
+
+    @staticmethod
+    def _learned_duration(task: SpecialistTask) -> Optional[timedelta]:
+        """Pull preferred meeting duration from interaction context."""
+        ic = task.interaction_context
+        if ic is None:
+            return None
+        prefs = ic.customer_preferences
+        if prefs and prefs.preferred_meeting_duration:
+            return timedelta(minutes=prefs.preferred_meeting_duration)
+        return None
+
+    @staticmethod
+    def _buffer_note(task: SpecialistTask, new_end: datetime) -> str:
+        """Warn if the new event ends too close to the next one."""
+        ic = task.interaction_context
+        if ic is None or ic.calendar_snapshot is None:
+            return ""
+        prefs = ic.customer_preferences
+        buffer = prefs.buffer_minutes if prefs else 0
+        if buffer <= 0:
+            return ""
+        events = ic.calendar_snapshot.events_next_24h or []
+        for evt in events:
+            start_raw = evt.get("start")
+            if not start_raw:
+                continue
+            try:
+                evt_start = datetime.fromisoformat(start_raw)
+            except (ValueError, TypeError):
+                continue
+            gap = (evt_start - new_end).total_seconds() / 60
+            if 0 <= gap < buffer:
+                title = evt.get("title", "next event")
+                return f" Heads up: that's back-to-back with {title} (only {int(gap)}m gap)."
+        return ""
 
     async def _maybe_stage_conflict(
         self, customer_id: str, title: str, start: datetime, end: datetime,
@@ -435,6 +496,7 @@ class SchedulingSpecialist(SpecialistAgent):
     async def _handle_reschedule(
         self, task: SpecialistTask, corpus: str, text: str
     ) -> SpecialistResult:
+        """Resolve the target event, parse destination time, update via calendar client."""
         candidates = await self._find_candidates(corpus, text)
         if len(candidates) != 1:
             return self._clarify_ambiguity(candidates, verb="reschedule")
@@ -535,6 +597,7 @@ class SchedulingSpecialist(SpecialistAgent):
     async def _handle_availability(
         self, task: SpecialistTask, corpus: str, text: str
     ) -> SpecialistResult:
+        """Check free/busy for the resolved window and list conflicts."""
         start, end = self._resolve_window(text)
         free = await self._calendar.is_free(start, end)
         conflicts = (
@@ -567,10 +630,21 @@ class SchedulingSpecialist(SpecialistAgent):
     async def _handle_slot_find(
         self, task: SpecialistTask, corpus: str, text: str
     ) -> SpecialistResult:
+        """Find open slots in the requested window; sort by preferred hours when available."""
         duration = self._parse_find_duration(text) or timedelta(minutes=30)
         start, end = self._resolve_window(text, default_span_days=5)
 
         slots = await self._calendar.find_slots(duration, start, end)
+
+        # Sort by preferred hours when available
+        preferred = self._preferred_hours(task)
+        if preferred and slots:
+            pref_set = set(preferred)
+            slots = sorted(
+                slots,
+                key=lambda s: (0 if s.start.hour in pref_set else 1, s.start),
+            )
+
         payload = {
             "duration_minutes": int(duration.total_seconds() // 60),
             "window_start": start.isoformat(),
@@ -598,6 +672,16 @@ class SchedulingSpecialist(SpecialistAgent):
             confidence=0.75,
             summary_for_ea=summary,
         )
+
+    @staticmethod
+    def _preferred_hours(task: SpecialistTask) -> List[int]:
+        ic = task.interaction_context
+        if ic is None:
+            return []
+        prefs = ic.customer_preferences
+        if prefs and prefs.preferred_hours:
+            return prefs.preferred_hours
+        return []
 
     # --- Ambiguity & candidate search ---------------------------------------
 

@@ -7,6 +7,9 @@ summaries, and spending queries — all from conversation data passed
 in through SpecialistTask. No external accounting integrations, no
 direct memory-client access.
 
+Pattern awareness: expense entries consult InteractionContext for baseline
+deviation and budget overspend, surfacing warnings in the EA summary.
+
 Routing overlap with social_media is the interesting bit: "$500 on
 Facebook ads" is a finance action (track it) even though Facebook is
 a social keyword. "How much does Instagram advertising cost?" is a
@@ -187,6 +190,7 @@ class FinanceSpecialist(SpecialistAgent):
     # --- Assessment ---------------------------------------------------------
 
     def assess_task(self, task_description: str, context: "BusinessContext") -> TaskAssessment:
+        """Score finance confidence from dollar signs, action verbs, and category keywords."""
         text = task_description.lower()
 
         confidence = 0.0
@@ -242,6 +246,7 @@ class FinanceSpecialist(SpecialistAgent):
     # --- Execution ----------------------------------------------------------
 
     async def execute_task(self, task: SpecialistTask) -> SpecialistResult:
+        """Route to expense entry, summary, or portfolio; stage anomalies on completion."""
         text = task.description.lower()
 
         # Route to the right handler based on intent.
@@ -287,6 +292,7 @@ class FinanceSpecialist(SpecialistAgent):
     # --- Expense entry ------------------------------------------------------
 
     def _handle_expense_entry(self, task: SpecialistTask) -> SpecialistResult:
+        """Extract amount/vendor/category from multi-turn corpus; ask for clarification if incomplete."""
         # Pool the current message with prior customer turns so multi-turn
         # clarification works: the amount might be in task.description and
         # the vendor in a prior turn, or vice versa.
@@ -338,6 +344,9 @@ class FinanceSpecialist(SpecialistAgent):
             + ")."
         )
 
+        # Pattern awareness: deviation notes and budget tracking
+        summary += self._enrichment_notes(task, amount, category)
+
         return SpecialistResult(
             status=SpecialistStatus.COMPLETED,
             domain=self.domain,
@@ -349,6 +358,7 @@ class FinanceSpecialist(SpecialistAgent):
     async def _maybe_stage_anomaly(
         self, customer_id: str, amount: float, category: str,
     ) -> None:
+        """Record the transaction and queue a domain event if it exceeds 2x baseline."""
         # Best-effort. A dead Redis or a slow pipe must not break expense
         # tracking — that's the primary path, this is the side channel.
         try:
@@ -390,7 +400,7 @@ class FinanceSpecialist(SpecialistAgent):
 
         # Cash flow query → income/expense split
         if "cash flow" in text:
-            return self._build_cashflow_result(entries, len(memories))
+            return self._build_cashflow_result(entries, len(memories), task=task)
 
         # Category-specific spend query → filter + total
         requested_cat = self._requested_category(text)
@@ -419,9 +429,11 @@ class FinanceSpecialist(SpecialistAgent):
             )
 
         # Generic spending summary → all-category breakdown
-        return self._build_cashflow_result(entries, len(memories))
+        return self._build_cashflow_result(entries, len(memories), task=task)
 
-    def _build_cashflow_result(self, entries: List[Dict], mem_count: int) -> SpecialistResult:
+    def _build_cashflow_result(
+        self, entries: List[Dict], mem_count: int, task: Optional[SpecialistTask] = None,
+    ) -> SpecialistResult:
         income = sum(e["amount"] for e in entries if e["is_income"])
         expenses = sum(e["amount"] for e in entries if not e["is_income"])
         net = income - expenses
@@ -453,6 +465,14 @@ class FinanceSpecialist(SpecialistAgent):
                 top = max(category_totals.items(), key=lambda kv: kv[1])
                 summary += f" Biggest outlay: {top[0]} at ${top[1]:,.2f}."
 
+            # Baseline comparison when context available
+            if task and task.interaction_context and task.interaction_context.finance_snapshot:
+                baseline = task.interaction_context.finance_snapshot.transaction_baseline
+                if baseline is not None and baseline > 0 and len(entries) > 0:
+                    avg_expense = expenses / max(1, sum(1 for e in entries if not e["is_income"]))
+                    if avg_expense > 0:
+                        summary += f" Average transaction: ${avg_expense:,.0f} (baseline ~${baseline:,.0f})."
+
         return SpecialistResult(
             status=SpecialistStatus.COMPLETED,
             domain=self.domain,
@@ -460,6 +480,44 @@ class FinanceSpecialist(SpecialistAgent):
             confidence=0.7,
             summary_for_ea=summary,
         )
+
+    # --- Pattern awareness (enrichment) ------------------------------------
+
+    @staticmethod
+    def _enrichment_notes(task: SpecialistTask, amount: float, category: str) -> str:
+        """Append deviation and budget notes when context is available."""
+        ic = task.interaction_context
+        if ic is None or ic.finance_snapshot is None:
+            return ""
+
+        parts: list[str] = []
+        snap = ic.finance_snapshot
+
+        # Deviation from baseline
+        if snap.transaction_baseline is not None and snap.transaction_baseline > 0:
+            ratio = amount / snap.transaction_baseline
+            if ratio > 2.0:
+                parts.append(
+                    f" That's higher than your usual ~${snap.transaction_baseline:,.0f}."
+                )
+
+        # Budget tracking
+        budget_info = snap.budget_status.get(category)
+        if budget_info and "limit" in budget_info:
+            limit = budget_info["limit"]
+            spent = budget_info.get("spent", 0) + amount
+            remaining = limit - spent
+            if remaining > 0:
+                parts.append(
+                    f" Budget: ${spent:,.0f} of ${limit:,.0f} {category} budget used"
+                    f" (${remaining:,.0f} remaining)."
+                )
+            else:
+                parts.append(
+                    f" Heads up: that puts you over your ${limit:,.0f} {category} budget."
+                )
+
+        return "".join(parts)
 
     # --- Portfolio valuation ------------------------------------------------
 

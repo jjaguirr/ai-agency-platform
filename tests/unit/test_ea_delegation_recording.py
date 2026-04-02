@@ -47,6 +47,8 @@ def _make_ea_with_recorder(recorder=None, specialist_result=None):
     ea.delegation_recorder = recorder
     ea.audit_logger = None
     ea.specialist_timeout = 15.0
+    ea._context_assembler = None
+    ea._personality = {"tone": "professional"}
 
     # Minimal memory mock
     ea.memory = AsyncMock()

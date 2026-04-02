@@ -11,6 +11,9 @@ Seams: WorkflowStore, WorkflowCatalog, and an N8nClient factory. All
 optional — the no-arg constructor works so the EA's importlib loop can
 instantiate it, but execute degrades to "not configured" until a store
 is wired in.
+
+Contextual enhancements: list surfaces recent failures from
+InteractionContext; deploy suggests related templates with cooldowns.
 """
 from __future__ import annotations
 
@@ -96,10 +99,13 @@ class WorkflowSpecialist(SpecialistAgent):
         store: Optional["WorkflowStore"] = None,
         catalog: Optional["WorkflowCatalog"] = None,
         n8n_client_factory: Optional[Callable[..., "N8nClient"]] = None,
+        *,
+        proactive_state: Optional[Any] = None,
     ):
         self._store = store
         self._catalog = catalog
         self._client_factory = n8n_client_factory
+        self._proactive = proactive_state
 
     @property
     def domain(self) -> str:
@@ -110,6 +116,7 @@ class WorkflowSpecialist(SpecialistAgent):
     def assess_task(
         self, task_description: str, context: "BusinessContext"
     ) -> TaskAssessment:
+        """Score automation confidence; damp when calendar nouns appear without recurrence markers."""
         text = task_description.lower()
 
         confidence = 0.0
@@ -152,6 +159,7 @@ class WorkflowSpecialist(SpecialistAgent):
     # --- Execution ----------------------------------------------------------
 
     async def execute_task(self, task: SpecialistTask) -> SpecialistResult:
+        """Classify intent and dispatch. Requires a configured workflow store."""
         if self._store is None:
             return self._failed("workflow store not configured")
 
@@ -167,6 +175,7 @@ class WorkflowSpecialist(SpecialistAgent):
         return await handler(task, text)
 
     def _classify_intent(self, text: str) -> str:
+        """Keyword intent dispatch: list, pause, resume, delete, or deploy (default)."""
         if any(p in text for p in ("what automation", "what workflow",
                                    "list my automation", "list my workflow",
                                    "automations do i have",
@@ -185,6 +194,7 @@ class WorkflowSpecialist(SpecialistAgent):
     # --- List ---------------------------------------------------------------
 
     async def _handle_list(self, task: SpecialistTask, text: str) -> SpecialistResult:
+        """List customer automations; append failure context from InteractionContext."""
         wfs = await self._store.list_workflows(task.customer_id)
         if not wfs:
             return SpecialistResult(
@@ -196,16 +206,33 @@ class WorkflowSpecialist(SpecialistAgent):
             )
         active = [w for w in wfs if w["status"] == "active"]
         names = ", ".join(w["name"] for w in wfs)
+        summary = (
+            f"You have {len(wfs)} automation{'s' if len(wfs) != 1 else ''} "
+            f"({len(active)} active): {names}."
+        )
+
+        # Surface recent failures from interaction context
+        summary += self._failure_note(task)
+
         return SpecialistResult(
             status=SpecialistStatus.COMPLETED,
             domain=self.domain,
             payload={"workflows": wfs},
             confidence=0.9,
-            summary_for_ea=(
-                f"You have {len(wfs)} automation{'s' if len(wfs) != 1 else ''} "
-                f"({len(active)} active): {names}."
-            ),
+            summary_for_ea=summary,
         )
+
+    @staticmethod
+    def _failure_note(task: SpecialistTask) -> str:
+        """Build a warning string from recent workflow failures in the snapshot."""
+        ic = task.interaction_context
+        if ic is None or ic.workflow_snapshot is None:
+            return ""
+        failures = ic.workflow_snapshot.recent_failures
+        if not failures:
+            return ""
+        names = ", ".join(f.get("name", "unknown") for f in failures[:3])
+        return f" Heads up: recent issues with {names}."
 
     # --- Pause / resume / delete --------------------------------------------
 
@@ -278,6 +305,7 @@ class WorkflowSpecialist(SpecialistAgent):
     # --- Deploy -------------------------------------------------------------
 
     async def _handle_deploy(self, task: SpecialistTask, text: str) -> SpecialistResult:
+        """Match a template, collect parameters across turns, deploy to n8n, suggest related."""
         if self._catalog is None:
             return self._failed("template catalog not configured")
 
@@ -322,17 +350,54 @@ class WorkflowSpecialist(SpecialistAgent):
             task.customer_id, wf_id, template.name, "active"
         )
 
+        summary = (
+            f"Done. '{template.name}' is deployed and active. "
+            f"You can manage it from the dashboard."
+        )
+
+        # Suggest related templates (best-effort)
+        suggestion = await self._suggest_related(
+            task.customer_id, template, task,
+        )
+        if suggestion:
+            summary += f" {suggestion}"
+
         return SpecialistResult(
             status=SpecialistStatus.COMPLETED,
             domain=self.domain,
             payload={"workflow_id": wf_id, "name": template.name,
                      "parameters": values},
             confidence=0.85,
-            summary_for_ea=(
-                f"Done. '{template.name}' is deployed and active. "
-                f"You can manage it from the dashboard."
-            ),
+            summary_for_ea=summary,
         )
+
+    async def _suggest_related(
+        self, customer_id: str, deployed: Any, task: SpecialistTask,
+    ) -> Optional[str]:
+        """Find a related template and suggest it, respecting cooldowns."""
+        if self._catalog is None or self._proactive is None:
+            return None
+        try:
+            all_templates = self._catalog.list_local()
+            for t in all_templates:
+                if t.id == deployed.id:
+                    continue
+                cooldown_key = f"wf_suggest:{t.id}"
+                if await self._proactive.is_cooling_down(customer_id, cooldown_key):
+                    continue
+                # Check for tag/integration overlap
+                overlap = (
+                    set(deployed.tags or []) & set(t.tags or [])
+                    or set(deployed.integrations or []) & set(t.integrations or [])
+                )
+                if overlap:
+                    await self._proactive.record_cooldown(
+                        customer_id, cooldown_key, 86400,
+                    )
+                    return f"You might also like '{t.name}'."
+        except Exception:
+            logger.exception("Related template suggestion failed; skipping")
+        return None
 
     def _resume_template_id(self, task: SpecialistTask) -> Optional[str]:
         # The EA carries specialist payload forward in prior_turns during
