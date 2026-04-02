@@ -26,10 +26,6 @@ TEST_CONFIG = {
         'host': 'localhost',
         'port': 6379
     },
-    'qdrant': {
-        'host': 'localhost',
-        'port': 6333
-    },
     'security_api': {
         'host': 'localhost',
         'port': 8083
@@ -139,34 +135,7 @@ class EAInfrastructureTest:
         except Exception as e:
             self.log_test("Redis Connection", False, str(e))
             return False
-    
-    def test_qdrant_connection(self) -> bool:
-        """Test Qdrant vector database connection"""
-        try:
-            # Test Qdrant health endpoint
-            health_url = f"http://{TEST_CONFIG['qdrant']['host']}:{TEST_CONFIG['qdrant']['port']}/health"
-            health_response = requests.get(health_url, timeout=5)
-            
-            if health_response.status_code != 200:
-                self.log_test("Qdrant Connection", False, f"Health check failed: {health_response.status_code}")
-                return False
-            
-            # Test basic API functionality
-            collections_url = f"http://{TEST_CONFIG['qdrant']['host']}:{TEST_CONFIG['qdrant']['port']}/collections"
-            collections_response = requests.get(collections_url, timeout=5)
-            
-            if collections_response.status_code == 200:
-                collections_data = collections_response.json()
-                self.log_test("Qdrant Connection", True, f"Vector database operational, collections: {len(collections_data.get('result', {}).get('collections', []))}")
-                return True
-            else:
-                self.log_test("Qdrant Connection", False, f"Collections API failed: {collections_response.status_code}")
-                return False
-                
-        except Exception as e:
-            self.log_test("Qdrant Connection", False, str(e))
-            return False
-    
+
     def test_security_api_health(self) -> bool:
         """Test Security API health check"""
         try:
@@ -216,7 +185,7 @@ class EAInfrastructureTest:
             
             conversation_id = cursor.fetchone()[0]
             
-            # 3. Simulate EA memory storage (Redis + future Qdrant integration)
+            # 3. Simulate EA memory storage (Redis)
             memory_key = f"ea_memory:{customer_id}"
             memory_data = {
                 'customer_profile': {'name': 'Test Customer', 'tier': 'premium'},
@@ -258,7 +227,6 @@ class EAInfrastructureTest:
         tests = [
             self.test_postgres_connection,
             self.test_redis_connection,
-            self.test_qdrant_connection,
             self.test_security_api_health,
             self.test_ea_conversation_flow
         ]

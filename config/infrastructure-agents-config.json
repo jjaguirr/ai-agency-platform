@@ -214,7 +214,7 @@
   
   "coordination_patterns": {
     "langgraph_config": {
-      "state_management": "qdrant_vector_db",
+      "state_management": "redis",
       "workflow_engine": "langgraph_stateful",
       "agent_delegation": "capability_based",
       "error_handling": "graceful_degradation"

@@ -28,7 +28,6 @@ except ImportError:
     pass  # dotenv is optional
 
 import redis
-from mem0 import Memory
 
 # Personality defaults mirror src.api.schemas.PersonalitySettings. The EA
 # can't import that module (it pulls in pydantic + API-layer concerns) so
@@ -57,16 +56,6 @@ import re
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# AI/ML Memory Integration
-try:
-    from .memory.ea_memory_integration import EAMemoryIntegration
-    from .ai_ml.business_learning_engine import BusinessLearningEngine
-    from .ai_ml.workflow_template_matcher import WorkflowTemplateMatcher
-    AI_ML_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"AI/ML memory features not available: {e}")
-    AI_ML_AVAILABLE = False
 
 from .ai_ml.workflow_generator import Generated, NeedsClarification, generate
 
@@ -215,89 +204,23 @@ class ConversationState:
     active_delegation: Optional[Dict[str, Any]] = None
 
 class ExecutiveAssistantMemory:
-    """Enhanced multi-layer memory system with AI/ML business learning capabilities"""
-    
+    """Two-layer memory: Redis for active conversation context, PostgreSQL
+    for durable business history. Semantic/vector memory was removed — see
+    docs/archive/removed/ for the prior Mem0-backed implementation."""
+
     def __init__(self, customer_id: str):
         self.customer_id = customer_id
-        
+
         # Working memory (Redis) - Active conversation context
         # Use hash of customer_id for DB selection to handle any format
         customer_hash = abs(hash(customer_id)) % 16
         self.redis_client = redis.Redis(
-            host='localhost', 
-            port=6379, 
+            host='localhost',
+            port=6379,
             db=customer_hash,  # Customer-specific DB
             decode_responses=True
         )
-        
-        # Semantic memory (Mem0) - Business knowledge with customer isolation
-        import os
-        
-        # Configure Mem0 to use Docker Qdrant service with customer isolation
 
-        mem0_config = {
-            "vector_store": {
-                "provider": "qdrant",
-                "config": {
-                    "collection_name": f"customer_{customer_id}_memory",
-                    "host": "localhost",
-                    "port": 6333
-                }
-            }
-        }
-        
-        # Only add OpenAI config if API key is available
-        if os.getenv("OPENAI_API_KEY"):
-            mem0_config["embedder"] = {
-                "provider": "openai",
-                "config": {
-                    "model": "text-embedding-3-small"
-                }
-            }
-        
-        # Only add LLM config if API key is available
-        if os.getenv("OPENAI_API_KEY"):
-            mem0_config["llm"] = {
-                "provider": "openai", 
-                "config": {
-                    "model": "gpt-4o-mini",
-                    "temperature": 0.2
-                }
-            }
-        else:
-            # Use local embeddings for testing without API key
-            logger.warning(f"No OpenAI API key found for customer {customer_id}, using local embeddings")
-            mem0_config["embedder"] = {
-                "provider": "huggingface",
-                "config": {
-                    "model": "all-MiniLM-L6-v2"
-                }
-            }
-        
-        try:
-            self.memory_client = Memory.from_config(config_dict=mem0_config)
-        except Exception as e:
-            logger.error(f"Failed to initialize Mem0 for customer {customer_id}: {e}")
-            # Create a minimal memory client for testing
-            self.memory_client = None
-            
-        # AI/ML Memory Integration - Enhanced business learning
-        if AI_ML_AVAILABLE:
-            try:
-                self.ai_memory_integration = EAMemoryIntegration(customer_id)
-                self.business_learning_engine = BusinessLearningEngine()
-                self.workflow_template_matcher = WorkflowTemplateMatcher()
-                logger.info(f"AI/ML memory integration initialized for customer {customer_id}")
-            except Exception as e:
-                logger.warning(f"AI/ML integration failed, falling back to basic memory: {e}")
-                self.ai_memory_integration = None
-                self.business_learning_engine = None
-                self.workflow_template_matcher = None
-        else:
-            self.ai_memory_integration = None
-            self.business_learning_engine = None 
-            self.workflow_template_matcher = None
-        
         # Persistent memory (PostgreSQL) - Complete business history
         try:
             self.db_connection = psycopg2.connect(
@@ -322,77 +245,17 @@ class ExecutiveAssistantMemory:
         return json.loads(context) if context else {}
     
     async def store_business_knowledge(self, knowledge: str, metadata: Dict):
-        """Store business knowledge with AI/ML enhancement and pattern recognition"""
-        try:
-            # AI/ML Enhanced Storage - extract business insights
-            if self.ai_memory_integration:
-                enhanced_result = await self.ai_memory_integration.store_with_learning(
-                    knowledge, metadata
-                )
-                if enhanced_result:
-                    logger.info(f"Enhanced storage with AI/ML insights: {len(enhanced_result.get('insights', []))} patterns detected")
-                    return enhanced_result
-            
-            # Fallback to basic Mem0 storage
-            result = self.memory_client.add(
-                messages=knowledge,
-                user_id=self.customer_id,
-                metadata={
-                    **metadata,
-                    'customer_id': self.customer_id,
-                    'timestamp': datetime.now().isoformat(),
-                    'source': 'executive_assistant'
-                }
-            )
-            
-            memory_id = result.get('id', 'unknown') if isinstance(result, dict) else str(result)
-            logger.info(f"Stored business knowledge {memory_id}: {knowledge[:100]}...")
-            return result
-                    
-        except Exception as e:
-            logger.error(f"Error storing business knowledge: {e}")
-            return None
-    
+        """No-op stub. Semantic knowledge storage was backed by Mem0/Qdrant,
+        now removed. Callers tolerate a None return; the conversation graph
+        treats this as "nothing stored" and proceeds."""
+        logger.debug(f"store_business_knowledge (no backend): {knowledge[:80]}...")
+        return None
+
     async def search_business_knowledge(self, query: str, limit: int = 10) -> List[Dict]:
-        """Search business knowledge with AI/ML semantic enhancement"""
-        try:
-            # AI/ML Enhanced Search - semantic understanding
-            if self.ai_memory_integration:
-                enhanced_results = await self.ai_memory_integration.search_with_context(
-                    query, limit=limit
-                )
-                if enhanced_results:
-                    logger.info(f"Enhanced search returned {len(enhanced_results)} contextually relevant results")
-                    return enhanced_results
-            
-            # Fallback to basic Mem0 search
-            search_results = self.memory_client.search(
-                query=query,
-                user_id=self.customer_id,
-                limit=limit
-            )
-            
-            results = []
-            for result in search_results:
-                if isinstance(result, dict):
-                    results.append({
-                        "content": result.get("memory", result.get("text", "")),
-                        "score": result.get("score", 0.0),
-                        "metadata": result.get("metadata", {})
-                    })
-                else:
-                    results.append({
-                        "content": str(result),
-                        "score": 1.0,
-                        "metadata": {}
-                    })
-            
-            logger.info(f"Found {len(results)} relevant memories for: {query[:50]}...")
-            return results
-            
-        except Exception as e:
-            logger.error(f"Error searching business knowledge: {e}")
-            return []
+        """No-op stub. Semantic search was backed by Mem0/Qdrant, now removed.
+        Returns empty so callers (delegation context, process analysis)
+        proceed with no prior-knowledge hits."""
+        return []
     
     async def store_business_context(self, context: BusinessContext):
         """Store complete business context in PostgreSQL"""

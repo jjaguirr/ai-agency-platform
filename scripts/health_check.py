@@ -6,7 +6,6 @@ import requests
 
 SERVICES = {
     "Security API": "http://localhost:8083/health",
-    "Memory Monitor": "http://localhost:8084/health",
     "LangFuse": "http://localhost:3000/api/public/health",
 }
 

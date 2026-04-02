@@ -65,11 +65,6 @@ resources:
       cpu_limit: "200m"
       memory_limit: "512Mi"
       storage_limit: "10Gi"
-      
-    qdrant:
-      cpu_limit: "500m"
-      memory_limit: "1Gi"
-      storage_limit: "50Gi"
 
 # Security Configuration
 security:

@@ -58,10 +58,6 @@ redis==5.0.1
 psycopg2-binary==2.9.9
 requests==2.31.0
 
-# Memory management
-mem0ai>=0.1.0                         # Mem0 for customer-specific memory management
-chromadb>=1.0.0                       # ChromaDB vector store for Mem0
-
 # WhatsApp Business Integration
 twilio>=8.0.0                         # Twilio WhatsApp Business API
 fastapi>=0.104.0                      # FastAPI for webhook server
@@ -69,5 +65,4 @@ uvicorn>=0.24.0                       # ASGI server for FastAPI
 
 # Conversation analysis and scoring
 nltk==3.8.1                       # Natural language processing for response quality
-sentence-transformers==2.2.2       # Semantic similarity scoring
 rouge-score==0.1.2                # ROUGE metrics for response evaluation

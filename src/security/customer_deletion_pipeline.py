@@ -1,8 +1,8 @@
 """
 Customer Deletion Pipeline — GDPR Article 17 execution engine.
 
-Cascades a customer deletion across four heterogeneous storage layers (Redis,
-Qdrant, Neo4j, PostgreSQL) that do not share a transaction boundary.
+Cascades a customer deletion across the two storage layers we run (Redis,
+PostgreSQL) that do not share a transaction boundary.
 
 Strategy: resumable idempotent pipeline with durable step-state tracking.
 Each step records completion in `customer_deletion_operations` before moving on.
@@ -11,11 +11,9 @@ up where it stopped. This is deliberately NOT a saga — you cannot compensate
 (un-delete) data, so the only sane failure mode is "fix the broken store and
 resume".
 
-Deletion order (Redis → Qdrant → Neo4j → PostgreSQL):
+Deletion order (Redis → PostgreSQL):
   - Ephemeral/derived data first. If Redis flush fails, TTLs will eventually
     reclaim it anyway; nothing downstream depends on it.
-  - Qdrant/Neo4j hold Mem0-derived indexes. Deleting them makes future Mem0
-    reads return empty — a clean absence, not a dangling reference.
   - PostgreSQL last. It is the source of truth, and the audit record proving
     the deletion happened must be written BEFORE the cascade wipes the
     `customers` row.
@@ -23,6 +21,9 @@ Deletion order (Redis → Qdrant → Neo4j → PostgreSQL):
 The audit trail lives in `gdpr_compliance_audit` and
 `customer_deletion_operations` — both use VARCHAR customer_id with no FK,
 so they survive the cascade by design.
+
+The Qdrant/Neo4j stages were removed when the Mem0 semantic-memory layer was
+dropped — see docs/archive/removed/.
 """
 
 import json
@@ -35,9 +36,7 @@ from enum import Enum
 from typing import Any, Optional
 
 import asyncpg
-import httpx
 import redis.asyncio as redis
-from neo4j import AsyncGraphDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +47,6 @@ logger = logging.getLogger(__name__)
 
 class DeletionStep(str, Enum):
     REDIS = "redis"
-    QDRANT = "qdrant"
-    NEO4J = "neo4j"
     POSTGRES = "postgres"
 
 
@@ -63,8 +60,6 @@ class StepStatus(str, Enum):
 # Execution order. Do not reorder without re-reading the module docstring.
 STEP_ORDER: list[DeletionStep] = [
     DeletionStep.REDIS,
-    DeletionStep.QDRANT,
-    DeletionStep.NEO4J,
     DeletionStep.POSTGRES,
 ]
 
@@ -91,19 +86,12 @@ class DryRunReport:
     customer_id: str
     generated_at: str
     redis: dict[str, Any]
-    qdrant: dict[str, Any]
-    neo4j: dict[str, Any]
     postgres: dict[str, Any]
     warnings: list[str] = field(default_factory=list)
 
     @property
     def total_items(self) -> int:
-        return (
-            self.redis.get("key_count", 0)
-            + self.qdrant.get("point_count", 0)
-            + self.neo4j.get("node_count", 0)
-            + self.postgres.get("total_rows", 0)
-        )
+        return self.redis.get("key_count", 0) + self.postgres.get("total_rows", 0)
 
     def to_dict(self) -> dict[str, Any]:
         return {**asdict(self), "total_items": self.total_items}
@@ -114,8 +102,6 @@ class VerificationResult:
     customer_id: str
     verified_at: str
     redis_remaining: int
-    qdrant_remaining: int
-    neo4j_remaining: int
     postgres_remaining: dict[str, int]  # table -> count
     errors: list[str] = field(default_factory=list)
 
@@ -124,8 +110,6 @@ class VerificationResult:
         return (
             not self.errors
             and self.redis_remaining == 0
-            and self.qdrant_remaining == 0
-            and self.neo4j_remaining == 0
             and sum(self.postgres_remaining.values()) == 0
         )
 
@@ -175,24 +159,16 @@ class StorageConfig:
     )
     redis_host: str = field(default_factory=lambda: os.getenv("REDIS_HOST", "localhost"))
     redis_port: int = field(default_factory=lambda: int(os.getenv("REDIS_PORT", "6379")))
-    qdrant_url: str = field(default_factory=lambda: os.getenv("QDRANT_URL", "http://localhost:6333"))
-    neo4j_url: str = field(default_factory=lambda: os.getenv("NEO4J_URL", "neo4j://localhost:7687"))
-    neo4j_user: str = field(default_factory=lambda: os.getenv("NEO4J_USER", "neo4j"))
-    neo4j_password: str = field(default_factory=lambda: os.getenv("NEO4J_PASSWORD", "neo4j_password"))
 
 
 # PostgreSQL tables keyed by VARCHAR/TEXT customer_id without FK — must be
 # deleted explicitly since they won't cascade from customers(id). Source:
-# src/memory/schema.sql, customer_business_context in src/database/schema.sql,
-# and conversations in src/database/migrations/001_conversations.sql.
+# customer_business_context in src/database/schema.sql, and conversations in
+# src/database/migrations/001_conversations.sql.
 # Note: `messages` cascades from `conversations` via FK, so deleting
 # conversations here cleans both.
 PG_VARCHAR_TABLES: list[str] = [
     "customer_business_context",
-    "customer_memory_audit",
-    "memory_performance_metrics",
-    "sla_violation_alerts",
-    "customer_memory_stats",
     "delegation_records",  # FK cascade from conversations, but counted for reporting
     "conversations",  # must come after delegation_records (or rely on FK cascade)
 ]
@@ -221,21 +197,12 @@ PG_CASCADE_TABLES: list[str] = [
 def _redis_db_for(customer_id: str) -> int:
     """Derive the Redis DB number for a customer.
 
-    Mirrors EAMemoryManager._default_config: last 4 hex chars mod 16.
-    NOTE: This hash collides — multiple customers can map to the same DB.
-    The dry-run reports the DB number so an operator can check for cohabitants
-    before flushing. Changing this mapping is out of scope for the deletion
-    pipeline; it's an existing architectural property.
+    Last 4 hex chars mod 16. NOTE: This hash collides — multiple customers
+    can map to the same DB. The dry-run reports the DB number so an operator
+    can check for cohabitants before flushing. Changing this mapping is out
+    of scope for the deletion pipeline; it's an existing architectural property.
     """
     return int(customer_id[-4:], 16) % 16
-
-
-def _qdrant_collection_for(customer_id: str) -> str:
-    return f"customer_{customer_id}_memories"
-
-
-def _neo4j_database_for(customer_id: str) -> str:
-    return f"customer_{customer_id}_graph"
 
 
 def _is_uuid(s: str) -> bool:
@@ -263,9 +230,8 @@ class CustomerDeletionPipeline:
         result = await pipeline.execute()
 
     The pipeline connects directly to each store rather than going through
-    EAMemoryManager, because EAMemoryManager instantiates a Mem0 client on
-    construction (expensive, and it would point at collections we're about
-    to delete).
+    the EA — EA instances are per-customer caches with their own connection
+    pools and would not exist for a customer being offboarded.
     """
 
     def __init__(
@@ -284,8 +250,6 @@ class CustomerDeletionPipeline:
         self.config = config or StorageConfig()
 
         self._redis_db = _redis_db_for(customer_id)
-        self._qdrant_collection = _qdrant_collection_for(customer_id)
-        self._neo4j_database = _neo4j_database_for(customer_id)
 
         self._pg_pool: Optional[asyncpg.Pool] = None
 
@@ -316,16 +280,12 @@ class CustomerDeletionPipeline:
         warnings: list[str] = []
 
         redis_info = await self._count_redis(warnings)
-        qdrant_info = await self._count_qdrant(warnings)
-        neo4j_info = await self._count_neo4j(warnings)
         pg_info = await self._count_postgres(warnings)
 
         report = DryRunReport(
             customer_id=self.customer_id,
             generated_at=datetime.now(timezone.utc).isoformat(),
             redis=redis_info,
-            qdrant=qdrant_info,
-            neo4j=neo4j_info,
             postgres=pg_info,
             warnings=warnings,
         )
@@ -350,7 +310,7 @@ class CustomerDeletionPipeline:
             cursor, batch = await client.scan(cursor=cursor, count=20)
             sample.extend(batch[:20])
 
-            # Collision check: are other customers' EAMemoryManagers mapped here?
+            # Collision check: are other customers' EA instances mapped here?
             # We can't know for sure without a customer registry, but flag it.
             warnings.append(
                 f"Redis DB {self._redis_db} uses hash(customer_id) % 16 — "
@@ -363,49 +323,6 @@ class CustomerDeletionPipeline:
             }
         finally:
             await client.aclose()
-
-    async def _count_qdrant(self, warnings: list[str]) -> dict[str, Any]:
-        async with httpx.AsyncClient(base_url=self.config.qdrant_url, timeout=10.0) as client:
-            resp = await client.get(f"/collections/{self._qdrant_collection}")
-            if resp.status_code == 404:
-                return {"collection": self._qdrant_collection, "exists": False, "point_count": 0}
-            resp.raise_for_status()
-            data = resp.json().get("result", {})
-            return {
-                "collection": self._qdrant_collection,
-                "exists": True,
-                "point_count": data.get("points_count", 0),
-                "vectors_count": data.get("vectors_count", 0),
-            }
-
-    async def _count_neo4j(self, warnings: list[str]) -> dict[str, Any]:
-        driver = AsyncGraphDatabase.driver(
-            self.config.neo4j_url, auth=(self.config.neo4j_user, self.config.neo4j_password)
-        )
-        try:
-            # Check database exists
-            async with driver.session(database="system") as sys_session:
-                result = await sys_session.run(
-                    "SHOW DATABASES YIELD name WHERE name = $name RETURN count(*) AS c",
-                    name=self._neo4j_database,
-                )
-                record = await result.single()
-                exists = record and record["c"] > 0
-
-            if not exists:
-                return {"database": self._neo4j_database, "exists": False, "node_count": 0, "rel_count": 0}
-
-            async with driver.session(database=self._neo4j_database) as session:
-                node_rec = await (await session.run("MATCH (n) RETURN count(n) AS c")).single()
-                rel_rec = await (await session.run("MATCH ()-[r]->() RETURN count(r) AS c")).single()
-                return {
-                    "database": self._neo4j_database,
-                    "exists": True,
-                    "node_count": node_rec["c"],
-                    "rel_count": rel_rec["c"],
-                }
-        finally:
-            await driver.close()
 
     async def _count_postgres(self, warnings: list[str]) -> dict[str, Any]:
         pool = await self._pg()
@@ -471,8 +388,6 @@ class CustomerDeletionPipeline:
 
         step_handlers = {
             DeletionStep.REDIS: self._delete_redis,
-            DeletionStep.QDRANT: self._delete_qdrant,
-            DeletionStep.NEO4J: self._delete_neo4j,
             DeletionStep.POSTGRES: self._delete_postgres,
         }
 
@@ -559,70 +474,6 @@ class CustomerDeletionPipeline:
             )
         finally:
             await client.aclose()
-
-    async def _delete_qdrant(self) -> StepResult:
-        async with httpx.AsyncClient(base_url=self.config.qdrant_url, timeout=30.0) as client:
-            # Count first (for the report)
-            info = await client.get(f"/collections/{self._qdrant_collection}")
-            if info.status_code == 404:
-                return StepResult(
-                    step=DeletionStep.QDRANT, status=StepStatus.SKIPPED,
-                    detail={"collection": self._qdrant_collection, "reason": "not_found"},
-                )
-            info.raise_for_status()
-            point_count = info.json().get("result", {}).get("points_count", 0)
-
-            resp = await client.delete(f"/collections/{self._qdrant_collection}")
-            resp.raise_for_status()
-
-            return StepResult(
-                step=DeletionStep.QDRANT, status=StepStatus.COMPLETED,
-                items_deleted=point_count,
-                detail={"collection": self._qdrant_collection, "method": "DELETE /collections"},
-            )
-
-    async def _delete_neo4j(self) -> StepResult:
-        driver = AsyncGraphDatabase.driver(
-            self.config.neo4j_url, auth=(self.config.neo4j_user, self.config.neo4j_password)
-        )
-        try:
-            # Count nodes/rels before dropping (for the report)
-            node_count, rel_count = 0, 0
-            async with driver.session(database="system") as sys_session:
-                result = await sys_session.run(
-                    "SHOW DATABASES YIELD name WHERE name = $name RETURN count(*) AS c",
-                    name=self._neo4j_database,
-                )
-                record = await result.single()
-                exists = record and record["c"] > 0
-
-            if not exists:
-                return StepResult(
-                    step=DeletionStep.NEO4J, status=StepStatus.SKIPPED,
-                    detail={"database": self._neo4j_database, "reason": "not_found"},
-                )
-
-            async with driver.session(database=self._neo4j_database) as session:
-                nr = await (await session.run("MATCH (n) RETURN count(n) AS c")).single()
-                rr = await (await session.run("MATCH ()-[r]->() RETURN count(r) AS c")).single()
-                node_count, rel_count = nr["c"], rr["c"]
-
-            # DROP DATABASE requires Enterprise. IF EXISTS makes this idempotent
-            # even if a concurrent process already dropped it.
-            async with driver.session(database="system") as sys_session:
-                await sys_session.run(f"DROP DATABASE `{self._neo4j_database}` IF EXISTS")
-
-            return StepResult(
-                step=DeletionStep.NEO4J, status=StepStatus.COMPLETED,
-                items_deleted=node_count + rel_count,
-                detail={
-                    "database": self._neo4j_database,
-                    "nodes": node_count, "relationships": rel_count,
-                    "method": "DROP DATABASE",
-                },
-            )
-        finally:
-            await driver.close()
 
     async def _delete_postgres(self) -> StepResult:
         pool = await self._pg()
@@ -771,11 +622,7 @@ class CustomerDeletionPipeline:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class DeletionVerifier:
-    """Post-deletion verification: prove no customer data remains in any store.
-
-    Complements `MemoryIsolationValidator` — that checks cross-customer leakage;
-    this checks single-customer absence.
-    """
+    """Post-deletion verification: prove no customer data remains in any store."""
 
     def __init__(
         self, customer_id: str, *,
@@ -791,16 +638,12 @@ class DeletionVerifier:
         errors: list[str] = []
 
         redis_remaining = await self._check_redis(errors)
-        qdrant_remaining = await self._check_qdrant(errors)
-        neo4j_remaining = await self._check_neo4j(errors)
         pg_remaining = await self._check_postgres(errors)
 
         result = VerificationResult(
             customer_id=self.customer_id,
             verified_at=datetime.now(timezone.utc).isoformat(),
             redis_remaining=redis_remaining,
-            qdrant_remaining=qdrant_remaining,
-            neo4j_remaining=neo4j_remaining,
             postgres_remaining=pg_remaining,
             errors=errors,
         )
@@ -823,44 +666,6 @@ class DeletionVerifier:
             return -1
         finally:
             await client.aclose()
-
-    async def _check_qdrant(self, errors: list[str]) -> int:
-        collection = _qdrant_collection_for(self.customer_id)
-        try:
-            async with httpx.AsyncClient(base_url=self.config.qdrant_url, timeout=10.0) as client:
-                resp = await client.get(f"/collections/{collection}")
-                if resp.status_code == 404:
-                    return 0
-                resp.raise_for_status()
-                return resp.json().get("result", {}).get("points_count", 0)
-        except Exception as e:
-            errors.append(f"qdrant: {e}")
-            return -1
-
-    async def _check_neo4j(self, errors: list[str]) -> int:
-        database = _neo4j_database_for(self.customer_id)
-        driver = AsyncGraphDatabase.driver(
-            self.config.neo4j_url, auth=(self.config.neo4j_user, self.config.neo4j_password)
-        )
-        try:
-            async with driver.session(database="system") as session:
-                result = await session.run(
-                    "SHOW DATABASES YIELD name WHERE name = $name RETURN count(*) AS c",
-                    name=database,
-                )
-                record = await result.single()
-                # If the database is gone, 0 remaining. If it still exists, count nodes.
-                if not record or record["c"] == 0:
-                    return 0
-
-            async with driver.session(database=database) as session:
-                rec = await (await session.run("MATCH (n) RETURN count(n) AS c")).single()
-                return rec["c"]
-        except Exception as e:
-            errors.append(f"neo4j: {e}")
-            return -1
-        finally:
-            await driver.close()
 
     async def _check_postgres(self, errors: list[str]) -> dict[str, int]:
         if self._pg_pool is None:

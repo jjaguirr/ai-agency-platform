@@ -112,10 +112,7 @@ class TestDataManager:
         
         # PostgreSQL cleanup
         cleanup_tasks.append(self._cleanup_postgres(customer_id))
-        
-        # Qdrant cleanup (for Mem0 vector storage)
-        cleanup_tasks.append(self._cleanup_qdrant(customer_id))
-        
+
         # Execute all cleanup tasks concurrently
         results = await asyncio.gather(*cleanup_tasks, return_exceptions=True)
         
@@ -171,17 +168,7 @@ class TestDataManager:
             if self.postgres_conn:
                 self.postgres_conn.rollback()
             raise
-    
-    async def _cleanup_qdrant(self, customer_id: str):
-        """Clean up Qdrant vector collections for customer."""
-        try:
-            # For now, just log that we would clean Qdrant
-            # TODO: Implement actual Qdrant cleanup when Mem0 integration is complete
-            logger.debug(f"Qdrant cleanup (placeholder) for {customer_id}")
-            
-        except Exception as e:
-            logger.error(f"Qdrant cleanup failed for {customer_id}: {e}")
-    
+
     async def cleanup_all(self):
         """Clean up all resources created during test."""
         for resource_type, resource_id in self.resources_created:

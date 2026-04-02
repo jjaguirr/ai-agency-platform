@@ -22,13 +22,10 @@ in-memory repos. No Docker required.
 - `test_cross_channel.py` — cross-tenant isolation + dashboard auth
 
 ### `/integration/` — Service Integration Tests
-Tests against real Postgres/Redis/Qdrant/Neo4j. Skip when services unavailable.
+Tests against real Postgres/Redis. Skip when services unavailable.
 
 ### `/business/`, `/acceptance/` — Scenario Tests
 Business-outcome validation with customer personas. Require OpenAI API key.
-
-### `/memory/` — Memory-Layer Tests
-Mem0 + conversation continuity integration.
 
 ### `/demos/` — Demonstration Scripts
 Executable examples, not collected by pytest.

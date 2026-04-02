@@ -16,7 +16,7 @@ docker compose up -d
 
 # Wait for healthy
 echo "Waiting for services to be healthy..."
-for service in postgres redis qdrant neo4j; do
+for service in postgres redis; do
     echo -n "  $service: "
     for i in $(seq 1 30); do
         if docker compose ps "$service" | grep -q healthy; then

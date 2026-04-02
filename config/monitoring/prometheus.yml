@@ -31,13 +31,6 @@ scrape_configs:
       - targets: ['node-exporter:9100']
     scrape_interval: 10s
 
-  # TODO: Configure Mem0 monitoring when implemented
-  # - job_name: 'mem0'
-  #   metrics_path: '/metrics'
-  #   static_configs:
-  #     - targets: ['mem0:8080']
-  #   scrape_interval: 10s
-
   - job_name: 'dual-agent-health'
     metrics_path: '/metrics'
     static_configs:

@@ -1,6 +1,6 @@
 """
 Integration Tests for Real ExecutiveAssistant Implementation
-Tests actual Mem0, Redis, PostgreSQL, and LangGraph integration - no mocks
+Tests actual Redis, PostgreSQL, and LangGraph integration - no mocks
 """
 
 import pytest
@@ -25,21 +25,20 @@ class TestRealExecutiveAssistantIntegration:
 
     @pytest.mark.asyncio
     async def test_ea_initialization_with_real_dependencies(self, integration_test_config):
-        """Test EA initializes with real Redis, PostgreSQL, and Mem0."""
+        """Test EA initializes with real Redis and PostgreSQL."""
         customer_id = "test_init_123"
-        
+
         # When: Initialize EA with real dependencies
         ea = ExecutiveAssistant(
             customer_id=customer_id,
             mcp_server_url="test://localhost"
         )
-        
+
         # Then: All dependencies should be initialized
         assert ea.customer_id == customer_id
         assert ea.memory is not None
         assert ea.memory.redis_client is not None
         assert ea.memory.db_connection is not None
-        assert ea.memory.memory_client is not None
         assert ea.workflow_creator is not None
         assert ea.graph is not None
         
@@ -52,33 +51,6 @@ class TestRealExecutiveAssistantIntegration:
         except Exception as e:
             print(f"Cleanup warning: {e}")
 
-    @pytest.mark.asyncio
-    async def test_real_mem0_integration(self, real_ea):
-        """Test EA with actual Mem0 integration - no mocks."""
-        ea = await real_ea
-        
-        # Store business context
-        business_info = "I run a marketing agency called BrandBoost specializing in restaurant digital marketing"
-        
-        # When: Store business knowledge using real Mem0
-        await ea.memory.store_business_knowledge(
-            business_info,
-            {"category": "business_info", "priority": "high", "source": "conversation"}
-        )
-        
-        # Then: Should be able to search and retrieve the knowledge
-        search_results = await ea.memory.search_business_knowledge("BrandBoost marketing")
-        
-        assert len(search_results) > 0, "No memories found in Mem0"
-        found_brandboost = any("BrandBoost" in result["content"] for result in search_results)
-        assert found_brandboost, "BrandBoost not found in search results"
-        
-        # Verify memory contains expected information
-        first_result = search_results[0]
-        assert "marketing" in first_result["content"].lower()
-        assert first_result["score"] > 0.0
-        assert "metadata" in first_result
-        
     @pytest.mark.asyncio
     async def test_real_redis_conversation_context(self, real_ea):
         """Test conversation context storage/retrieval with real Redis."""
@@ -373,9 +345,9 @@ class TestRealExecutiveAssistantPerformance:
         assert len(response) >= 50, "Response too short to be meaningful"
         assert "follow" in response.lower() or "customer" in response.lower()
 
-    @pytest.mark.asyncio 
+    @pytest.mark.asyncio
     async def test_memory_retrieval_performance(self, real_ea):
-        """Test memory search performance with real Mem0."""
+        """Test memory search performance against the live store."""
         ea = await real_ea
         
         # Store multiple business knowledge entries
